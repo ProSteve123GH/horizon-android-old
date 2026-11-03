@@ -256,4 +256,6 @@ jobs:
 
       - name: Remove decoded signing material from the workspace
         if: always()
-        run: rm -f .local/android/debug.keystore
+        run: |
+          rm -f .local/android/debug.keystore
+          rm -rf .local/dev-signing
