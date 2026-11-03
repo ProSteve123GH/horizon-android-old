@@ -845,6 +845,29 @@ mod tests {
     }
 
     #[test]
+    fn the_lock_accepts_the_pinned_and_current_26_3_metadata() {
+        let pins = Pins::from_lock().unwrap();
+        // Mojang's current launcher-meta entry, plus the manifest and index the
+        // official installer downloads from the content-addressed pin.
+        assert!(
+            pins.manifests
+                .contains("80608ff6753705b6a82e2cb86a5937d4d233abd4")
+        );
+        assert!(
+            pins.manifests
+                .contains("11f1aefe473eefba0af62e3286c33b692807b2eb")
+        );
+        assert!(
+            pins.indexes
+                .contains("e787e8afd149a4cefa89d341b91f5aed8f5d93a0")
+        );
+        assert!(
+            pins.indexes
+                .contains("331e5c80937c9cd79647ab34bdc1cbb5ef09f456")
+        );
+    }
+
+    #[test]
     fn imports_the_launcher_layout_into_the_installer_cache() {
         let fixture = fixture("folder");
         let cache = fixture.root.join("cache");
