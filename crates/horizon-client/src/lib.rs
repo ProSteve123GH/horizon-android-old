@@ -83,6 +83,7 @@ pub mod landing;
 pub mod locator_bar;
 pub mod menu;
 pub mod merchant;
+pub mod minecraft_import;
 pub mod mobs;
 pub mod mod_content;
 pub mod motion;

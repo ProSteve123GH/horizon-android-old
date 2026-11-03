@@ -34,6 +34,17 @@ fn download_cache(home: &Path) -> PathBuf {
         .join(horizon_core::VANILLA_VERSION)
 }
 
+/// The directory `install_with_progress` caches verified Mojang downloads in.
+/// Importers fill this cache so the installer only downloads what is missing.
+pub fn download_directory(home: &Path) -> PathBuf {
+    download_cache(home)
+}
+
+/// Free bytes on the volume holding `home`, for the launcher's storage checks.
+pub fn available_space(home: &Path) -> Option<u64> {
+    fs4::available_space(home).ok()
+}
+
 /// Earlier Android packages installed textures only. An audio-capable APK must
 /// upgrade those resources before entering the game, not silently stay mute.
 pub fn ready(home: &Path) -> bool {
