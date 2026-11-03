@@ -88,6 +88,13 @@ The importer checks the same pins as the official installer:
 - the asset index against the accepted index hashes;
 - every copied asset object against its SHA-1 and size.
 
+Mojang has republished the 26.3 version JSON several times; only the asset
+index changed. Horizon accepts the pinned manifest, the current launcher-meta
+manifest and their asset indexes, so an existing launcher can keep whichever
+one it downloaded. A version JSON rewritten by a launcher is not accepted unless
+its hash is one of those Mojang manifests; use the official 26.3 metadata or
+**Download Minecraft 26.3** in that case.
+
 A source file that is present but has the wrong size or hash is an error: the
 import stops and reports which file is corrupt. An existing Horizon installation
 is not modified. A source file that is absent is different: it is counted as
@@ -150,7 +157,7 @@ folder are kept. The source is never deleted or modified.
 
 | Symptom | Cause and fix |
 | --- | --- |
-| “No Minecraft 26.3 installation was found” | The folder has no accepted `versions/26.3/26.3.json`. Point the picker at `.minecraft`, or use **Download**. |
+| “No Minecraft 26.3 installation was found” | The folder has no accepted `versions/26.3/26.3.json`, or a launcher rewrote it. Point the picker at `.minecraft`, use official metadata, or use **Download**. |
 | “This installation is not Minecraft 26.3” | The source is another Minecraft version. Horizon only launches 26.3. |
 | “Minecraft game files differ from this engine's pinned version” | The client JAR is not the pinned 26.3 build. Use **Download**. |
 | “Asset index does not match...” | The index is from another version or was modified. Remove it from the source and retry; the installer downloads the official index. |

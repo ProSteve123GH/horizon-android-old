@@ -78,7 +78,9 @@ Gradle/Android, Gradle 8.14, Android platform 36, build tools 35.0.0 and NDK
 24 or older. It caches Cargo dependencies, the prepared engine inputs and a
 generated fallback signing key (never a key supplied through the secret). Cold
 builds prepare the generated engine tables from official downloads and can take
-substantially longer than incremental builds.
+substantially longer than incremental builds. Preparation downloads the
+content-addressed 26.3 manifest named by `research-lock.json`, not the mutable
+launcher-meta entry, so a Mojang republish does not silently change the inputs.
 
 The source copy of the workflow is `packaging/android/dev-builds.yml`; the active
 copy is `.github/workflows/android-dev.yml`. Keep them identical. Local builds
