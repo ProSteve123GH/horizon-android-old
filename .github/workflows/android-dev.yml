@@ -71,6 +71,18 @@ jobs:
           distribution: temurin
           java-version: '25'
 
+      - name: Record the exporter JDK
+        run: echo "JAVA25_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+
+      - name: Set up JDK 17 for Gradle and Android
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Record the Gradle JDK
+        run: echo "JAVA17_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+
       - name: Set up Gradle 8.14
         uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         with:
@@ -122,6 +134,14 @@ jobs:
           restore-keys: |
             android-minecraft-
 
+      - name: Restore cached fallback dev key
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .local/dev-signing
+          key: horizon-dev-signing-v1
+          restore-keys: |
+            horizon-dev-signing-
+
       - name: Restore or create the dev signing key
         id: signing
         env:
@@ -151,13 +171,12 @@ jobs:
           cp "$key" .local/android/debug.keystore
           chmod 0600 .local/android/debug.keystore
 
-      - name: Cache the generated dev signing key
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Save the generated fallback dev key
+        if: steps.signing.outputs.source == 'newly generated dev key'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .local/dev-signing
           key: horizon-dev-signing-v1
-          restore-keys: |
-            horizon-dev-signing-
 
       - name: Check public source and packaging boundaries
         run: |
@@ -165,14 +184,14 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_android_release_audit.py'
 
       - name: Prepare private engine inputs from official downloads
-        run: python3 tools/android_prepare.py --java-home "$JAVA_HOME"
+        run: python3 tools/android_prepare.py --java-home "$JAVA25_HOME"
 
       - name: Build dev APK
         env:
           ABI: ${{ matrix.abi }}
         run: |
           python3 tools/android_build.py --abi "$ABI" --public --profile "$PROFILE" \
-            --sdk "$ANDROID_HOME" --java-home "$JAVA_HOME_17_X64" --gradle "$(command -v gradle)" \
+            --sdk "$ANDROID_HOME" --java-home "$JAVA17_HOME" --gradle "$(command -v gradle)" \
             --ndk-version "$NDK_VERSION" --build-tools-version "$BUILD_TOOLS_VERSION" \
             --dev-build "${GITHUB_RUN_NUMBER}.${GITHUB_SHA:0:12}" \
             --dev-version-code "$((1000 + GITHUB_RUN_NUMBER))"
