@@ -339,15 +339,13 @@ fn prepare(home: PathBuf, label: String, report: core::Report) {
             if let Err(error) = core::write_record(&home, &label, &report) {
                 log::warn!("Could not record the imported Minecraft source: {error}");
             }
+            let reused = report.files_copied.saturating_add(report.files_reused);
             let text = if report.files_missing == 0 {
-                format!(
-                    "Minecraft 26.3 imported from {label}. {} files were reused.",
-                    report.files_reused
-                )
+                format!("Minecraft 26.3 imported from {label}. {reused} files were reused.")
             } else {
                 format!(
-                    "Minecraft 26.3 imported from {label}. {} files were reused and {} missing files were downloaded.",
-                    report.files_reused, report.files_missing
+                    "Minecraft 26.3 imported from {label}. {reused} files were reused and {} missing files were downloaded.",
+                    report.files_missing
                 )
             };
             finish(text, None, true);
@@ -489,6 +487,9 @@ fn prepared_assets(root: &Path) -> Result<Vec<PreparedAsset>, String> {
         .ok_or("The prepared asset index has no objects")?;
     let mut assets = Vec::with_capacity(objects.len());
     for (name, object) in objects {
+        if !asset_enabled(name) {
+            continue;
+        }
         let hash = object["hash"]
             .as_str()
             .ok_or("A prepared asset has no hash")?;
@@ -511,6 +512,13 @@ fn prepared_assets(root: &Path) -> Result<Vec<PreparedAsset>, String> {
         });
     }
     Ok(assets)
+}
+
+/// Mirrors the official installer: builds without sound output do not need the
+/// sound objects, so they must not make repair report a permanent missing set.
+fn asset_enabled(name: &str) -> bool {
+    cfg!(feature = "audio")
+        || (!name.starts_with("minecraft/sounds/") && name != "minecraft/sounds.json")
 }
 
 fn prepared_asset_path(root: &Path, name: &str) -> Option<PathBuf> {
