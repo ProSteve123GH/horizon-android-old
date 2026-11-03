@@ -98,7 +98,11 @@ jobs:
             sdkmanager=$(find "$ANDROID_HOME/cmdline-tools" -type f -path '*/bin/sdkmanager' | sort -V | tail -n 1)
           fi
           test -x "$sdkmanager"
+          set +o pipefail
           yes | "$sdkmanager" --sdk_root="$ANDROID_HOME" --licenses > /dev/null
+          license_status=${PIPESTATUS[1]}
+          set -o pipefail
+          test "$license_status" -eq 0
           "$sdkmanager" --sdk_root="$ANDROID_HOME" \
             'platforms;android-36' \
             "build-tools;${BUILD_TOOLS_VERSION}" \
