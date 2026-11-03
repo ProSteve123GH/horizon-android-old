@@ -257,7 +257,14 @@ impl Launcher {
                 .clone()
                 .unwrap_or_else(|| "Starting Horizon...".to_owned());
             let text = ui.fit_text(Face::Medium, 18.0, &text, w - 48.0);
-            ui.text_centered(Face::Medium, 18.0, w / 2.0, h / 2.0 - 13.0, color::TEXT, &text);
+            ui.text_centered(
+                Face::Medium,
+                18.0,
+                w / 2.0,
+                h / 2.0 - 13.0,
+                color::TEXT,
+                &text,
+            );
             ui.finish();
             if !r.render(&game::loading_frame(&b))? && !b.patches.is_empty() {
                 horizon_client::ui_theme::reset_atlas();

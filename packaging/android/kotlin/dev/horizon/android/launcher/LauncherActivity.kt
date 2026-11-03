@@ -24,6 +24,7 @@ class LauncherActivity : ComponentActivity() {
                 LauncherApp(
                     onPlay = ::startGame,
                     onImport = { kind, uri -> NativeBridge.importDocument(this, kind, uri) },
+                    onClassicLauncher = ::startClassicLauncher,
                 )
             }
         }
@@ -36,6 +37,16 @@ class LauncherActivity : ComponentActivity() {
     }
 
     private fun startGame() {
+        startActivity(Intent(this, HorizonActivity::class.java))
+    }
+
+    /**
+     * The Rust launcher still owns Skins, wardrobe, saved-account switching and
+     * Ely.by. Start it without a pending play request so those pages remain
+     * reachable while the Compose launcher catches up.
+     */
+    private fun startClassicLauncher() {
+        File(filesDir, "launch-request.json").delete()
         startActivity(Intent(this, HorizonActivity::class.java))
     }
 

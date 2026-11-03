@@ -25,6 +25,7 @@ struct Controller {
     catalog: Catalog,
     login: Login,
     install: Arc<Mutex<horizon_client::official_install::InstallProgress>>,
+    installation: horizon_client::minecraft_import::InstallationInfo,
     worker: Option<mpsc::Receiver<Result<(), String>>>,
     diagnostic_export: Option<mpsc::Receiver<Result<String, String>>>,
     error: Option<String>,
@@ -129,11 +130,13 @@ impl Controller {
             }
             catalog.status = "Previous Vulkan startup was interrupted. Using OpenGL ES recovery; you can change Rendering mode in Settings.".into();
         }
+        let installation = horizon_client::minecraft_import::info(&home);
         let mut controller = Self {
             home,
             catalog,
             login: Login::new(),
             install: Arc::default(),
+            installation,
             worker: None,
             diagnostic_export: None,
             error: None,
@@ -146,6 +149,7 @@ impl Controller {
     fn resume(&mut self) {
         self.catalog.config = crate::catalog::Config::load(&self.home);
         self.catalog.refresh(&self.home);
+        self.installation = horizon_client::minecraft_import::info(&self.home);
         self.login.refresh_status();
         if let Ok(message) = std::fs::read_to_string(self.home.join("android-error.txt")) {
             self.error = Some(message);
@@ -155,6 +159,10 @@ impl Controller {
     fn poll(&mut self) {
         if let Some(result) = self.worker.as_ref().and_then(|w| w.try_recv().ok()) {
             self.worker = None;
+            if result.is_ok() {
+                self.installation = horizon_client::minecraft_import::info(&self.home);
+                self.catalog.refresh(&self.home);
+            }
             if let Err(error) = result {
                 self.error = Some(
                     if error.contains("Dns Failed") || error.contains("lookup address") {
@@ -181,6 +189,16 @@ impl Controller {
                 }
                 Err(error) => format!("Diagnostic export failed: {error}"),
             };
+        }
+        if let Some(notice) = crate::minecraft_import::poll() {
+            self.catalog.status = notice.text;
+            if let Some(error) = notice.error {
+                self.error = Some(error);
+            }
+            if notice.changed {
+                self.installation = horizon_client::minecraft_import::info(&self.home);
+                self.catalog.refresh(&self.home);
+            }
         }
         self.catalog.poll(&self.home);
         if let Some(notice) = crate::documents::poll() {
@@ -376,7 +394,9 @@ impl Controller {
     fn snapshot(&mut self) -> Value {
         use horizon_client::official_install::InstallStage;
         self.poll();
-        let installed = horizon_client::official_install::ready(&self.home);
+        let imported = crate::minecraft_import::snapshot();
+        let installed = self.installation.installed;
+        let installing = self.worker.is_some() || imported.is_some();
         let progress = *self.install.lock().unwrap_or_else(|e| e.into_inner());
         let current = InstallStage::ALL
             .iter()
@@ -387,20 +407,55 @@ impl Controller {
         } else {
             0.0
         };
-        let detail = match progress.stage {
-            InstallStage::Download => format!(
-                "{:.1} / {:.1} MiB · verified downloads",
-                progress.done as f64 / 1048576.0,
-                progress.total as f64 / 1048576.0
-            ),
-            InstallStage::Controls => {
-                format!(
-                    "{} / {} control files verified",
-                    progress.done, progress.total
+        let (stage, stage_index, stages, overall, detail, cancelable, importing) =
+            if let Some(import) = imported {
+                let stages = import["stages"]
+                    .as_array()
+                    .map(|stages| {
+                        stages
+                            .iter()
+                            .filter_map(|stage| stage.as_str().map(str::to_owned))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                (
+                    import["stage"].as_str().unwrap_or("Importing").to_owned(),
+                    import["stage_index"].as_u64().unwrap_or(0) as usize,
+                    stages,
+                    import["overall"].as_f64().unwrap_or(0.0) as f32,
+                    import["detail"].as_str().unwrap_or("").to_owned(),
+                    import["cancelable"].as_bool().unwrap_or(false),
+                    import["importing"].as_bool().unwrap_or(false),
                 )
-            }
-            _ => "Please keep Horizon open. Downloaded files are kept for retry.".into(),
-        };
+            } else {
+                let detail = match progress.stage {
+                    InstallStage::Download => format!(
+                        "{:.1} / {:.1} MiB · verified downloads",
+                        progress.done as f64 / 1048576.0,
+                        progress.total as f64 / 1048576.0
+                    ),
+                    InstallStage::Controls => {
+                        format!(
+                            "{} / {} control files verified",
+                            progress.done, progress.total
+                        )
+                    }
+                    _ => "Please keep Horizon open. Downloaded files are kept for retry.".into(),
+                };
+                (
+                    progress.stage.label().to_owned(),
+                    current,
+                    InstallStage::ALL
+                        .iter()
+                        .map(|stage| stage.label().to_owned())
+                        .collect(),
+                    (current as f32 + fraction.clamp(0.0, 1.0)) / InstallStage::ALL.len() as f32,
+                    detail,
+                    false,
+                    false,
+                )
+            };
+        let free_bytes = horizon_client::official_install::available_space(&self.home);
         let c = &self.catalog.config;
         let results: Vec<Value> = self
             .catalog
@@ -461,12 +516,19 @@ impl Controller {
             "error": self.error,
             "install": {
                 "installed": installed,
-                "installing": self.worker.is_some(),
-                "stage": progress.stage.label(),
-                "stage_index": current,
-                "stages": InstallStage::ALL.iter().map(|s| s.label()).collect::<Vec<_>>(),
-                "overall": (current as f32 + fraction.clamp(0.0, 1.0)) / InstallStage::ALL.len() as f32,
+                "installing": installing,
+                "importing": importing,
+                "cancelable": cancelable,
+                "stage": stage,
+                "stage_index": stage_index,
+                "stages": stages,
+                "overall": overall,
                 "detail": detail,
+                "source": self.installation.source,
+                "size_bytes": self.installation.size_bytes,
+                "cache_bytes": self.installation.cache_bytes,
+                "files_missing": self.installation.files_missing,
+                "free_bytes": free_bytes,
             },
             "account": {
                 "status": self.login.status(&c.name),
@@ -607,6 +669,27 @@ impl Controller {
             "install" => {
                 let index = arg.parse::<usize>().map_err(|e| e.to_string())?;
                 self.catalog.install(&home, index);
+            }
+            "cancel_import" => crate::minecraft_import::cancel(),
+            "repair_installation" => {
+                if self.worker.is_some() || crate::minecraft_import::busy() {
+                    return Err("Finish the current installation first".into());
+                }
+                crate::minecraft_import::start_repair(self.home.clone())?;
+                self.error = None;
+                self.catalog.status =
+                    "Checking Minecraft resources and downloading anything missing...".into();
+            }
+            "remove_installation" => {
+                if self.worker.is_some() || crate::minecraft_import::busy() {
+                    return Err("Finish or cancel the current installation first".into());
+                }
+                horizon_client::minecraft_import::remove(&home)
+                    .map_err(|error| error.to_string())?;
+                self.installation = horizon_client::minecraft_import::info(&home);
+                self.catalog.status =
+                    "Minecraft resources removed. Saves, profiles and downloaded content are kept."
+                        .into();
             }
             "toggle_local" => {
                 let index = arg.parse::<usize>().map_err(|e| e.to_string())?;
@@ -827,9 +910,24 @@ impl Controller {
         self.save()
     }
 
+    /// Imports a folder or ZIP picked in the Compose launcher.
+    fn start_import(
+        &mut self,
+        kind: crate::minecraft_import::Kind,
+        uri: String,
+    ) -> Result<Value, String> {
+        if self.worker.is_some() || crate::minecraft_import::busy() {
+            return Err("Finish the current installation first".into());
+        }
+        crate::minecraft_import::start(self.home.clone(), kind, uri)?;
+        self.error = None;
+        self.catalog.status = "Reading the selected Minecraft installation...".into();
+        Ok(json!({"started": true}))
+    }
+
     /// Starts the install, or asks the Activity to start the game process.
     fn play(&mut self) -> Result<Value, String> {
-        if self.worker.is_some() || self.login.pending() {
+        if self.worker.is_some() || crate::minecraft_import::busy() || self.login.pending() {
             return Ok(json!({"launch": false}));
         }
         if horizon_client::official_install::ready(&self.home) {
@@ -992,4 +1090,42 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_importDocument(
         return;
     };
     crate::documents::import_external(&mut env, &activity, kind, home, uri);
+}
+
+fn import_minecraft(env: &mut JNIEnv<'_>, kind: crate::minecraft_import::Kind, uri: JString<'_>) {
+    if uri.is_null() {
+        return;
+    }
+    let uri = string(env, &uri);
+    let result = CONTROLLER.with(|c| match c.borrow_mut().as_mut() {
+        Some(controller) => controller.start_import(kind, uri),
+        None => Err("Launcher is not initialized".into()),
+    });
+    if let Err(error) = result {
+        CONTROLLER.with(|c| {
+            if let Some(controller) = c.borrow_mut().as_mut() {
+                controller.catalog.status = error;
+            }
+        });
+    }
+}
+
+/// `NativeBridge.importMinecraftFolder(String uri)`: a picked SAF tree.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_horizon_android_NativeBridge_importMinecraftFolder(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    uri: JString<'_>,
+) {
+    import_minecraft(&mut env, crate::minecraft_import::Kind::Folder, uri);
+}
+
+/// `NativeBridge.importMinecraftZip(String uri)`: a picked ZIP document.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_horizon_android_NativeBridge_importMinecraftZip(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    uri: JString<'_>,
+) {
+    import_minecraft(&mut env, crate::minecraft_import::Kind::Zip, uri);
 }

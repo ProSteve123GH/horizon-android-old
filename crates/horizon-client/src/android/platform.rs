@@ -207,6 +207,56 @@ pub(crate) fn set_bridge_context(vm: JavaVM, activity: GlobalRef) {
     *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(activity);
 }
 
+/// Runs `f` with the Compose launcher Activity, returning its own error text.
+/// The importers use this because they need the provider's message, not just
+/// the `None` that [`with_context`] logs.
+pub(crate) fn with_activity<R>(
+    f: impl FnOnce(&mut JNIEnv<'_>, &JObject<'_>) -> std::result::Result<R, String>,
+) -> std::result::Result<R, String> {
+    let (vm, slot) = BRIDGE.get().ok_or("The launcher Activity is not ready")?;
+    let activity = slot
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .ok_or("The launcher Activity is not ready")?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|e| format!("Could not attach to Android: {e}"))?;
+    let result = env.with_local_frame(16, |env| {
+        Ok::<_, jni::errors::Error>(f(env, activity.as_obj()))
+    });
+    // A provider or resolver call can leave a Java exception pending even when
+    // the closure converted its JNI error to text. Clear it before returning to
+    // the worker thread, and surface the provider's own message when possible.
+    let provider_error = take_exception(&mut env);
+    match result {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(error)) => Err(provider_error.unwrap_or(error)),
+        Err(error) => {
+            let _ = env.exception_clear();
+            Err(provider_error.unwrap_or_else(|| error.to_string()))
+        }
+    }
+}
+
+/// Reads and clears a pending Java exception, returning its `toString()` text.
+fn take_exception(env: &mut JNIEnv<'_>) -> Option<String> {
+    if !env.exception_check().ok()? {
+        return None;
+    }
+    let throwable = env.exception_occurred().ok()?;
+    env.exception_clear().ok()?;
+    let text = env
+        .call_method(&throwable, "toString", "()Ljava/lang/String;", &[])
+        .ok()?
+        .l()
+        .ok()?;
+    if text.is_null() {
+        return None;
+    }
+    env.get_string((&text).into()).ok().map(Into::into)
+}
+
 pub(crate) fn with_context<R>(
     f: impl FnOnce(&mut JNIEnv<'_>, &JObject<'_>) -> jni::errors::Result<R>,
 ) -> Option<R> {

@@ -18,15 +18,19 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SportsEsports
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -38,8 +42,10 @@ import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -47,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import java.util.Locale
 
 @Composable
 fun PlayScreen(state: Snapshot, wide: Boolean, short: Boolean, actions: LauncherActions) {
@@ -135,6 +142,12 @@ private fun Hero(state: Snapshot, short: Boolean, modifier: Modifier, scroll: Bo
             }
             Spacer(Modifier.height(if (short) 2.dp else 6.dp))
             state.error?.let { ErrorCard(it) }
+            if (!install.installed && !install.installing) {
+                ImportOptions(install, actions)
+            }
+            if (install.installed && !install.installing) {
+                InstalledDetails(install, actions)
+            }
             if (install.installing) {
                 install.stages.forEachIndexed { i, stage ->
                     StageRow(stage, done = i < install.stageIndex, current = i == install.stageIndex)
@@ -149,6 +162,9 @@ private fun Hero(state: Snapshot, short: Boolean, modifier: Modifier, scroll: Bo
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (install.cancelable) {
+                    TextButton(onClick = actions.cancelImport) { Text("Cancel import") }
+                }
             } else {
                 val steps = if (install.installed) {
                     listOf(
@@ -167,6 +183,98 @@ private fun Hero(state: Snapshot, short: Boolean, modifier: Modifier, scroll: Bo
             }
         }
     }
+}
+
+@Composable
+private fun ImportOptions(install: Install, actions: LauncherActions) {
+    Text(
+        "Already have Minecraft 26.3? Reuse its files from this phone or a ZIP; only missing files download. " +
+            "Java libraries and LWJGL are not needed by Horizon.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = actions.importFolder, modifier = Modifier.weight(1f)) {
+            Icon(Icons.Rounded.FolderOpen, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Import folder", maxLines = 1)
+        }
+        OutlinedButton(onClick = actions.importZip, modifier = Modifier.weight(1f)) {
+            Icon(Icons.Rounded.Archive, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Import ZIP", maxLines = 1)
+        }
+    }
+    if (install.freeBytes > 0) {
+        Text(
+            "${formatBytes(install.freeBytes)} free on this device. The Download button remains the official Mojang path.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun InstalledDetails(install: Install, actions: LauncherActions) {
+    val source = if (install.source == "downloaded" || install.source.isBlank()) {
+        "Downloaded from Mojang"
+    } else {
+        "Imported from ${install.source}"
+    }
+    Text(
+        "$source · ${formatBytes(install.sizeBytes)}",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (install.filesMissing > 0) {
+        Text(
+            "${install.filesMissing} source files were missing and downloaded automatically.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        TextButton(onClick = actions.repairInstallation) {
+            Icon(Icons.Rounded.Refresh, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Repair missing files")
+        }
+        TextButton(onClick = actions.removeInstallation) {
+            Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Remove resources")
+        }
+    }
+}
+
+private fun formatBytes(bytes: Long): String = when {
+    bytes >= 1L shl 30 -> String.format(Locale.US, "%.1f GiB", bytes.toDouble() / (1L shl 30))
+    bytes >= 1L shl 20 -> String.format(Locale.US, "%.0f MiB", bytes.toDouble() / (1L shl 20))
+    else -> "$bytes B"
+}
+
+@Composable
+fun RemoveInstallationDialog(install: Install, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Rounded.DeleteOutline, null) },
+        title = { Text("Remove Minecraft resources?") },
+        text = {
+            Text(
+                "This deletes the prepared Minecraft 26.3 files (${formatBytes(install.sizeBytes)}) " +
+                    "so you can import or download them again. Saves, profiles, packs and mods stay.",
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    act("remove_installation")
+                    onDismiss()
+                },
+            ) { Text("Remove") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable

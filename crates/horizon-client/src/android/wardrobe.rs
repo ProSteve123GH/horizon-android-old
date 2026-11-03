@@ -612,7 +612,6 @@ impl Wardrobe {
                     );
                 }
                 row += 38.0;
-            } else {
             }
         }
         if self.capes && row >= listtop + 80.0 && row + 32.0 <= bottom {

@@ -134,6 +134,20 @@ fun SettingsScreen(state: Snapshot, wide: Boolean, actions: LauncherActions) {
                 Text("Source code")
             }
         }
+        item(key = "classic", span = StaggeredGridItemSpan.FullLine) {
+            OutlinedButton(
+                onClick = actions.openClassicLauncher,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(min = 48.dp),
+            ) {
+                Icon(Icons.Rounded.History, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Open classic launcher for skins and saved accounts",
+                    maxLines = 2,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
     }
 }
 

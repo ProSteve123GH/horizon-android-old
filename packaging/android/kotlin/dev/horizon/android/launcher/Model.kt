@@ -10,11 +10,18 @@ private fun <T> JSONArray?.list(map: (JSONObject) -> T): List<T> =
 data class Install(
     val installed: Boolean,
     val installing: Boolean,
+    val importing: Boolean,
+    val cancelable: Boolean,
     val stage: String,
     val stageIndex: Int,
     val stages: List<String>,
     val overall: Float,
     val detail: String,
+    val source: String,
+    val sizeBytes: Long,
+    val cacheBytes: Long,
+    val filesMissing: Long,
+    val freeBytes: Long,
 )
 
 data class LoginCode(val userCode: String, val uri: String)
@@ -110,6 +117,8 @@ data class Snapshot(
                 install = Install(
                     installed = install.optBoolean("installed"),
                     installing = install.optBoolean("installing"),
+                    importing = install.optBoolean("importing"),
+                    cancelable = install.optBoolean("cancelable"),
                     stage = install.optString("stage"),
                     stageIndex = install.optInt("stage_index"),
                     stages = install.optJSONArray("stages").let { a ->
@@ -117,6 +126,11 @@ data class Snapshot(
                     },
                     overall = install.optDouble("overall", 0.0).toFloat(),
                     detail = install.optString("detail"),
+                    source = install.optString("source"),
+                    sizeBytes = install.optLong("size_bytes"),
+                    cacheBytes = install.optLong("cache_bytes"),
+                    filesMissing = install.optLong("files_missing"),
+                    freeBytes = install.optLong("free_bytes"),
                 ),
                 account = Account(
                     status = account.optString("status"),

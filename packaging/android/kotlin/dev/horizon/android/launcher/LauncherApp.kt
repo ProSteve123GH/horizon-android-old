@@ -1,5 +1,7 @@
 package dev.horizon.android.launcher
 
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -70,6 +72,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.horizon.android.NativeBridge
@@ -98,11 +101,12 @@ sealed interface Overlay {
     data class Choose(val id: String, val options: Options) : Overlay
     data class Edit(val id: String, val title: String, val value: String, val hint: String) : Overlay
     data class Remove(val item: LocalItem) : Overlay
+    data object RemoveInstallation : Overlay
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit) {
+fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit, onClassicLauncher: () -> Unit) {
     var snapshot by remember { mutableStateOf<Snapshot?>(null) }
     // Poll only while the launcher is on screen: never while the game runs.
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -124,6 +128,28 @@ fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit) {
     var importKind by rememberSaveable { mutableStateOf("mods") }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         onImport(importKind, uri?.toString())
+    }
+    val context = LocalContext.current
+    val persist = { uri: Uri ->
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
+        Unit
+    }
+    val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            persist(uri)
+            NativeBridge.importMinecraftFolder(uri.toString())
+        }
+    }
+    val zipPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            persist(uri)
+            NativeBridge.importMinecraftZip(uri.toString())
+        }
     }
     val snackbars = remember { SnackbarHostState() }
     val state = snapshot
@@ -157,6 +183,16 @@ fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit) {
             picker.launch(arrayOf("*/*"))
         },
         remove = { overlay = Overlay.Remove(it) },
+        importFolder = { folderPicker.launch(null) },
+        importZip = {
+            zipPicker.launch(
+                arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"),
+            )
+        },
+        cancelImport = { act("cancel_import") },
+        repairInstallation = { act("repair_installation") },
+        removeInstallation = { overlay = Overlay.RemoveInstallation },
+        openClassicLauncher = onClassicLauncher,
         toggleSettings = { settingsOpen = !settingsOpen },
     )
 
@@ -169,6 +205,7 @@ fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit) {
             Overlay.Profiles -> ProfilesSheet(onDismiss = { overlay = null })
             is Overlay.Edit -> EditDialog(o, onDismiss = { overlay = null })
             is Overlay.Remove -> RemoveDialog(o.item, onDismiss = { overlay = null })
+            Overlay.RemoveInstallation -> RemoveInstallationDialog(state.install, onDismiss = { overlay = null })
             null -> {}
         }
         ImportDialogs(state.documents)
@@ -267,6 +304,12 @@ class LauncherActions(
     val edit: (id: String, title: String, value: String, hint: String) -> Unit,
     val import: (String) -> Unit,
     val remove: (LocalItem) -> Unit,
+    val importFolder: () -> Unit,
+    val importZip: () -> Unit,
+    val cancelImport: () -> Unit,
+    val repairInstallation: () -> Unit,
+    val removeInstallation: () -> Unit,
+    val openClassicLauncher: () -> Unit,
     val toggleSettings: () -> Unit,
 )
 
