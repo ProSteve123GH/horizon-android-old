@@ -32,6 +32,14 @@ To play, use [the launcher](../launcher/README.md); the project site is [playhor
 - [Horizon APIs](api/README.md): every surface other programs build on (mods, shaders, agent control, servers, the launcher, data formats), each with its guide, generated reference, stability and changelog, and the [stability and versioning policy](api/stability.md).
 - Menus: every screen is vanilla's (title, world list, create world, multiplayer, options, pause). Horizon's own settings hang off vanilla's Options the way mods add theirs: **Horizon Settings...** and **Mods...** in the last two slots of the Options grid (Horizon Settings opens Graphics, Advanced Graphics, Controller Settings, Extras and Mods, each a vanilla options list), with Horizon Graphics and Advanced Graphics also at the top of Video Settings and Controller Settings at the bottom of Controls. The title screen's and pause menu's Friends buttons open Join a Friend and Play with Friends ([play-with-friends.md](play-with-friends.md)).
 
+## Android
+
+- [Android guide](android.md): install, touch controls, accounts, rendering, builds and checks.
+- [Minecraft installation import](android-minecraft-import.md): reuse a 26.3 folder or ZIP, what is verified, and repair.
+- [Fork notes](android-fork.md): Compose launcher, PR #56 status, package identity and gaps.
+- [Development APKs](android-dev-builds.md): CI builds, signing and artifact retrieval.
+- [Upstream sync](android-upstream-sync.md): merging the Android fork and engine upstreams without rewriting history.
+
 ## Parity
 
 - [Rust rewrite status](rust-parity.md): completion criteria, how to reproduce the validation, and per-area scope.
