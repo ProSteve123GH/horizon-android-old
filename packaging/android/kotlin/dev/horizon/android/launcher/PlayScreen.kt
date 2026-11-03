@@ -62,7 +62,7 @@ fun PlayScreen(state: Snapshot, wide: Boolean, short: Boolean, actions: Launcher
             Modifier.fillMaxSize().padding(bottom = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Hero(state, short, Modifier.weight(1f).fillMaxHeight(), scroll = true)
+            Hero(state, short, actions, Modifier.weight(1f).fillMaxHeight(), scroll = true)
             Column(
                 Modifier.width(300.dp).fillMaxHeight(),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -82,7 +82,7 @@ fun PlayScreen(state: Snapshot, wide: Boolean, short: Boolean, actions: Launcher
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Hero(state, short, Modifier.fillMaxWidth(), scroll = false)
+            Hero(state, short, actions, Modifier.fillMaxWidth(), scroll = false)
             VersionCard(state, onClick = { actions.choose("profile") })
             LaunchButton(state, actions.play, Modifier.fillMaxWidth().height(64.dp))
         }
@@ -91,7 +91,13 @@ fun PlayScreen(state: Snapshot, wide: Boolean, short: Boolean, actions: Launcher
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun Hero(state: Snapshot, short: Boolean, modifier: Modifier, scroll: Boolean) {
+private fun Hero(
+    state: Snapshot,
+    short: Boolean,
+    actions: LauncherActions,
+    modifier: Modifier,
+    scroll: Boolean,
+) {
     val install = state.install
     Card(
         modifier = modifier,
