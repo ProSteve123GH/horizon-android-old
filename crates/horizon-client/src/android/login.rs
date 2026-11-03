@@ -3,7 +3,7 @@ use super::pages::{Action, button};
 use crate::account::{self, Account, Accounts, Secrets, SignIn, SignInState};
 use horizon_client::ui_theme::{Face, Ui, color};
 
-pub(super) struct Login {
+pub(crate) struct Login {
     pub choosing: bool,
     pub providers: bool,
     pub offline: bool,
@@ -44,7 +44,7 @@ impl Login {
         login.refresh_status();
         login
     }
-    pub(super) fn refresh_status(&mut self) {
+    pub(crate) fn refresh_status(&mut self) {
         let accounts = Accounts::load();
         let account = accounts.selected().cloned();
         self.saved_accounts = accounts.accounts;
@@ -57,6 +57,14 @@ impl Login {
                 .is_some_and(|s| serde_json::from_str::<Secrets>(&s).is_ok())
         });
     }
+    pub fn state(&self) -> Option<&SignInState> {
+        self.state.as_ref()
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
     pub fn status(&self, offline_name: &str) -> String {
         match (&self.profile, self.signed_in) {
             (Some(name), true) => format!("Signed in: {name}"),

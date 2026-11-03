@@ -6,7 +6,7 @@ use winit::{
 };
 
 #[derive(Clone, Copy, PartialEq)]
-pub(super) enum Action {
+pub(crate) enum Action {
     Page(Page),
     Play,
     Search,
@@ -250,6 +250,20 @@ impl Launcher {
         let scale = ui.density / ui.batch.scale;
         ui.batch
             .fill(&gui.atlas, 0.0, 0.0, w * scale, h * scale, color::BG);
+        if self.direct {
+            // Started from the Compose launcher: a splash while the world loads.
+            let text = self
+                .error
+                .clone()
+                .unwrap_or_else(|| "Starting Horizon...".to_owned());
+            let text = ui.fit_text(Face::Medium, 18.0, &text, w - 48.0);
+            ui.text_centered(Face::Medium, 18.0, w / 2.0, h / 2.0 - 13.0, color::TEXT, &text);
+            ui.finish();
+            if !r.render(&game::loading_frame(&b))? && !b.patches.is_empty() {
+                horizon_client::ui_theme::reset_atlas();
+            }
+            return Ok(());
+        }
         ui.text(
             Face::Medium,
             if w < 400.0 {

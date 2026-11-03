@@ -21,6 +21,8 @@ mod account;
 mod browser;
 #[path = "android/dns.rs"]
 mod android_dns;
+#[path = "android/bridge.rs"]
+mod bridge;
 #[path = "android/catalog.rs"]
 mod catalog;
 #[path = "android/device_preferences.rs"]
@@ -153,7 +155,7 @@ pub(crate) fn android_event_loop() -> Result<EventLoop<()>, winit::error::EventL
     })
 }
 
-fn init_logging() {
+pub(crate) fn init_logging() {
     let trace_gles = !PUBLIC_BUILD && std::env::var_os("HORIZON_GLES_TRACE").is_some();
     let mut logger = android_logger::Config::default()
         .with_max_level(if trace_gles {
@@ -261,6 +263,10 @@ fn android_main(app: AndroidApp) {
         }
     }
     let mut launcher = launcher::Launcher::new(home.clone());
+    // The Compose launcher (main process) starts this `:game` process to play.
+    if std::fs::remove_file(home.join(bridge::LAUNCH_REQUEST)).is_ok() {
+        launcher.play_directly();
+    }
     let result = android_event_loop()
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })
         .and_then(|events| events.run_app(&mut launcher).map_err(Into::into));
