@@ -16,8 +16,12 @@ it installs beside a release app. The version name contains the workflow run and
 source commit; the version code is `1000 + run_number`. Test data is separate:
 worlds and accounts are not copied from the release app.
 
-The workflow never publishes GitHub Releases, sends Discord messages or uploads
-raw Minecraft inputs, prepared resources, player data or signing keys.
+The workflow never publishes GitHub Releases, sends Discord messages or attaches
+raw Minecraft inputs, prepared resources, player data or signing keys to an
+artifact. It uses GitHub's private Actions cache for the prepared Minecraft
+inputs so a rebuild does not download them again; the cache is not a
+downloadable artifact and is not part of the APK. The cache never contains a
+key supplied through the secret.
 
 ## Getting an APK
 
@@ -36,6 +40,20 @@ Artifacts expire after 14 days. GitHub requires sign-in to download them.
 These are experimental builds. They have not automatically passed gameplay,
 graphics-driver or performance testing. Emulator frame rates are not phone
 results.
+
+## Checking a build
+
+- Open the run under **Actions → Android dev APKs**, then the `build (…)` job.
+  Each workflow step is named after the stage that failed; open it for the
+  command and compiler output.
+- The artifact name ends in the ABI, for example
+  `horizon-dev-123-arm64-v8a`; `BUILD.json` repeats `abi`, `commit`, `package`,
+  `version_code`, `profile` and the signing source.
+- On a machine with Android build tools, `aapt2 dump badging file.apk` shows the
+  package, version code and native ABI. On any machine, `unzip -l file.apk` shows
+  `lib/<abi>/libhorizon_android.so`.
+- Verify the download with `sha256sum -c SHA256SUMS.txt` in the unpacked
+  artifact directory, or compare `sha256sum file.apk` with the checksum file.
 
 ## Signing
 
