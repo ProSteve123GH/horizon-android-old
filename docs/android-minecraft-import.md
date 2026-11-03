@@ -169,10 +169,11 @@ folder are kept. The source is never deleted or modified.
 
 ## Test status
 
-The platform-independent importer has Rust unit tests for layout discovery,
+The platform-independent importer has 15 Rust unit tests for layout discovery,
 pinned metadata, cache reuse, cancellation, corruption, ZIP traversal and
-record restore. The Compose/SAF/JNI path is compiled by the Android CI build and
-is exercised through the remote APK workflow. It has not been tested on a
-physical Android device in this workspace; device-specific provider behavior
-(especially ZIP file descriptors and `Android/data` restrictions) still needs
-validation.
+record restore. The Android glue and Compose screens are compiled into the
+arm64 dev APK by the remote workflow. CI run #4 (commit `128b45605`) passed APK
+signing, package identity, ABI and payload checks; its artifact SHA-256 was
+verified locally. The APK has not been installed on a physical Android device
+in this workspace, so SAF provider behavior, ZIP file descriptors, the repair
+flow and the installer still need device validation.
