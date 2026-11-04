@@ -75,14 +75,23 @@ fn read(path: &Path) -> Option<World> {
 fn read_with(path: &Path, sized: bool, lenient: bool) -> Option<World> {
     // A lenient listing shows recoverable world folders, not stray files or
     // links: deleting through one must never leave the saves tree.
-    if lenient
-        && (!path.is_dir()
+    if lenient {
+        if !path.is_dir()
             || path
                 .symlink_metadata()
                 .map(|meta| meta.file_type().is_symlink())
-                .unwrap_or(true))
-    {
-        return None;
+                .unwrap_or(true)
+        {
+            return None;
+        }
+        if path
+            .join("level.dat")
+            .symlink_metadata()
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return None;
+        }
     }
     let dat = path.join("level.dat");
     let changed = match fs::metadata(&dat).and_then(|m| m.modified()) {
