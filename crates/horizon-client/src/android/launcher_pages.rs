@@ -411,11 +411,29 @@ impl Launcher {
                     ui.rounded(32.0, bar_y, (w - 64.0) * overall, 4.0, 2.0, color::ACCENT);
                 }
                 let detail = match progress.stage {
-                    InstallStage::Download => format!(
-                        "{:.1} / {:.1} MiB  - verified downloads",
-                        progress.done as f64 / 1048576.0,
-                        progress.total as f64 / 1048576.0
-                    ),
+                    InstallStage::Download => {
+                        if progress.downloaded == 0 && progress.cached > 0 {
+                            format!(
+                                "{:.1} / {:.1} MiB verified from existing files - nothing downloaded",
+                                progress.done as f64 / 1048576.0,
+                                progress.total as f64 / 1048576.0
+                            )
+                        } else if progress.cached > 0 {
+                            format!(
+                                "{:.1} / {:.1} MiB checked - {:.1} MiB downloaded, {:.1} MiB reused",
+                                progress.done as f64 / 1048576.0,
+                                progress.total as f64 / 1048576.0,
+                                progress.downloaded as f64 / 1048576.0,
+                                progress.cached as f64 / 1048576.0
+                            )
+                        } else {
+                            format!(
+                                "{:.1} / {:.1} MiB downloaded from Mojang",
+                                progress.done as f64 / 1048576.0,
+                                progress.total as f64 / 1048576.0
+                            )
+                        }
+                    }
                     InstallStage::Controls => format!(
                         "{} / {} control files verified",
                         progress.done, progress.total

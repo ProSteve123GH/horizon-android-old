@@ -407,54 +407,74 @@ impl Controller {
         } else {
             0.0
         };
-        let (stage, stage_index, stages, overall, detail, cancelable, importing) =
-            if let Some(import) = imported {
-                let stages = import["stages"]
-                    .as_array()
-                    .map(|stages| {
-                        stages
-                            .iter()
-                            .filter_map(|stage| stage.as_str().map(str::to_owned))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                (
-                    import["stage"].as_str().unwrap_or("Importing").to_owned(),
-                    import["stage_index"].as_u64().unwrap_or(0) as usize,
-                    stages,
-                    import["overall"].as_f64().unwrap_or(0.0) as f32,
-                    import["detail"].as_str().unwrap_or("").to_owned(),
-                    import["cancelable"].as_bool().unwrap_or(false),
-                    import["importing"].as_bool().unwrap_or(false),
-                )
-            } else {
-                let detail = match progress.stage {
-                    InstallStage::Download => format!(
-                        "{:.1} / {:.1} MiB · verified downloads",
-                        progress.done as f64 / 1048576.0,
-                        progress.total as f64 / 1048576.0
-                    ),
-                    InstallStage::Controls => {
+        let (stage, stage_index, stages, overall, detail, cancelable, importing) = if let Some(
+            import,
+        ) = imported
+        {
+            let stages = import["stages"]
+                .as_array()
+                .map(|stages| {
+                    stages
+                        .iter()
+                        .filter_map(|stage| stage.as_str().map(str::to_owned))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            (
+                import["stage"].as_str().unwrap_or("Importing").to_owned(),
+                import["stage_index"].as_u64().unwrap_or(0) as usize,
+                stages,
+                import["overall"].as_f64().unwrap_or(0.0) as f32,
+                import["detail"].as_str().unwrap_or("").to_owned(),
+                import["cancelable"].as_bool().unwrap_or(false),
+                import["importing"].as_bool().unwrap_or(false),
+            )
+        } else {
+            let detail = match progress.stage {
+                InstallStage::Download => {
+                    if progress.downloaded == 0 && progress.cached > 0 {
                         format!(
-                            "{} / {} control files verified",
-                            progress.done, progress.total
+                            "{:.1} / {:.1} MiB verified from existing files · nothing downloaded",
+                            progress.done as f64 / 1048576.0,
+                            progress.total as f64 / 1048576.0
+                        )
+                    } else if progress.cached > 0 {
+                        format!(
+                            "{:.1} / {:.1} MiB checked · {:.1} MiB downloaded, {:.1} MiB reused",
+                            progress.done as f64 / 1048576.0,
+                            progress.total as f64 / 1048576.0,
+                            progress.downloaded as f64 / 1048576.0,
+                            progress.cached as f64 / 1048576.0
+                        )
+                    } else {
+                        format!(
+                            "{:.1} / {:.1} MiB downloaded from Mojang",
+                            progress.done as f64 / 1048576.0,
+                            progress.total as f64 / 1048576.0
                         )
                     }
-                    _ => "Please keep Horizon open. Downloaded files are kept for retry.".into(),
-                };
-                (
-                    progress.stage.label().to_owned(),
-                    current,
-                    InstallStage::ALL
-                        .iter()
-                        .map(|stage| stage.label().to_owned())
-                        .collect(),
-                    (current as f32 + fraction.clamp(0.0, 1.0)) / InstallStage::ALL.len() as f32,
-                    detail,
-                    false,
-                    false,
-                )
+                }
+                InstallStage::Controls => {
+                    format!(
+                        "{} / {} control files verified",
+                        progress.done, progress.total
+                    )
+                }
+                _ => "Please keep Horizon open. Downloaded files are kept for retry.".into(),
             };
+            (
+                progress.stage.label().to_owned(),
+                current,
+                InstallStage::ALL
+                    .iter()
+                    .map(|stage| stage.label().to_owned())
+                    .collect(),
+                (current as f32 + fraction.clamp(0.0, 1.0)) / InstallStage::ALL.len() as f32,
+                detail,
+                false,
+                false,
+            )
+        };
         let free_bytes = horizon_client::official_install::available_space(&self.home);
         let c = &self.catalog.config;
         let results: Vec<Value> = self
@@ -527,6 +547,8 @@ impl Controller {
                 "source": self.installation.source,
                 "size_bytes": self.installation.size_bytes,
                 "cache_bytes": self.installation.cache_bytes,
+                "downloaded_bytes": progress.downloaded,
+                "cached_bytes": progress.cached,
                 "files_missing": self.installation.files_missing,
                 "free_bytes": free_bytes,
             },

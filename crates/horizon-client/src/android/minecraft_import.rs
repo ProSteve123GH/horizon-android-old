@@ -330,10 +330,13 @@ fn prepare(home: PathBuf, label: String, report: core::Report) {
         state.stage_offset = 1;
         state.stage_index = 1;
         state.stage = InstallStage::Metadata.label().into();
-        state.detail = "Files that were missing from the source will be downloaded now.".into();
+        state.detail = "Checking the imported files; only missing files are downloaded.".into();
         state.overall = 0.35;
     }
-    let result = official_install::install_with_progress(&home, update_install);
+    let index = fs::read(official_install::download_directory(&home).join("asset-index.json"))
+        .ok()
+        .filter(|bytes| official_install::accepted_asset_index(bytes));
+    let result = official_install::install_with_progress_and_index(&home, index, update_install);
     match result {
         Ok(()) => {
             if let Err(error) = core::write_record(&home, &label, &report) {
@@ -437,7 +440,10 @@ fn run_repair(home: PathBuf) {
         };
         state.overall = 0.01;
     }
-    let result = official_install::install_with_progress(&home, update_install);
+    let index = fs::read(root.join("asset-index.json"))
+        .ok()
+        .filter(|bytes| official_install::accepted_asset_index(bytes));
+    let result = official_install::install_with_progress_and_index(&home, index, update_install);
     match result {
         Ok(()) => {
             if let Some(record) = record {
@@ -638,11 +644,23 @@ fn update_install(progress: InstallProgress) {
     state.stage_index = index + state.stage_offset;
     state.stage = progress.stage.label().into();
     state.detail = match progress.stage {
-        InstallStage::Download => format!(
-            "{} of {} MiB downloaded from Mojang",
-            progress.done / 1_048_576,
-            progress.total.div_ceil(1_048_576)
-        ),
+        InstallStage::Download => {
+            let checked = progress.done.div_ceil(1_048_576);
+            let total = progress.total.div_ceil(1_048_576);
+            if progress.downloaded == 0 && progress.cached > 0 {
+                format!(
+                    "{checked} of {total} MiB verified from the imported files · nothing downloaded"
+                )
+            } else if progress.cached > 0 {
+                format!(
+                    "{checked} of {total} MiB checked · {} MiB downloaded, {} MiB reused",
+                    progress.downloaded.div_ceil(1_048_576),
+                    progress.cached.div_ceil(1_048_576)
+                )
+            } else {
+                format!("{checked} of {total} MiB downloaded from Mojang")
+            }
+        }
         InstallStage::Controls => format!(
             "{} / {} control files verified",
             progress.done, progress.total

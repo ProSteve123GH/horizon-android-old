@@ -91,16 +91,26 @@ The importer checks the same pins as the official installer:
 Mojang has republished the 26.3 version JSON several times; only the asset
 index changed. Horizon accepts the pinned manifest, the current launcher-meta
 manifest and their asset indexes, so an existing launcher can keep whichever
-one it downloaded. A version JSON rewritten by a launcher is not accepted unless
-its hash is one of those Mojang manifests; use the official 26.3 metadata or
-**Download Minecraft 26.3** in that case.
+one it downloaded. The accepted asset index from the source is also kept during
+preparation, instead of being replaced by the current index. This matters
+because the republished index changed translation files: keeping the source
+index reuses every asset the source contains, while switching indexes would
+download those translations again. A version JSON rewritten by a launcher is not
+accepted unless its hash is one of those Mojang manifests; use the official 26.3
+metadata or **Download Minecraft 26.3** in that case.
+
+The progress screen separates checking from downloading. A complete import can
+show the full installation size while the detail says that nothing was
+downloaded; that number is the size being verified, not network traffic.
 
 A source file that is present but has the wrong size or hash is an error: the
 import stops and reports which file is corrupt. An existing Horizon installation
 is not modified. A source file that is absent is different: it is counted as
 missing, and the normal installer downloads it immediately after the copy phase.
 This is why a folder without assets, without the client JAR, or without
-`assets/indexes/34.json` can still finish.
+`assets/indexes/34.json` can still finish. Without the index, however, Horizon
+cannot match the source's `assets/objects` files, so the installer downloads the
+assets named by the official index.
 
 The import record in
 `.local/horizon-client/26.3/minecraft-import.json` keeps the source label and
