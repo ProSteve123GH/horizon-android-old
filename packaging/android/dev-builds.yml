@@ -122,21 +122,34 @@ jobs:
         id: cargo-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
+          # actions/cache hashes this path list into the cache version. Keep it
+          # identical to the old android-dev cache, or the default branch's
+          # existing Cargo cache cannot be restored.
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             .local/ci-target
-            .local/android/gradle-build
           key: android-cargo-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
           # A feature branch cannot read another feature branch's cache, but it
           # can read the default branch's. Keep the older android-dev prefix too:
           # the Android branch produced those before this workflow was split.
           restore-keys: |
             android-cargo-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+            android-cargo-${{ runner.os }}-${{ matrix.abi }}-
             android-dev-${{ runner.os }}-${{ matrix.abi }}-
 
+      - name: Restore the Gradle project build directory
+        id: gradle-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .local/android/gradle-build
+          key: android-gradle-build-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('packaging/android/build.gradle') }}-${{ github.sha }}
+          restore-keys: |
+            android-gradle-build-${{ runner.os }}-${{ matrix.abi }}-
+
       - name: Restore prepared Minecraft 26.3 engine inputs
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: minecraft-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             .local/android/minecraft
@@ -273,8 +286,24 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             .local/ci-target
-            .local/android/gradle-build
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+      - name: Save the Gradle project build directory on the Android main branch
+        if: github.ref == 'refs/heads/android' && steps.gradle-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .local/android/gradle-build
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
+
+      - name: Save the prepared Minecraft 26.3 engine inputs on the Android main branch
+        if: github.ref == 'refs/heads/android' && steps.minecraft-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            .local/android/minecraft
+            .local/horizon-client
+            .local/android/serve
+          key: ${{ steps.minecraft-cache.outputs.cache-primary-key }}
 
       - name: Remove decoded signing material from the runner workspace
         if: always()
