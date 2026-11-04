@@ -90,7 +90,7 @@ private fun sizeLabel(bytes: Long): String {
     }
 }
 
-private fun playedLabel(seconds: Long?): String {
+internal fun playedLabel(seconds: Long?): String {
     if (seconds == null) return "Never played"
     val age = ((System.currentTimeMillis() / 1000) - seconds).coerceAtLeast(0)
     return when {
@@ -342,7 +342,14 @@ private fun InstanceRow(
 }
 
 @Composable
-private fun NameDialog(title: String, initial: String, confirm: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+internal fun NameDialog(
+    title: String,
+    initial: String,
+    confirm: String,
+    maxLength: Int = 32,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit,
+) {
     var name by remember { mutableStateOf(initial) }
     val save = {
         onSave(name.trim())
@@ -354,10 +361,10 @@ private fun NameDialog(title: String, initial: String, confirm: String, onDismis
         text = {
             OutlinedTextField(
                 value = name,
-                onValueChange = { if (it.length <= 32) name = it },
+                onValueChange = { if (it.length <= maxLength) name = it },
                 label = { Text("Name") },
                 placeholder = { Text("Survival, Modded, Creative…") },
-                supportingText = { Text("${name.length}/32") },
+                supportingText = { Text("${name.length}/$maxLength") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )

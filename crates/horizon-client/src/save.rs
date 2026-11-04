@@ -177,13 +177,30 @@ impl SessionLock {
             Ok(file) => file,
             Err(e) => return e.kind() == std::io::ErrorKind::PermissionDenied,
         };
-        match file.try_lock() {
-            Err(fs::TryLockError::WouldBlock) => true,
-            Err(_) => false,
-            // Take the probe's own lock back at once, as `SessionLock` does on drop.
-            Ok(()) => {
-                let _ = file.unlock();
-                false
+        // The standard library's try_lock returns Unsupported on Android
+        // without a syscall (rust-lang/rust#148325), so probe with the same
+        // Bionic flock that `acquire` takes.
+        #[cfg(target_os = "android")]
+        {
+            match rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+                Ok(()) => {
+                    let _ = rustix::fs::flock(&file, rustix::fs::FlockOperation::Unlock);
+                    false
+                }
+                Err(rustix::io::Errno::WOULDBLOCK) => true,
+                Err(_) => false,
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            match file.try_lock() {
+                Err(fs::TryLockError::WouldBlock) => true,
+                Err(_) => false,
+                // Take the probe's own lock back at once, as `SessionLock` does on drop.
+                Ok(()) => {
+                    let _ = file.unlock();
+                    false
+                }
             }
         }
     }
@@ -6954,5 +6971,18 @@ mod tests {
             assert_eq!(preset.next().prev(), preset);
             assert_eq!(preset.prev().next(), preset);
         }
+    }
+
+    #[test]
+    fn a_world_lock_is_reported_while_it_is_held() {
+        let dir = std::env::temp_dir().join(format!("horizon-session-lock-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        assert!(!SessionLock::is_locked(&dir), "no session.lock yet");
+        let lock = SessionLock::acquire(&dir).unwrap();
+        assert!(SessionLock::is_locked(&dir));
+        drop(lock);
+        assert!(!SessionLock::is_locked(&dir));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

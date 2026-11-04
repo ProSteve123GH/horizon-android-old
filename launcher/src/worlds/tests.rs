@@ -158,3 +158,51 @@ fn a_copy_gets_the_next_free_name_in_its_folder_and_level_dat() {
     );
     fs::remove_dir_all(&home).unwrap();
 }
+
+#[test]
+fn renaming_changes_the_level_name_and_keeps_the_folder() {
+    let home = scratch("rename");
+    world(
+        &home,
+        "Folder",
+        vec![("LevelName", name("Old")), ("GameType", Tag::Int(0))],
+    );
+    let original = find(&home, "Folder").unwrap();
+    let renamed = rename(&original, "  New name  ").unwrap();
+    assert_eq!(renamed.folder, "Folder");
+    assert_eq!(renamed.name, "New name");
+    assert_eq!(find(&home, "new NAME").unwrap().folder, "Folder");
+    assert_eq!(
+        fs::read_dir(home.join("saves")).unwrap().count(),
+        1,
+        "the folder keeps its id"
+    );
+    assert!(rename(&renamed, "   ").is_err());
+    assert!(rename(&renamed, "line\nbreak").is_err());
+    fs::remove_dir_all(&home).unwrap();
+}
+
+#[test]
+fn a_lenient_listing_keeps_a_world_without_level_dat() {
+    let home = scratch("lenient");
+    world(&home, "Good", vec![("LevelName", name("Good"))]);
+    fs::create_dir_all(home.join("saves/Broken/region")).unwrap();
+    fs::write(home.join("saves/Broken/region/r.0.0.mca"), [1u8; 10]).unwrap();
+    fs::write(home.join("saves/notes.txt"), b"not a world").unwrap();
+
+    assert_eq!(
+        list(&home).len(),
+        1,
+        "a normal listing only has real worlds"
+    );
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(home.join("saves/Good"), home.join("saves/link")).unwrap();
+    let all = list_lenient(&home);
+    assert_eq!(all.len(), 2);
+    let broken = find_lenient(&home, "Broken").unwrap();
+    assert_eq!((broken.name.as_str(), broken.mode), ("Broken", "Unknown"));
+    assert_eq!(broken.size, 0);
+    assert!(broken.version.is_none());
+    assert!(rename(&broken, "Recovered").is_err());
+    fs::remove_dir_all(&home).unwrap();
+}

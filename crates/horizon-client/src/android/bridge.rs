@@ -43,6 +43,11 @@ thread_local! {
 /// The file the `:game` process reads to start the game without its own launcher.
 pub(crate) const LAUNCH_REQUEST: &str = "launch-request.json";
 
+/// A running game holds the world's `session.lock`; never rewrite or delete it.
+fn world_in_use(world: &crate::worlds::World) -> bool {
+    horizon_client::save::SessionLock::is_locked(&world.path)
+}
+
 fn kind_name(kind: Kind) -> &'static str {
     match kind {
         Kind::Mods => "mods",
@@ -984,7 +989,46 @@ impl Controller {
                     Err(e) => e,
                 };
             }
-            "play" => return self.play(),
+            "play" => return self.play(None),
+            "worlds" => return Ok(self.worlds()),
+            "world_launch" => {
+                let world = self.world(arg)?;
+                if world_in_use(&world) {
+                    return Err("That world is open in the game. Close it first.".into());
+                }
+                return self.play(Some(&world.folder));
+            }
+            "world_rename" => {
+                let request: Value = serde_json::from_str(arg)
+                    .map_err(|_| "Expected a world folder and name".to_owned())?;
+                let folder = request["folder"].as_str().ok_or("Missing world folder")?;
+                let name = request["name"].as_str().ok_or("Missing world name")?;
+                let world = self.world(folder)?;
+                if world_in_use(&world) {
+                    return Err("Close the world in the game before renaming it".into());
+                }
+                crate::worlds::rename(&world, name)?;
+            }
+            "world_duplicate" => {
+                let world = self.world(arg)?;
+                if world_in_use(&world) {
+                    return Err("Close the world in the game before duplicating it".into());
+                }
+                if world.mode == "Unknown" {
+                    return Err(
+                        "This world has no readable level.dat, so it cannot be duplicated".into(),
+                    );
+                }
+                let copy = crate::worlds::copy(&world)?;
+                return Ok(json!({"folder": copy.folder, "name": copy.name}));
+            }
+            "world_delete" => {
+                let world = self.world(arg)?;
+                if world_in_use(&world) {
+                    return Err("Close the world in the game before deleting it".into());
+                }
+                crate::worlds::delete(&world)?;
+            }
             "options" => return Ok(self.options(arg)),
             "profiles" => return Ok(self.profiles()),
             "profile_create" => {
@@ -1042,7 +1086,7 @@ impl Controller {
                     return Err("That instance no longer exists".into());
                 }
                 self.choose("profile", &id.to_string())?;
-                return self.play();
+                return self.play(None);
             }
             _ => return Err(format!("Unknown launcher action {method}")),
         }
@@ -1175,7 +1219,45 @@ impl Controller {
     }
 
     /// Starts the install, or asks the Activity to start the game process.
-    fn play(&mut self) -> Result<Value, String> {
+    /// The active instance's worlds, with the metadata the World Manager shows.
+    /// The list is lenient: a folder with no readable level.dat stays visible
+    /// (so it can be deleted) and reports `metadata: false`.
+    fn worlds(&self) -> Value {
+        let game = self.catalog.config.game_home(&self.home);
+        let instance = instances::display_name(&game, self.catalog.config.profile);
+        let worlds: Vec<Value> = crate::worlds::list_lenient(&game)
+            .into_iter()
+            .map(|world| {
+                json!({
+                    "folder": world.folder,
+                    "name": world.name,
+                    "mode": world.mode,
+                    "version": world.version,
+                    "last_played": world
+                        .last_played
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .ok()
+                        .map(|since| since.as_secs()),
+                    "icon": world.icon.as_ref().map(|path| path.to_string_lossy().into_owned()),
+                    "in_use": world_in_use(&world),
+                    "metadata": world.mode != "Unknown",
+                })
+            })
+            .collect();
+        json!({
+            "instance": instance,
+            "instance_id": self.catalog.config.profile,
+            "worlds": worlds,
+        })
+    }
+
+    fn world(&self, query: &str) -> Result<crate::worlds::World, String> {
+        let game = self.catalog.config.game_home(&self.home);
+        crate::worlds::find_lenient(&game, query)
+            .map_err(|_| "That world no longer exists".to_owned())
+    }
+
+    fn play(&mut self, world: Option<&str>) -> Result<Value, String> {
         if self.worker.is_some() || crate::minecraft_import::busy() || self.login.pending() {
             return Ok(json!({"launch": false}));
         }
@@ -1184,8 +1266,15 @@ impl Controller {
             let _ = instances::mark_played(&self.catalog.config.game_home(&self.home));
             self.error = None;
             let _ = std::fs::remove_file(self.home.join("android-error.txt"));
-            std::fs::write(self.home.join(LAUNCH_REQUEST), br#"{"play":true}"#)
-                .map_err(|e| e.to_string())?;
+            let request = match world {
+                Some(world) => json!({"play": true, "world": world}),
+                None => json!({"play": true}),
+            };
+            std::fs::write(
+                self.home.join(LAUNCH_REQUEST),
+                serde_json::to_vec(&request).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
             crate::diagnostics::heartbeat(
                 "play_requested",
                 || json!({"renderer": self.catalog.config.renderer.label(), "launcher": "compose"}),

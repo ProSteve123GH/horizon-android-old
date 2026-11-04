@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SportsEsports
@@ -73,6 +74,7 @@ fun PlayScreen(state: Snapshot, wide: Boolean, short: Boolean, actions: Launcher
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     VersionCard(state, onClick = { actions.choose("profile") })
+                    WorldsButton(actions.openWorlds, Modifier.fillMaxWidth())
                 }
                 LaunchButton(state, actions.play, Modifier.fillMaxWidth().height(if (short) 64.dp else 72.dp))
             }
@@ -84,6 +86,7 @@ fun PlayScreen(state: Snapshot, wide: Boolean, short: Boolean, actions: Launcher
         ) {
             Hero(state, short, actions, Modifier.fillMaxWidth(), scroll = false)
             VersionCard(state, onClick = { actions.choose("profile") })
+            WorldsButton(actions.openWorlds, Modifier.fillMaxWidth())
             LaunchButton(state, actions.play, Modifier.fillMaxWidth().height(64.dp))
         }
     }
@@ -371,6 +374,15 @@ private fun VersionCard(state: Snapshot, onClick: () -> Unit) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun WorldsButton(onOpen: () -> Unit, modifier: Modifier) {
+    OutlinedButton(onClick = onOpen, modifier = modifier, shape = RoundedCornerShape(16.dp)) {
+        Icon(Icons.Rounded.Public, null, Modifier.size(20.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Worlds", style = MaterialTheme.typography.titleSmall)
     }
 }
 

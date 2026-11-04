@@ -47,6 +47,12 @@ mod exit_reports;
 mod gallery;
 #[path = "android/instances.rs"]
 mod instances;
+// The desktop launcher's world model: discovery, metadata, copying, renaming
+// and deletion. The Android world manager adds only its UI and launch request.
+#[rustfmt::skip]
+#[allow(dead_code)]
+#[path = "../../../launcher/src/worlds.rs"]
+mod worlds;
 #[path = "android/minecraft_import.rs"]
 mod minecraft_import;
 #[path = "android/native_ime.rs"]
@@ -267,9 +273,14 @@ fn android_main(app: AndroidApp) {
         }
     }
     let mut launcher = launcher::Launcher::new(home.clone());
-    // The Compose launcher (main process) starts this `:game` process to play.
-    if std::fs::remove_file(home.join(bridge::LAUNCH_REQUEST)).is_ok() {
-        launcher.play_directly();
+    // The Compose launcher (main process) starts this `:game` process to play,
+    // optionally into the world it selected (`{"play":true,"world":"<folder>"}`).
+    if let Ok(bytes) = std::fs::read(home.join(bridge::LAUNCH_REQUEST)) {
+        let _ = std::fs::remove_file(home.join(bridge::LAUNCH_REQUEST));
+        let world = serde_json::from_slice::<serde_json::Value>(&bytes)
+            .ok()
+            .and_then(|request| request.get("world")?.as_str().map(str::to_owned));
+        launcher.play_directly(world);
     }
     let result = android_event_loop()
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })

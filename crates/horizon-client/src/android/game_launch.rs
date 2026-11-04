@@ -8,6 +8,8 @@ pub(crate) struct LaunchRequest {
     pub session_file: Option<PathBuf>,
     pub offline_name: String,
     pub server: String,
+    /// A world folder in `game_home/saves` to open directly (`--world`).
+    pub world: Option<String>,
     pub control_socket: Option<PathBuf>,
     pub extra_arguments: Vec<String>,
     pub open_gl: bool,
@@ -37,6 +39,9 @@ impl LaunchRequest {
         }
         if !self.server.is_empty() {
             args.extend(["--server".into(), self.server.clone()]);
+        }
+        if let Some(world) = &self.world {
+            args.extend(["--world".into(), world.clone()]);
         }
         args.extend(self.extra_arguments.iter().cloned());
         args
@@ -71,6 +76,7 @@ mod tests {
             session_file: None,
             offline_name: "Offline".into(),
             server: "example.test".into(),
+            world: None,
             control_socket: None,
             extra_arguments: vec![],
             open_gl: false,
@@ -101,5 +107,14 @@ mod tests {
                 .windows(2)
                 .any(|a| a == ["--server", "example.test"])
         );
+    }
+    #[test]
+    fn a_world_is_passed_as_the_folder_name() {
+        let mut r = request();
+        r.server.clear();
+        r.world = Some("Survival".into());
+        let args = r.arguments();
+        assert!(args.windows(2).any(|a| a == ["--world", "Survival"]));
+        assert!(!args.iter().any(|a| a == "--server"));
     }
 }

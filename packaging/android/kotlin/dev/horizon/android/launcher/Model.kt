@@ -313,6 +313,48 @@ data class Reply(val ok: Any?, val error: String?) {
     }
 }
 
+/** One single-player world in the active instance's `saves` folder. */
+data class World(
+    val folder: String,
+    val name: String,
+    val mode: String,
+    val version: String?,
+    val lastPlayed: Long?,
+    val icon: String?,
+    val inUse: Boolean,
+    val metadata: Boolean,
+)
+
+/** The active instance's worlds, plus the instance name the sheet shows. */
+data class Worlds(
+    val instance: String,
+    val worlds: List<World>,
+    val error: String?,
+) {
+    companion object {
+        fun load(): Worlds {
+            val reply = act("worlds")
+            val root = reply.ok as? JSONObject
+            return Worlds(
+                instance = root?.optString("instance").orEmpty(),
+                worlds = root?.optJSONArray("worlds").list {
+                    World(
+                        folder = it.optString("folder"),
+                        name = it.optString("name"),
+                        mode = it.optString("mode"),
+                        version = it.text("version"),
+                        lastPlayed = if (it.isNull("last_played")) null else it.optLong("last_played"),
+                        icon = it.text("icon"),
+                        inUse = it.optBoolean("in_use"),
+                        metadata = it.optBoolean("metadata"),
+                    )
+                }.orEmpty(),
+                error = reply.error,
+            )
+        }
+    }
+}
+
 /** One instance: a folder with its own worlds, settings and add-ons. */
 data class Profile(
     val id: Int,

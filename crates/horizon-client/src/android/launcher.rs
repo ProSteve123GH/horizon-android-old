@@ -67,6 +67,8 @@ pub(super) struct Launcher {
     /// Started by the Compose launcher: play at once, return by closing this process.
     direct: bool,
     direct_started: bool,
+    /// A world folder in the active profile to open on this direct start.
+    launch_world: Option<String>,
     leave: bool,
 }
 
@@ -150,12 +152,15 @@ impl Launcher {
             diagnostic_export: None,
             direct: false,
             direct_started: false,
+            launch_world: None,
             leave: false,
         }
     }
     /// The Compose launcher asked for the game: skip this launcher's pages.
-    pub(super) fn play_directly(&mut self) {
+    /// `world` is a folder in the active profile's `saves` to open directly.
+    pub(super) fn play_directly(&mut self, world: Option<String>) {
         self.direct = true;
+        self.launch_world = world;
     }
     fn leave_to_launcher(&mut self, events: &ActiveEventLoop) {
         crate::platform::finish_activity();
@@ -408,6 +413,14 @@ impl Launcher {
             horizon_client::android_runtime::clear_gamepads();
             self.controller_edges = Default::default();
             self.controller_repeat = None;
+            // A selected world is single-player: the configured server must not
+            // win over `--world` in the game's option parsing.
+            let world = self.launch_world.take();
+            let server = if world.is_some() {
+                String::new()
+            } else {
+                self.catalog.config.server.clone()
+            };
             let request = crate::game_launch::LaunchRequest {
                 resources: self
                     .home
@@ -416,7 +429,8 @@ impl Launcher {
                 game_home,
                 session_file: self.prepared_session.take(),
                 offline_name: crate::catalog::truncate_player_name(&self.catalog.config.name),
-                server: self.catalog.config.server.clone(),
+                server,
+                world,
                 control_socket: (!crate::PUBLIC_BUILD).then(|| self.home.join("control.json")),
                 extra_arguments,
                 open_gl: self.catalog.config.renderer == crate::catalog::RendererMode::OpenGl,
