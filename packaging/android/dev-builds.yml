@@ -53,7 +53,8 @@ jobs:
       matrix:
         abi: ${{ fromJSON(inputs.all_abis && '["arm64-v8a","armeabi-v7a","x86","x86_64"]' || '["arm64-v8a"]') }}
     env:
-      CARGO_BUILD_JOBS: '2'
+      # Standard public runners have four vCPUs; two left half the machine idle.
+      CARGO_BUILD_JOBS: '4'
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_TARGET_DIR: ${{ github.workspace }}/.local/ci-target
       HORIZON_TELEMETRY_URL: 'off'
@@ -118,15 +119,21 @@ jobs:
           rustup target add "$target"
 
       - name: Restore Cargo registry and Rust build cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             .local/ci-target
+            .local/android/gradle-build
           key: android-cargo-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
+          # A feature branch cannot read another feature branch's cache, but it
+          # can read the default branch's. Keep the older android-dev prefix too:
+          # the Android branch produced those before this workflow was split.
           restore-keys: |
             android-cargo-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+            android-dev-${{ runner.os }}-${{ matrix.abi }}-
 
       - name: Restore prepared Minecraft 26.3 engine inputs
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -254,6 +261,20 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 14
+
+      # Feature branches only read the default branch's cache. Saving a new
+      # 600 MB cache per branch fills the repository's 10 GB cache budget and
+      # evicts the cache that keeps the next branch fast.
+      - name: Save the Rust build cache on the Android main branch
+        if: github.ref == 'refs/heads/android' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .local/ci-target
+            .local/android/gradle-build
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
       - name: Remove decoded signing material from the runner workspace
         if: always()
