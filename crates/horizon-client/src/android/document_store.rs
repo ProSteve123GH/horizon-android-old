@@ -24,12 +24,109 @@ const CONFIG_FILES: &[&str] = &[
     "horizon-keypad.json",
 ];
 static GAME_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-pub fn set_game_active(active: bool) {
+static GAME_LOCK: std::sync::Mutex<Option<File>> = std::sync::Mutex::new(None);
+const GAME_LOCK_FILE: &str = "game.lock";
+/// The game holds `game.lock` for its whole lifetime, so the provider in the
+/// launcher process can tell that worlds and configuration are in use.
+pub fn set_game_active(home: &Path, active: bool) {
     GAME_ACTIVE.store(active, std::sync::atomic::Ordering::Release);
+    let mut held = GAME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if !active {
+        held.take();
+    } else if held.is_none() {
+        if let Ok(file) = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(home.join(GAME_LOCK_FILE))
+        {
+            if try_hold(&file) {
+                *held = Some(file);
+            }
+        }
+    }
 }
-fn world_access(id: &str) -> io::Result<()> {
-    if matches!(id.split('/').nth(1), Some("worlds" | "configuration"))
-        && GAME_ACTIVE.load(std::sync::atomic::Ordering::Acquire)
+fn try_hold(file: &File) -> bool {
+    #[cfg(target_os = "android")]
+    {
+        rustix::fs::flock(file, rustix::fs::FlockOperation::NonBlockingLockExclusive).is_ok()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        file.try_lock().is_ok()
+    }
+}
+/// `None` means the probe could not take a lock; `Some(true)` means someone
+/// else holds it.
+fn lock_probe(file: &File) -> Option<bool> {
+    #[cfg(target_os = "android")]
+    {
+        match rustix::fs::flock(file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+            Ok(()) => {
+                let _ = rustix::fs::flock(file, rustix::fs::FlockOperation::Unlock);
+                Some(false)
+            }
+            Err(rustix::io::Errno::WOULDBLOCK) => Some(true),
+            Err(_) => None,
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        match file.try_lock() {
+            Ok(()) => {
+                let _ = file.unlock();
+                Some(false)
+            }
+            Err(std::fs::TryLockError::WouldBlock) => Some(true),
+            Err(_) => None,
+        }
+    }
+}
+/// The same probe as `save::SessionLock::is_locked`. This module is also built
+/// by the host harness, so it cannot depend on the game's crate for the check.
+fn world_locked(world: &Path) -> bool {
+    match OpenOptions::new()
+        .write(true)
+        .open(world.join("session.lock"))
+    {
+        Ok(file) => lock_probe(&file) != Some(false),
+        Err(e) => e.kind() == ErrorKind::PermissionDenied,
+    }
+}
+fn game_locked(home: &Path) -> bool {
+    match OpenOptions::new()
+        .write(true)
+        .open(home.join(GAME_LOCK_FILE))
+    {
+        Ok(file) => lock_probe(&file) == Some(true),
+        Err(e) => e.kind() == ErrorKind::PermissionDenied,
+    }
+}
+
+fn world_access(home: &Path, id: &str) -> io::Result<()> {
+    let mut parts = id.split('/');
+    let first = parts.next();
+    let second = parts.next();
+    let folder = parts.next();
+    if second == Some("worlds") {
+        if let Some(folder) = folder {
+            let root = match first
+                .and_then(|p| p.strip_prefix('p'))
+                .and_then(|n| n.parse::<u32>().ok())
+            {
+                Some(0) => Some(home.to_owned()),
+                Some(profile) => Some(home.join("profiles").join(format!("profile-{profile}"))),
+                None => None,
+            };
+            if root.is_some_and(|root| world_locked(&root.join("saves").join(folder))) {
+                return Err(io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    "Close the world in the game before accessing it",
+                ));
+            }
+        }
+    }
+    if matches!(second, Some("worlds" | "configuration"))
+        && (GAME_ACTIVE.load(std::sync::atomic::Ordering::Acquire) || game_locked(home))
     {
         return Err(io::Error::new(
             ErrorKind::PermissionDenied,
@@ -227,7 +324,7 @@ pub fn children(home: &Path, id: &str) -> io::Result<Vec<Value>> {
         .map(|folder| row(home, &folder_id(profile(home), folder)))
         .collect();
     }
-    world_access(id)?;
+    world_access(home, id)?;
     let doc = resolve(home, id)?;
     let mut result = Vec::new();
     for (index, entry) in fs::read_dir(doc.path)?.enumerate() {
@@ -269,7 +366,7 @@ pub fn is_child(home: &Path, parent: &str, child: &str) -> bool {
                     .is_some_and(|rest| rest.starts_with('/'))))
 }
 pub fn open(home: &Path, id: &str, mode: &str) -> io::Result<File> {
-    world_access(id)?;
+    world_access(home, id)?;
     let doc = resolve(home, id)?;
     if !fs::metadata(&doc.path)?.is_file() || (doc.reports && mode != "r") {
         return Err(invalid());
@@ -297,9 +394,9 @@ pub fn open(home: &Path, id: &str, mode: &str) -> io::Result<File> {
 }
 pub fn call(home: &Path, op: &str, id: &str, arg: &str) -> io::Result<Value> {
     if !matches!(op, "document" | "path" | "child") {
-        world_access(id)?;
+        world_access(home, id)?;
         if op == "move" {
-            world_access(arg)?;
+            world_access(home, arg)?;
         }
     }
     match op {
@@ -581,14 +678,14 @@ mod world_tests {
         )
         .unwrap();
         assert_eq!(children(&home, "p7/configuration").unwrap().len(), 1);
-        set_game_active(true);
+        set_game_active(&home, true);
         let blocked = open(&home, "p0/worlds/Example/level.dat", "r").is_err()
             && call(&home, "delete", "p0/worlds/Example/level.dat", "").is_err()
             && children(&home, "p0/worlds").is_err();
         let config_blocked = open(&home, "p0/configuration/options.txt", "r").is_err()
             && children(&home, "p0/configuration").is_err()
             && call(&home, "move", "p0/configuration/options.txt", "p0/mods").is_err();
-        set_game_active(false);
+        set_game_active(&home, false);
         assert!(blocked);
         assert!(config_blocked);
         assert!(open(&home, "p0/worlds/Example/level.dat", "r").is_ok());
@@ -605,6 +702,36 @@ mod world_tests {
         fs::write(home.join("saves/Example/region/r.0.0.mca"), b"region").unwrap();
         assert!(call(&home, "delete", "p0/worlds/Example", "").is_ok());
         assert!(!home.join("saves/Example").exists());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_running_world_cannot_be_changed_through_saf() {
+        let home = std::env::temp_dir().join(format!(
+            "horizon-locked-documents-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(home.join("saves/Locked")).unwrap();
+        fs::write(home.join("saves/Locked/level.dat"), b"fixture").unwrap();
+        let lock = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(home.join("saves/Locked/session.lock"))
+            .unwrap();
+        #[cfg(target_os = "android")]
+        rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive).unwrap();
+        #[cfg(not(target_os = "android"))]
+        lock.try_lock().unwrap();
+        assert!(call(&home, "delete", "p0/worlds/Locked", "").is_err());
+        assert!(call(&home, "delete", "p0/worlds/Locked/level.dat", "").is_err());
+        assert!(open(&home, "p0/worlds/Locked/level.dat", "r").is_err());
+        drop(lock);
+        assert!(open(&home, "p0/worlds/Locked/level.dat", "r").is_ok());
+        assert!(call(&home, "delete", "p0/worlds/Locked", "").is_ok());
         fs::remove_dir_all(home).unwrap();
     }
 }

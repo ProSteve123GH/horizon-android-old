@@ -176,7 +176,7 @@ impl Launcher {
             drop(game);
         }
         crate::game::android_reset_bundled_mods();
-        crate::document_store::set_game_active(false);
+        crate::document_store::set_game_active(&self.home, false);
         crate::performance::stop();
         if self.direct {
             self.leave_to_launcher(events);
@@ -436,11 +436,11 @@ impl Launcher {
                 open_gl: self.catalog.config.renderer == crate::catalog::RendererMode::OpenGl,
                 gpu_batching: self.catalog.config.renderer == crate::catalog::RendererMode::Vulkan,
             };
-            crate::document_store::set_game_active(true);
+            crate::document_store::set_game_active(&self.home, true);
             let game = match crate::game_launch::start(request) {
                 Ok(game) => game,
                 Err(error) => {
-                    crate::document_store::set_game_active(false);
+                    crate::document_store::set_game_active(&self.home, false);
                     crate::performance::stop();
                     return Err(error);
                 }
