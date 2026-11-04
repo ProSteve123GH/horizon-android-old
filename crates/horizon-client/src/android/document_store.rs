@@ -9,6 +9,14 @@ use std::{
 pub const ROOT: &str = "horizon";
 const DIRECTORY: &str = "vnd.android.document/directory";
 const MAX_CHILDREN: usize = 32768;
+// DocumentsContract.Document flags. Advertising the operations the provider
+// really implements is what lets Files offer edit, copy, move and delete.
+const FLAG_SUPPORTS_WRITE: i32 = 1;
+const FLAG_SUPPORTS_DELETE: i32 = 1 << 1;
+const FLAG_SUPPORTS_RENAME: i32 = 1 << 2;
+const FLAG_SUPPORTS_COPY: i32 = 1 << 3;
+const FLAG_SUPPORTS_MOVE: i32 = 1 << 4;
+const FLAG_DIR_SUPPORTS_CREATE: i32 = 1 << 5;
 const CONFIG_FILES: &[&str] = &[
     "options.txt",
     "horizon-graphics.txt",
@@ -169,22 +177,35 @@ fn row(home: &Path, id: &str) -> io::Result<Value> {
             _ => "application/octet-stream",
         }
     };
-    // Android DocumentsContract.Document flags. Fixed roots cannot be removed.
-    let flags = if doc.configuration {
-        if meta.is_file() { 2 } else { 0 }
-    } else if doc.reports {
-        0
-    } else if meta.is_dir() {
-        8
-    } else {
-        2
-    };
-    let flags = flags
-        | if doc.label.is_none() && !doc.reports && !doc.configuration {
-            4 | if meta.is_file() { 64 } else { 0 }
-        } else {
-            0
-        };
+    // Fixed roots (Mods, Worlds, Configuration...) stay in place, but children
+    // can be changed. Reports are always read-only. Configuration files are the
+    // four allowlisted files, so replacing or deleting them cannot reach the
+    // game's account data or other private files.
+    let writable = !doc.reports && meta.is_file();
+    let deletable = !doc.reports && doc.label.is_none();
+    let renamable = deletable && meta.is_file();
+    let copyable = !doc.reports && doc.label.is_none();
+    let movable = copyable;
+    let dir_create = !doc.reports && meta.is_dir();
+    let mut flags = 0;
+    if writable {
+        flags |= FLAG_SUPPORTS_WRITE;
+    }
+    if deletable {
+        flags |= FLAG_SUPPORTS_DELETE;
+    }
+    if renamable {
+        flags |= FLAG_SUPPORTS_RENAME;
+    }
+    if copyable {
+        flags |= FLAG_SUPPORTS_COPY;
+    }
+    if movable {
+        flags |= FLAG_SUPPORTS_MOVE;
+    }
+    if dir_create {
+        flags |= FLAG_DIR_SUPPORTS_CREATE;
+    }
     Ok(
         json!({"document_id": id, "_display_name": name, "mime_type": mime,
         "flags": flags, "_size": meta.len(), "last_modified": meta.modified().ok()
@@ -277,6 +298,9 @@ pub fn open(home: &Path, id: &str, mode: &str) -> io::Result<File> {
 pub fn call(home: &Path, op: &str, id: &str, arg: &str) -> io::Result<Value> {
     if !matches!(op, "document" | "path" | "child") {
         world_access(id)?;
+        if op == "move" {
+            world_access(arg)?;
+        }
     }
     match op {
         "roots" => Ok(json!([{"root_id": ROOT, "document_id": ROOT,
@@ -329,13 +353,15 @@ pub fn call(home: &Path, op: &str, id: &str, arg: &str) -> io::Result<Value> {
         }
         "rename" | "delete" => {
             let doc = resolve(home, id)?;
-            if doc.label.is_some() || doc.reports || doc.configuration {
+            if doc.label.is_some() || doc.reports {
                 return Err(invalid());
             }
             if op == "delete" {
-                // Nonempty directories must be emptied by the client explicitly.
+                // The Files app has already asked the user to confirm. Removing
+                // a world or mod folder means removing its contents too; the
+                // resolver still refuses every fixed root and symlink.
                 if doc.path.is_dir() {
-                    fs::remove_dir(doc.path)?;
+                    fs::remove_dir_all(doc.path)?;
                 } else {
                     fs::remove_file(doc.path)?;
                 }
@@ -354,6 +380,27 @@ pub fn call(home: &Path, op: &str, id: &str, arg: &str) -> io::Result<Value> {
                 rename_new(&doc.path, &target.path)?;
                 Ok(json!(child))
             }
+        }
+        "move" => {
+            let source = resolve(home, id)?;
+            if source.label.is_some() || source.reports {
+                return Err(invalid());
+            }
+            let parent = resolve(home, arg)?;
+            if parent.reports || !parent.path.is_dir() {
+                return Err(invalid());
+            }
+            let name = source.path.file_name().ok_or_else(invalid)?;
+            let child = format!("{}/{}", arg.trim_end_matches('/'), name.to_string_lossy());
+            let target = resolve(home, &child)?;
+            if target.path.starts_with(&source.path) {
+                return Err(invalid());
+            }
+            if target.path.try_exists()? {
+                return Err(io::Error::from(ErrorKind::AlreadyExists));
+            }
+            fs::rename(&source.path, &target.path)?;
+            Ok(json!(child))
         }
         _ => Err(invalid()),
     }
@@ -478,12 +525,47 @@ mod world_tests {
         let config = children(&home, "p0/configuration").unwrap();
         assert_eq!(config.len(), 1);
         assert_eq!(config[0]["_display_name"], "options.txt");
-        assert_eq!(config[0]["flags"], 2);
+        // Write, delete, rename, copy and move are all advertised for a file.
+        assert_eq!(config[0]["flags"], 31);
+        assert_eq!(
+            call(&home, "document", "p0/configuration", "").unwrap()[0]["flags"],
+            32
+        );
         assert!(open(&home, "p0/configuration/account.json", "r").is_err());
         assert!(open(&home, "p0/configuration/android-launcher.json", "r").is_err());
         assert!(open(&home, "p0/configuration/../account.json", "r").is_err());
         assert!(call(&home, "mkdir", "p0/configuration", "options.txt").is_err());
-        assert!(call(&home, "delete", "p0/configuration/options.txt", "").is_err());
+        // The four allowlisted files can be replaced or deleted; names outside
+        // the allowlist still cannot be created.
+        assert!(call(&home, "create", "p0/configuration", "horizon-touch.json").is_ok());
+        assert!(call(&home, "delete", "p0/configuration/horizon-touch.json", "").is_ok());
+        assert!(!home.join("horizon-touch.json").exists());
+        assert!(call(&home, "create", "p0/configuration", "account.json").is_err());
+        assert_eq!(
+            call(&home, "document", "p0/worlds", "").unwrap()[0]["flags"],
+            32
+        );
+        assert_eq!(
+            call(&home, "document", "p0/worlds/Example", "").unwrap()[0]["flags"],
+            58
+        );
+        assert_eq!(
+            call(&home, "document", "p0/worlds/Example/level.dat", "").unwrap()[0]["flags"],
+            31
+        );
+        // Move is implemented for children, but a fixed root or a name outside
+        // the configuration allowlist is still refused.
+        call(&home, "mkdir", "p0/mods", "sub").unwrap();
+        call(&home, "create", "p0/mods", "move.hmod").unwrap();
+        assert_eq!(
+            call(&home, "move", "p0/mods/move.hmod", "p0/mods/sub").unwrap(),
+            json!("p0/mods/sub/move.hmod")
+        );
+        assert!(home.join("horizon-mods/sub/move.hmod").is_file());
+        assert!(!home.join("horizon-mods/move.hmod").exists());
+        assert!(call(&home, "move", "p0/mods/sub/move.hmod", "p0/configuration").is_err());
+        assert!(call(&home, "move", "p0/mods", "p0/worlds").is_err());
+        call(&home, "delete", "p0/mods/sub", "").unwrap();
         open(&home, "p0/configuration/options.txt", "wt")
             .unwrap()
             .write_all(b"renderDistance:12\n")
@@ -504,11 +586,25 @@ mod world_tests {
             && call(&home, "delete", "p0/worlds/Example/level.dat", "").is_err()
             && children(&home, "p0/worlds").is_err();
         let config_blocked = open(&home, "p0/configuration/options.txt", "r").is_err()
-            && children(&home, "p0/configuration").is_err();
+            && children(&home, "p0/configuration").is_err()
+            && call(&home, "move", "p0/configuration/options.txt", "p0/mods").is_err();
         set_game_active(false);
         assert!(blocked);
         assert!(config_blocked);
         assert!(open(&home, "p0/worlds/Example/level.dat", "r").is_ok());
+        // Reports stay read-only even though normal files advertise writes.
+        fs::create_dir_all(home.join("performance")).unwrap();
+        fs::write(home.join("performance/report.jsonl"), b"{}").unwrap();
+        assert_eq!(
+            call(&home, "document", "reports/report.jsonl", "").unwrap()[0]["flags"],
+            0
+        );
+        // Deleting a child directory after the Files confirmation removes the
+        // whole world, including region files.
+        fs::create_dir_all(home.join("saves/Example/region")).unwrap();
+        fs::write(home.join("saves/Example/region/r.0.0.mca"), b"region").unwrap();
+        assert!(call(&home, "delete", "p0/worlds/Example", "").is_ok());
+        assert!(!home.join("saves/Example").exists());
         fs::remove_dir_all(home).unwrap();
     }
 }

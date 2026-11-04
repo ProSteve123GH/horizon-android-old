@@ -61,6 +61,10 @@ public final class HorizonDocumentsProvider extends DocumentsProvider {
         if ("create".equals(operation) || "mkdir".equals(operation)) parent = id;
         getContext().getContentResolver().notifyChange(DocumentsContract.buildChildDocumentsUri(
                 getContext().getPackageName() + ".documents", parent), null);
+        if ("move".equals(operation)) {
+            getContext().getContentResolver().notifyChange(DocumentsContract.buildChildDocumentsUri(
+                    getContext().getPackageName() + ".documents", arg), null);
+        }
         try { return new JSONArray("[" + response + "]").optString(0, null); }
         catch (JSONException error) { throw new FileNotFoundException("Invalid document ID"); }
     }
@@ -104,6 +108,10 @@ public final class HorizonDocumentsProvider extends DocumentsProvider {
     }
     @Override public String renameDocument(String id, String name) throws FileNotFoundException {
         return changed("rename", id, name);
+    }
+    @Override public String moveDocument(String source, String sourceParent, String targetParent)
+            throws FileNotFoundException {
+        return changed("move", source, targetParent);
     }
     @Override public void deleteDocument(String id) throws FileNotFoundException {
         changed("delete", id, "");

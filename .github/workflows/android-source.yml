@@ -25,16 +25,17 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Cache the Android world test target
+      - name: Cache the Android test harness targets
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             .local/android/world-tests/target
-          key: android-world-tests-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'tools/test_android_worlds.py', 'launcher/src/worlds.rs', 'launcher/src/worlds/tests.rs') }}
+            .local/android/document-store-tests/target
+          key: android-harness-tests-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'tools/test_android_worlds.py', 'launcher/src/worlds.rs', 'launcher/src/worlds/tests.rs', 'tools/test_android_document_store.py', 'crates/horizon-client/src/android/document_store.rs') }}
           restore-keys: |
-            android-world-tests-${{ runner.os }}-
+            android-harness-tests-${{ runner.os }}-
       - run: git diff --check
       - run: python3 tools/check_public_tree.py --history
       - run: python3 -m unittest discover -s tests -p 'test_android*.py'
@@ -44,6 +45,7 @@ jobs:
       - run: python3 tools/test_android_appearance.py
       - run: python3 tools/test_android_instances.py
       - run: python3 tools/test_android_worlds.py
+      - run: python3 tools/test_android_document_store.py
       - name: Check workflow export matches the active workflow
         run: |
           cmp .github/workflows/android-source.yml packaging/android/source-checks.yml
