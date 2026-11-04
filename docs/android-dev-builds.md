@@ -1,9 +1,10 @@
 # Development APKs
 
-The **Android dev APKs** workflow builds installable APKs without publishing a
-GitHub Release. It runs on pushes to `android`, `android-dev*` and
-`dev/android-*` when build inputs change. **Run workflow** can build all four
-ABIs and choose the `release` or `fast` Rust profile. Pull requests never receive
+The **Horizon Android — Signed Dev APK Build, Audit & Artifact** workflow builds
+installable APKs without publishing a GitHub Release. It runs on pushes to
+`android`, `android-dev*` and `dev/android-*` when build inputs change.
+**Run workflow** can build all four ABIs and choose the `release` or `fast` Rust
+profile. Pull requests never receive
 the signing secret and do not trigger this workflow.
 
 The default push build is `arm64-v8a`. A dispatch with **all_abis** builds
@@ -25,7 +26,8 @@ key supplied through the secret.
 
 ## Getting an APK
 
-1. Open **Actions → Android dev APKs** in the fork.
+1. Open **Actions → Horizon Android — Signed Dev APK Build, Audit & Artifact**
+   in the fork.
 2. Open the successful run for the branch and commit you want.
 3. Download the artifact for the ABI, for example
    `horizon-dev-123-arm64-v8a`.
@@ -43,7 +45,8 @@ results.
 
 ## Checking a build
 
-- Open the run under **Actions → Android dev APKs**, then the `build (…)` job.
+- Open the run under **Actions → Horizon Android — Signed Dev APK Build, Audit
+  & Artifact**, then the **Signed dev APK · …** job.
   Each workflow step is named after the stage that failed; open it for the
   command and compiler output.
 - The artifact name ends in the ABI, for example
