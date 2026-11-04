@@ -71,9 +71,9 @@ launcher** as a fallback.
 - **Shaders:** find and install shader packs.
 - **Installed:** enable, disable or remove installed additions.
 - **Settings:** rendering mode, resolution, refresh rate, chunk-worker ceiling,
-  reusable RAM cache, orientation, aspect, immersive/cutout, profile, input,
-  offline name, server, Game files, World files and diagnostics. Profiles keep
-  separate saves and settings. Accounts are opened from the chip in the header.
+  reusable RAM cache, orientation, aspect, immersive/cutout, instances, input,
+  offline name, server, Game files, World files and diagnostics. Accounts are
+  opened from the chip in the header.
 
 Java mod search and modpack import are not available on Android. Fabric, Forge,
 NeoForge and Mixin code require native ports; installing their JARs does not make
@@ -84,6 +84,18 @@ download, unpacking, world-data preparation, touch textures and finalization.
 Progress shows MiB or file counts where available. Retry retains previously
 verified downloads. **Repair missing files** verifies the prepared copy and
 redownloads only what is absent or damaged; it does not install LWJGL.
+
+### Instances
+
+**Settings â†’ Instances** lists the default instance and every instance you
+create. Each one is a folder with its own worlds, settings, mods, packs and
+shader packs, so changing or deleting one does not touch the others. The list
+shows the Minecraft version, storage use, last launch and what each instance
+holds. Create, rename, duplicate, launch, or delete an instance; duplication
+copies worlds and settings but leaves out logs, caches and account sessions.
+The default instance and the one in use cannot be deleted, and duplicate names
+are refused. An instance whose folder disappeared is marked and cannot be
+launched or duplicated.
 
 ### Accounts
 
@@ -198,7 +210,7 @@ launcher entry; TV support is experimental and analog gamepad axes are not conne
 
 F2 keeps the original PNG in the profile and publishes a copy to
 **Pictures/HorizonAndroid** through Android MediaStore. Android 10+ needs no
-storage permission. Android 8.1–9 asks for storage permission when first saving;
+storage permission. Android 8.1ï¿½9 asks for storage permission when first saving;
 if access is denied, the profile copy remains available. Gallery publication runs
 outside the render thread and reports success or failure in game chat.
 

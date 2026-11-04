@@ -231,7 +231,7 @@ fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit, onClass
         when (val o = overlay) {
             Overlay.Account -> AccountSheet(state, actions, onDismiss = { overlay = null })
             is Overlay.Choose -> ChooseDialog(o, state.config.renderScale, onDismiss = { overlay = null })
-            Overlay.Profiles -> ProfilesSheet(onDismiss = { overlay = null })
+            Overlay.Profiles -> InstancesSheet(onDismiss = { overlay = null }, onPlay = onPlay)
             is Overlay.Edit -> EditDialog(o, onDismiss = { overlay = null })
             is Overlay.Remove -> RemoveDialog(o.item, onDismiss = { overlay = null })
             Overlay.RemoveInstallation -> RemoveInstallationDialog(state.install, onDismiss = { overlay = null })

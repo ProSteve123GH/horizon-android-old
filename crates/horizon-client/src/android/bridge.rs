@@ -6,6 +6,7 @@
 //! Android main thread; slow work stays on the same worker threads the native
 //! launcher uses.
 use crate::catalog::{Catalog, Page};
+use crate::instances;
 use crate::launcher::{
     login::Login,
     wardrobe::{CloudAction, Wardrobe},
@@ -70,37 +71,6 @@ fn profile_dir(home: &std::path::Path, id: u32) -> PathBuf {
     } else {
         home.join("profiles").join(format!("profile-{id}"))
     }
-}
-
-/// Player-chosen profile names live beside the profile's saves.
-const PROFILE_NAME_FILE: &str = "android-profile-name.txt";
-
-fn profile_name(dir: &std::path::Path, id: u32) -> String {
-    std::fs::read_to_string(dir.join(PROFILE_NAME_FILE))
-        .ok()
-        .map(|n| n.trim().to_owned())
-        .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| {
-            if id == 0 {
-                "Default".into()
-            } else {
-                format!("Profile {id}")
-            }
-        })
-}
-
-fn write_profile_name(dir: &std::path::Path, name: &str) -> Result<(), String> {
-    let name: String = name
-        .trim()
-        .chars()
-        .filter(|c| !c.is_control())
-        .take(32)
-        .collect();
-    if name.is_empty() {
-        let _ = std::fs::remove_file(dir.join(PROFILE_NAME_FILE));
-        return Ok(());
-    }
-    std::fs::write(dir.join(PROFILE_NAME_FILE), name).map_err(|e| e.to_string())
 }
 
 fn choice(
@@ -251,7 +221,7 @@ impl Controller {
                 switch("cutout", "Avoid camera cutout", if c.screen.avoid_cutout { "On" } else { "Off" }, c.screen.avoid_cutout),
             ]},
             {"group": "Game", "rows": [
-                row("profile", "Profile", profile_name(&profile_dir(&self.home, c.profile), c.profile), "choice"),
+                row("profile", "Instances", instances::display_name(&profile_dir(&self.home, c.profile), c.profile), "choice"),
                 row("input_host", "Input", c.input_host.label().into(), "choice"),
                 row("name", "Offline player name", if c.name.is_empty() { "Not set".into() } else { c.name.clone() }, "text"),
                 row("server", "Server", if c.server.is_empty() { "Singleplayer".into() } else { c.server.clone() }, "text"),
@@ -651,7 +621,7 @@ impl Controller {
                 "name": c.name,
                 "server": c.server,
                 "profile": c.profile,
-                "profile_name": profile_name(&profile_dir(&self.home, c.profile), c.profile),
+                "profile_name": instances::display_name(&profile_dir(&self.home, c.profile), c.profile),
                 "renderer": c.renderer.label(),
                 "render_scale": c.render_scale.percent(),
                 "input": c.input_host.label(),
@@ -699,7 +669,7 @@ impl Controller {
         ids
     }
 
-    /// What the profile manager shows: names and what each profile holds.
+    /// What the instance manager shows: name, identity, use and storage.
     fn profiles(&self) -> Value {
         let count = |dir: PathBuf| {
             std::fs::read_dir(dir)
@@ -709,6 +679,7 @@ impl Controller {
                 .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
                 .count()
         };
+        let active = self.catalog.config.profile;
         Value::Array(
             self.profile_ids()
                 .into_iter()
@@ -716,8 +687,13 @@ impl Controller {
                     let dir = profile_dir(&self.home, id);
                     json!({
                         "id": id,
-                        "name": profile_name(&dir, id),
-                        "active": id == self.catalog.config.profile,
+                        "name": instances::display_name(&dir, id),
+                        "active": id == active,
+                        "deletable": id != 0 && id != active,
+                        "missing": !dir.is_dir(),
+                        "minecraft": horizon_core::VANILLA_VERSION,
+                        "last_played": instances::last_played(&dir),
+                        "size_bytes": instances::dir_size(&dir),
                         "worlds": count(dir.join("saves")),
                         "mods": count(dir.join("horizon-mods")),
                         "packs": count(dir.join("resourcepacks")),
@@ -726,6 +702,17 @@ impl Controller {
                 })
                 .collect(),
         )
+    }
+
+    /// Every instance id with the name shown to the player.
+    fn named_profiles(&self) -> Vec<(u32, String)> {
+        self.profile_ids()
+            .into_iter()
+            .map(|id| {
+                let dir = profile_dir(&self.home, id);
+                (id, instances::display_name(&dir, id))
+            })
+            .collect()
     }
 
     fn call(&mut self, method: &str, arg: &str) -> Result<Value, String> {
@@ -1001,32 +988,61 @@ impl Controller {
             "options" => return Ok(self.options(arg)),
             "profiles" => return Ok(self.profiles()),
             "profile_create" => {
-                let id = self
-                    .profile_ids()
-                    .last()
-                    .copied()
-                    .unwrap_or(0)
-                    .checked_add(1)
-                    .ok_or("Too many profiles")?;
+                let name = instances::validated_name(&self.named_profiles(), None, arg)?;
+                let id = instances::next_id(&self.profile_ids()).ok_or("Too many instances")?;
                 let dir = profile_dir(&home, id);
                 std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-                write_profile_name(&dir, arg)?;
+                instances::write_name(&dir, &name)?;
                 self.choose("profile", &id.to_string())?;
             }
             "profile_rename" => {
                 let (id, name) = arg.split_once('=').ok_or("Expected id=name")?;
                 let id = id.parse::<u32>().map_err(|e| e.to_string())?;
-                write_profile_name(&profile_dir(&home, id), name)?;
+                if !self.profile_ids().contains(&id) {
+                    return Err("That instance no longer exists".into());
+                }
+                let name = instances::validated_name(&self.named_profiles(), Some(id), name)?;
+                instances::write_name(&profile_dir(&home, id), &name)?;
+            }
+            "profile_duplicate" => {
+                let id = arg.parse::<u32>().map_err(|e| e.to_string())?;
+                let source = profile_dir(&home, id);
+                if !self.profile_ids().contains(&id) || !source.is_dir() {
+                    return Err("That instance's folder is missing; it cannot be duplicated".into());
+                }
+                let new_id = instances::next_id(&self.profile_ids()).ok_or("Too many instances")?;
+                let destination = profile_dir(&home, new_id);
+                instances::copy_profile(&source, &destination)?;
+                let name = instances::unique_name(
+                    &self.named_profiles(),
+                    &format!("{} copy", instances::display_name(&source, id)),
+                );
+                if let Err(error) = instances::write_name(&destination, &name) {
+                    let _ = std::fs::remove_dir_all(&destination);
+                    return Err(error);
+                }
+                return Ok(json!({"id": new_id, "name": name}));
             }
             "profile_delete" => {
                 let id = arg.parse::<u32>().map_err(|e| e.to_string())?;
                 if id == 0 {
-                    return Err("The default profile cannot be deleted".into());
+                    return Err("The default instance cannot be deleted".into());
                 }
                 if id == self.catalog.config.profile {
-                    return Err("Switch to another profile before deleting this one".into());
+                    return Err("Switch to another instance before deleting this one".into());
+                }
+                if !self.profile_ids().contains(&id) {
+                    return Err("That instance no longer exists".into());
                 }
                 std::fs::remove_dir_all(profile_dir(&home, id)).map_err(|e| e.to_string())?;
+            }
+            "profile_launch" => {
+                let id = arg.parse::<u32>().map_err(|e| e.to_string())?;
+                if !self.profile_ids().contains(&id) {
+                    return Err("That instance no longer exists".into());
+                }
+                self.choose("profile", &id.to_string())?;
+                return self.play();
             }
             _ => return Err(format!("Unknown launcher action {method}")),
         }
@@ -1165,6 +1181,7 @@ impl Controller {
         }
         if horizon_client::official_install::ready(&self.home) {
             self.save()?;
+            let _ = instances::mark_played(&self.catalog.config.game_home(&self.home));
             self.error = None;
             let _ = std::fs::remove_file(self.home.join("android-error.txt"));
             std::fs::write(self.home.join(LAUNCH_REQUEST), br#"{"play":true}"#)

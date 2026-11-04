@@ -45,6 +45,8 @@ mod documents;
 mod exit_reports;
 #[path = "android/gallery.rs"]
 mod gallery;
+#[path = "android/instances.rs"]
+mod instances;
 #[path = "android/minecraft_import.rs"]
 mod minecraft_import;
 #[path = "android/native_ime.rs"]

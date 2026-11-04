@@ -313,11 +313,16 @@ data class Reply(val ok: Any?, val error: String?) {
     }
 }
 
-/** One entry of the profile manager: a folder with its own worlds, settings and add-ons. */
+/** One instance: a folder with its own worlds, settings and add-ons. */
 data class Profile(
     val id: Int,
     val name: String,
     val active: Boolean,
+    val deletable: Boolean,
+    val missing: Boolean,
+    val minecraft: String,
+    val lastPlayed: Long?,
+    val sizeBytes: Long,
     val worlds: Int,
     val mods: Int,
     val packs: Int,
@@ -326,13 +331,18 @@ data class Profile(
     companion object {
         fun load(): List<Profile> = (act("profiles").ok as? JSONArray).list {
             Profile(
-                it.optInt("id"),
-                it.optString("name"),
-                it.optBoolean("active"),
-                it.optInt("worlds"),
-                it.optInt("mods"),
-                it.optInt("packs"),
-                it.optInt("shaders"),
+                id = it.optInt("id"),
+                name = it.optString("name"),
+                active = it.optBoolean("active"),
+                deletable = it.optBoolean("deletable"),
+                missing = it.optBoolean("missing"),
+                minecraft = it.optString("minecraft"),
+                lastPlayed = if (it.isNull("last_played")) null else it.optLong("last_played"),
+                sizeBytes = it.optLong("size_bytes"),
+                worlds = it.optInt("worlds"),
+                mods = it.optInt("mods"),
+                packs = it.optInt("packs"),
+                shaders = it.optInt("shaders"),
             )
         }
     }

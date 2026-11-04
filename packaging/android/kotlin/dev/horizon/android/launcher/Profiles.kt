@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,9 +18,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -50,16 +51,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import org.json.JSONObject
+import java.text.DateFormat
+import java.util.Date
+import java.util.Locale
 
-/** A profile action waiting for its dialog: create, rename or delete. */
-private sealed interface ProfileEdit {
-    data object Create : ProfileEdit
-    data class Rename(val profile: Profile) : ProfileEdit
-    data class Delete(val profile: Profile) : ProfileEdit
+/** An instance action waiting for its dialog: create, rename or delete. */
+private sealed interface InstanceEdit {
+    data object Create : InstanceEdit
+    data class Rename(val instance: Profile) : InstanceEdit
+    data class Delete(val instance: Profile) : InstanceEdit
 }
 
-/** What a profile holds, for telling profiles apart at a glance. */
-private fun Profile.summary(): String {
+/** What an instance holds, for telling instances apart at a glance. */
+private fun Profile.contents(): String {
     fun part(n: Int, one: String, many: String) = if (n == 0) null else "$n ${if (n == 1) one else many}"
     return listOfNotNull(
         part(worlds, "world", "worlds"),
@@ -69,15 +74,65 @@ private fun Profile.summary(): String {
     ).joinToString("  ·  ").ifEmpty { "Empty" }
 }
 
+private fun sizeLabel(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val units = listOf("KB", "MB", "GB", "TB")
+    var value = bytes.toDouble() / 1024
+    var unit = 0
+    while (value >= 1024 && unit < units.lastIndex) {
+        value /= 1024
+        unit++
+    }
+    return if (value >= 100) {
+        "${value.toInt()} ${units[unit]}"
+    } else {
+        String.format(Locale.US, "%.1f %s", value, units[unit])
+    }
+}
+
+private fun playedLabel(seconds: Long?): String {
+    if (seconds == null) return "Never played"
+    val age = ((System.currentTimeMillis() / 1000) - seconds).coerceAtLeast(0)
+    return when {
+        age < 60 -> "Played just now"
+        age < 3600 -> "Played ${age / 60} min ago"
+        age < 86_400 -> "Played ${age / 3600} h ago"
+        age < 86_400 * 30 -> "Played ${age / 86_400} d ago"
+        else -> "Played " + DateFormat.getDateInstance(DateFormat.MEDIUM)
+            .format(Date(seconds * 1000))
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun ProfilesSheet(onDismiss: () -> Unit) {
-    var profiles by remember { mutableStateOf(Profile.load()) }
-    val reload = { profiles = Profile.load() }
-    var edit by remember { mutableStateOf<ProfileEdit?>(null) }
+fun InstancesSheet(onDismiss: () -> Unit, onPlay: () -> Unit) {
+    var instances by remember { mutableStateOf(Profile.load()) }
+    var edit by remember { mutableStateOf<InstanceEdit?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    val reload = { instances = Profile.load() }
+
+    /** Runs an action, keeps the backend's error, and reloads the list. */
+    fun applyReply(reply: Reply, success: String? = null) {
+        error = reply.error
+        notice = if (reply.error == null) success else null
+        reload()
+    }
+
+    fun launch(instance: Profile) {
+        val reply = act("profile_launch", instance.id.toString())
+        if (reply.error != null) {
+            applyReply(reply)
+            return
+        }
+        val started = (reply.ok as? JSONObject)?.optBoolean("launch") == true
+        reload()
+        onDismiss()
+        if (started) onPlay()
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        // One scrolling grid, header included. Sideways, profiles pair up in two columns.
+        // One scrolling grid, header included. Sideways, instances pair up in two columns.
         val landscape = isLandscape()
         LazyVerticalGrid(
             columns = GridCells.Fixed(if (landscape) 2 else 1),
@@ -86,59 +141,86 @@ fun ProfilesSheet(onDismiss: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item(key = "header", span = { GridItemSpan(maxLineSpan) }) {
-                Row(Modifier.fillMaxWidth().padding(start = 8.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Profiles", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                Column(Modifier.fillMaxWidth().padding(start = 8.dp, bottom = 12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Instances", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "Each instance keeps its own worlds, settings and add-ons.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Button(
+                            onClick = { error = null; notice = null; edit = InstanceEdit.Create },
+                            contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
+                        ) {
+                            Icon(Icons.Rounded.Add, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("New")
+                        }
+                    }
+                    error?.let { message ->
                         Text(
-                            "Each profile keeps its own worlds, settings and add-ons.",
+                            message,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 8.dp),
                         )
                     }
-                    Spacer(Modifier.width(12.dp))
-                    Button(onClick = { edit = ProfileEdit.Create }, contentPadding = ButtonDefaults.ButtonWithIconContentPadding) {
-                        Icon(Icons.Rounded.Add, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("New")
+                    notice?.let { message ->
+                        Text(
+                            message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
                     }
                 }
             }
-            itemsIndexed(profiles, key = { _, p -> p.id }) { i, profile ->
-                ProfileRow(
-                    profile,
-                    if (landscape) RoundedCornerShape(20.dp) else connectedShape(i, profiles.size, outer = 24),
+            itemsIndexed(instances, key = { _, p -> p.id }) { i, instance ->
+                InstanceRow(
+                    instance,
+                    if (landscape) RoundedCornerShape(20.dp) else connectedShape(i, instances.size, outer = 24),
                     onSelect = {
-                        if (!profile.active) {
-                            act("choose", "profile=${profile.id}")
-                            reload()
-                        }
+                        if (!instance.active) applyReply(act("choose", "profile=${instance.id}"))
                     },
-                    onRename = { edit = ProfileEdit.Rename(profile) },
-                    onDelete = { edit = ProfileEdit.Delete(profile) },
+                    onPlay = { launch(instance) },
+                    onRename = { error = null; notice = null; edit = InstanceEdit.Rename(instance) },
+                    onDuplicate = {
+                        applyReply(
+                            act("profile_duplicate", instance.id.toString()),
+                            success = "Duplicated ${instance.name}.",
+                        )
+                    },
+                    onDelete = { error = null; notice = null; edit = InstanceEdit.Delete(instance) },
                 )
             }
         }
     }
 
     when (val e = edit) {
-        ProfileEdit.Create -> NameDialog("New profile", "", "Create", onDismiss = { edit = null }) { name ->
-            act("profile_create", name)
-            reload()
+        InstanceEdit.Create -> NameDialog("New instance", "", "Create", onDismiss = { edit = null }) { name ->
+            applyReply(act("profile_create", name), success = "Created $name.")
         }
-        is ProfileEdit.Rename -> NameDialog("Rename profile", e.profile.name, "Save", onDismiss = { edit = null }) { name ->
-            act("profile_rename", "${e.profile.id}=$name")
-            reload()
+        is InstanceEdit.Rename -> NameDialog("Rename instance", e.instance.name, "Save", onDismiss = { edit = null }) { name ->
+            applyReply(act("profile_rename", "${e.instance.id}=$name"), success = "Renamed to $name.")
         }
-        is ProfileEdit.Delete -> AlertDialog(
+        is InstanceEdit.Delete -> AlertDialog(
             onDismissRequest = { edit = null },
             icon = { Icon(Icons.Rounded.DeleteOutline, null) },
-            title = { Text("Delete ${e.profile.name}?") },
-            text = { Text("Its worlds, settings and add-ons (${e.profile.summary().lowercase()}) are deleted from this phone. This cannot be undone.") },
+            title = { Text("Delete ${e.instance.name}?") },
+            text = {
+                Text(
+                    "Its worlds, settings and add-ons (${e.instance.contents().lowercase()}, " +
+                        "${sizeLabel(e.instance.sizeBytes)}) are deleted from this phone. This cannot be undone.",
+                )
+            },
             confirmButton = {
                 Button(
                     onClick = {
-                        act("profile_delete", e.profile.id.toString())
-                        reload()
+                        applyReply(act("profile_delete", e.instance.id.toString()), success = "Deleted ${e.instance.name}.")
                         edit = null
                     },
                     colors = ButtonDefaults.buttonColors(
@@ -155,31 +237,33 @@ fun ProfilesSheet(onDismiss: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun ProfileRow(
-    profile: Profile,
+private fun InstanceRow(
+    instance: Profile,
     shape: androidx.compose.ui.graphics.Shape,
     onSelect: () -> Unit,
+    onPlay: () -> Unit,
     onRename: () -> Unit,
+    onDuplicate: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     Surface(
         onClick = onSelect,
         shape = shape,
-        color = if (profile.active) colors.secondaryContainer else colors.surfaceContainer,
+        color = if (instance.active) colors.secondaryContainer else colors.surfaceContainer,
     ) {
         Row(Modifier.padding(start = 12.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(
                 modifier = Modifier.size(40.dp),
-                shape = if (profile.active) MaterialShapes.Cookie9Sided.toShape() else MaterialShapes.Circle.toShape(),
-                color = if (profile.active) colors.primary else colors.surfaceContainerHighest,
+                shape = if (instance.active) MaterialShapes.Cookie9Sided.toShape() else MaterialShapes.Circle.toShape(),
+                color = if (instance.active) colors.primary else colors.surfaceContainerHighest,
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    if (profile.active) {
+                    if (instance.active) {
                         Icon(Icons.Rounded.Check, null, tint = colors.onPrimary)
                     } else {
                         Text(
-                            profile.name.firstOrNull()?.uppercase() ?: "?",
+                            instance.name.firstOrNull()?.uppercase() ?: "?",
                             style = MaterialTheme.typography.titleMedium,
                             color = colors.onSurfaceVariant,
                         )
@@ -188,45 +272,67 @@ private fun ProfileRow(
             }
             Column(Modifier.padding(start = 14.dp).weight(1f)) {
                 Text(
-                    profile.name,
+                    instance.name,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    if (profile.active) "In use  ·  ${profile.summary()}" else profile.summary(),
+                    buildString {
+                        if (instance.active) append("In use  ·  ")
+                        append("Minecraft ${instance.minecraft.ifBlank { "unknown" }}  ·  ${sizeLabel(instance.sizeBytes)}")
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    if (instance.missing) "Folder missing  ·  ${instance.contents()}"
+                    else "${instance.contents()}  ·  ${playedLabel(instance.lastPlayed)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (instance.missing) colors.error else colors.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
             var menu by remember { mutableStateOf(false) }
             Box {
-                IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, "More for ${profile.name}") }
+                IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, "More for ${instance.name}") }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Play") },
+                        leadingIcon = { Icon(Icons.Rounded.PlayArrow, null) },
+                        enabled = !instance.missing,
+                        onClick = { menu = false; onPlay() },
+                    )
                     DropdownMenuItem(
                         text = { Text("Rename") },
                         leadingIcon = { Icon(Icons.Rounded.Edit, null) },
                         onClick = { menu = false; onRename() },
                     )
-                    // The default profile is the app's home folder; the active one is in use.
-                    val deletable = profile.id != 0 && !profile.active
+                    DropdownMenuItem(
+                        text = { Text("Duplicate") },
+                        leadingIcon = { Icon(Icons.Rounded.ContentCopy, null) },
+                        enabled = !instance.missing,
+                        onClick = { menu = false; onDuplicate() },
+                    )
+                    // The default instance is the app's home folder; the active one is in use.
                     DropdownMenuItem(
                         text = {
                             Column {
                                 Text("Delete")
-                                if (!deletable) {
+                                if (!instance.deletable) {
                                     Text(
-                                        if (profile.id == 0) "Default profile" else "Switch first",
+                                        if (instance.id == 0) "Default instance" else "Switch first",
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                                 }
                             }
                         },
                         leadingIcon = { Icon(Icons.Rounded.DeleteOutline, null) },
-                        enabled = deletable,
+                        enabled = instance.deletable,
                         onClick = { menu = false; onDelete() },
                     )
                 }
