@@ -1019,7 +1019,7 @@ impl Controller {
                         "This world has no readable level.dat, so it cannot be duplicated".into(),
                     );
                 }
-                let copy = crate::worlds::copy(&world)?;
+                let copy = crate::worlds::copy_lenient(&world)?;
                 return Ok(json!({"folder": copy.folder, "name": copy.name}));
             }
             "world_delete" => {
