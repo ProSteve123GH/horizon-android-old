@@ -145,6 +145,11 @@ fn a_copy_gets_the_next_free_name_in_its_folder_and_level_dat() {
         [7u8; 1000]
     );
     assert_eq!(copy(&base).unwrap().folder, "Base (2)");
+    // The Android path does not walk the copy just to add up its size.
+    let quick = copy_lenient(&base).unwrap();
+    assert_eq!(quick.folder, "Base (3)");
+    assert_eq!(quick.mode, "Creative");
+    assert_eq!(quick.size, 0);
     // The original is untouched.
     assert_eq!(find(&home, "Base").unwrap(), base);
     // A name that can't be a folder name is made safe.

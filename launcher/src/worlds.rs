@@ -254,6 +254,17 @@ fn backup_at(
 /// Copies the world into a new folder of the same `saves/`, named "<name> (1)", "<name> (2)"...
 /// and gives the copy that name in its level.dat so the game's list tells them apart.
 pub fn copy(world: &World) -> Result<World, String> {
+    copy_with(world, true)
+}
+
+/// `copy` without walking the new world to add up its size. The Android world
+/// manager only needs the new folder and name, and a duplicate of a large world
+/// must not read every region file twice.
+pub fn copy_lenient(world: &World) -> Result<World, String> {
+    copy_with(world, false)
+}
+
+fn copy_with(world: &World, sized: bool) -> Result<World, String> {
     let saves = world.path.parent().ok_or("A world folder has a parent")?;
     let folder = free_name(saves, &world.name, "", 1);
     let to = saves.join(&folder);
@@ -266,7 +277,7 @@ pub fn copy(world: &World) -> Result<World, String> {
         let _ = fs::remove_dir_all(&to);
         return Err(format!("Could not copy {}: {e}", world.name));
     }
-    read(&to).ok_or_else(|| format!("{} has no level.dat", to.display()))
+    read_with(&to, sized, false).ok_or_else(|| format!("{} has no level.dat", to.display()))
 }
 
 /// Copies the contents into an already-created destination. Links are skipped,
