@@ -41,9 +41,9 @@ class LauncherActivity : ComponentActivity() {
     }
 
     /**
-     * The Rust launcher still owns Skins, wardrobe, saved-account switching and
-     * Ely.by. Start it without a pending play request so those pages remain
-     * reachable while the Compose launcher catches up.
+     * Opens the Rust launcher as a fallback for any page the Compose launcher
+     * cannot reach. Start it without a pending play request so its pages remain
+     * reachable.
      */
     private fun startClassicLauncher() {
         File(filesDir, "launch-request.json").delete()

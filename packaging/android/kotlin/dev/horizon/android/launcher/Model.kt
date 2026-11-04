@@ -26,6 +26,13 @@ data class Install(
 
 data class LoginCode(val userCode: String, val uri: String)
 
+data class SavedAccount(
+    val key: String,
+    val name: String,
+    val provider: String,
+    val selected: Boolean,
+)
+
 data class Account(
     val status: String,
     val signedIn: Boolean,
@@ -34,6 +41,37 @@ data class Account(
     val message: String,
     val code: LoginCode?,
     val needsReview: Boolean,
+    val saved: List<SavedAccount>,
+    val offlineName: String,
+)
+
+data class WardrobeEntry(
+    val index: Int,
+    val id: String,
+    val title: String,
+    val kind: String,
+    val selected: Boolean,
+    val image: String,
+)
+
+data class CloudCape(val index: Int, val title: String, val active: Boolean)
+data class CloudSkin(val title: String, val active: Boolean, val slim: Boolean)
+
+data class WardrobeState(
+    val provider: String?,
+    val capes: Boolean,
+    val model: String,
+    val hideCape: Boolean,
+    val selectedSkin: Boolean,
+    val selectedCape: Boolean,
+    val entries: List<WardrobeEntry>,
+    val cloudCapes: List<CloudCape>,
+    val cloudSkins: List<CloudSkin>,
+    val preview: String?,
+    val previewStamp: Long,
+    val busy: Boolean,
+    val damaged: Boolean,
+    val note: String,
 )
 
 data class Config(
@@ -98,6 +136,7 @@ data class Snapshot(
     val account: Account,
     val config: Config,
     val settings: List<SettingGroup>,
+    val wardrobe: WardrobeState?,
     val catalog: CatalogState,
     val local: List<LocalItem>,
     val documents: Documents,
@@ -142,6 +181,15 @@ data class Snapshot(
                         LoginCode(it.optString("user_code"), it.optString("uri"))
                     },
                     needsReview = account.optBoolean("needs_review"),
+                    saved = account.optJSONArray("saved").list {
+                        SavedAccount(
+                            it.optString("key"),
+                            it.optString("name"),
+                            it.optString("provider"),
+                            it.optBoolean("selected"),
+                        )
+                    },
+                    offlineName = account.optString("offline_name"),
                 ),
                 config = Config(
                     name = config.optString("name"),
@@ -166,6 +214,37 @@ data class Snapshot(
                                 it.optBoolean("on"),
                             )
                         },
+                    )
+                },
+                wardrobe = root.optJSONObject("wardrobe")?.let { w ->
+                    WardrobeState(
+                        provider = w.text("provider"),
+                        capes = w.optBoolean("capes"),
+                        model = w.optString("model"),
+                        hideCape = w.optBoolean("hide_cape"),
+                        selectedSkin = w.optBoolean("selected_skin"),
+                        selectedCape = w.optBoolean("selected_cape"),
+                        entries = w.optJSONArray("entries").list {
+                            WardrobeEntry(
+                                it.optInt("index"),
+                                it.optString("id"),
+                                it.optString("title"),
+                                it.optString("kind"),
+                                it.optBoolean("selected"),
+                                it.optString("image"),
+                            )
+                        },
+                        cloudCapes = w.optJSONArray("cloud_capes").list {
+                            CloudCape(it.optInt("index"), it.optString("title"), it.optBoolean("active"))
+                        },
+                        cloudSkins = w.optJSONArray("cloud_skins").list {
+                            CloudSkin(it.optString("title"), it.optBoolean("active"), it.optBoolean("slim"))
+                        },
+                        preview = w.text("preview"),
+                        previewStamp = w.optLong("preview_stamp"),
+                        busy = w.optBoolean("busy"),
+                        damaged = w.optBoolean("damaged"),
+                        note = w.optString("note"),
                     )
                 },
                 catalog = CatalogState(

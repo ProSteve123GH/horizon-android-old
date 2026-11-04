@@ -44,8 +44,10 @@ import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.BugReport
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Dns
+import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Gamepad
 import androidx.compose.material.icons.rounded.HighQuality
@@ -55,6 +57,8 @@ import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Monitor
 import androidx.compose.material.icons.rounded.OpenInBrowser
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.Speed
@@ -90,6 +94,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
@@ -98,6 +103,10 @@ private fun settingIcon(id: String): ImageVector = when (id) {
     "render_scale" -> Icons.Rounded.HighQuality
     "display_hz" -> Icons.Rounded.Speed
     "performance_hints" -> Icons.Rounded.Memory
+    "worker_limit" -> Icons.Rounded.Memory
+    "cache_budget_mib" -> Icons.Rounded.Storage
+    "game_files" -> Icons.Rounded.Folder
+    "world_files" -> Icons.Rounded.Public
     "orientation" -> Icons.Rounded.ScreenRotation
     "aspect" -> Icons.Rounded.AspectRatio
     "immersive" -> Icons.Rounded.Fullscreen
@@ -142,7 +151,7 @@ fun SettingsScreen(state: Snapshot, wide: Boolean, actions: LauncherActions) {
                 Icon(Icons.Rounded.History, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "Open classic launcher for skins and saved accounts",
+                    "Open classic launcher",
                     maxLines = 2,
                     textAlign = TextAlign.Center,
                 )
@@ -209,7 +218,7 @@ private fun SettingGroup(group: SettingGroup, state: Snapshot, actions: Launcher
 }
 
 /** Numeric settings: a slider reads better than a list of presets. */
-private val SLIDER_ROWS = setOf("render_scale", "display_hz")
+private val SLIDER_ROWS = setOf("render_scale", "display_hz", "worker_limit", "cache_budget_mib")
 
 /**
  * Numeric settings open a slider instead of a preset list. Render scale is continuous (5% steps);
@@ -410,6 +419,7 @@ fun ImportDialogs(documents: Documents) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AccountSheet(state: Snapshot, actions: LauncherActions, onDismiss: () -> Unit) {
+    var elyOpen by remember { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         val scroll = Modifier.verticalScroll(rememberScrollState())
         if (isLandscape()) {
@@ -423,13 +433,19 @@ fun AccountSheet(state: Snapshot, actions: LauncherActions, onDismiss: () -> Uni
                     Modifier.weight(0.85f).fillMaxHeight(),
                     verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                ) { AccountIdentity(state, actions) }
+                ) {
+                    AccountIdentity(state, actions)
+                    SavedAccounts(state.account, onDismiss)
+                }
                 VerticalDivider()
                 Column(
                     Modifier.weight(1.15f),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                ) { AccountSignIn(state.account) }
+                ) {
+                    if (elyOpen) ElyForm(state.account, onBack = { elyOpen = false })
+                    else AccountSignIn(state.account, onEly = { elyOpen = true })
+                }
             }
         } else {
             Column(
@@ -438,10 +454,167 @@ fun AccountSheet(state: Snapshot, actions: LauncherActions, onDismiss: () -> Uni
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 AccountIdentity(state, actions)
+                SavedAccounts(state.account, onDismiss)
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                AccountSignIn(state.account)
+                if (elyOpen) ElyForm(state.account, onBack = { elyOpen = false })
+                else AccountSignIn(state.account, onEly = { elyOpen = true })
             }
         }
+    }
+}
+
+@Composable
+private fun SavedAccounts(account: Account, onDismiss: () -> Unit) {
+    if (account.saved.isEmpty() && account.offlineName.isBlank()) return
+    Column(
+        Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            "Saved accounts",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        val offlineSelected = account.saved.none { it.selected }
+        Surface(
+            onClick = {
+                act("select_offline")
+                onDismiss()
+            },
+            shape = RoundedCornerShape(18.dp),
+            color = if (offlineSelected) MaterialTheme.colorScheme.secondaryContainer
+            else MaterialTheme.colorScheme.surfaceContainer,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Icon(Icons.Rounded.Person, null, Modifier.size(20.dp))
+                Text(
+                    "Offline: ${account.offlineName.ifBlank { "game name" }}",
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (offlineSelected) Icon(Icons.Rounded.Check, "Selected")
+            }
+        }
+        account.saved.forEach { saved ->
+            Surface(
+                onClick = {
+                    act("select_account", saved.key)
+                    onDismiss()
+                },
+                shape = RoundedCornerShape(18.dp),
+                color = if (saved.selected) MaterialTheme.colorScheme.secondaryContainer
+                else MaterialTheme.colorScheme.surfaceContainer,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Icon(
+                        if (saved.provider == "ely") Icons.Rounded.Public else Icons.Rounded.Person,
+                        null,
+                        Modifier.size(20.dp),
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(saved.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            if (saved.provider == "ely") "Ely.by" else "Microsoft",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (saved.selected) Icon(Icons.Rounded.Check, "Selected")
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun ElyForm(account: Account, onBack: () -> Unit) {
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var otp by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
+    Column(
+        Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("Ely.by account", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(
+            "Credentials go only to authserver.ely.by and are not saved on this device.",
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(
+            value = username,
+            onValueChange = { username = it },
+            label = { Text("Username or email") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("Password") },
+            singleLine = true,
+            visualTransformation = if (showPassword) androidx.compose.ui.text.input.VisualTransformation.None
+            else PasswordVisualTransformation(),
+            trailingIcon = {
+                TextButton(onClick = { showPassword = !showPassword }) {
+                    Text(if (showPassword) "Hide" else "Show")
+                }
+            },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = otp,
+            onValueChange = { otp = it },
+            label = { Text("Two-factor code (optional)") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = {
+                act(
+                    "ely_sign_in",
+                    org.json.JSONObject()
+                        .put("username", username)
+                        .put("password", password)
+                        .put("otp", otp)
+                        .toString(),
+                )
+                password = ""
+            },
+            enabled = username.isNotBlank() && password.isNotEmpty() && !account.pending,
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+        ) { Text("Sign in with Ely.by") }
+        if (account.pending) {
+            LinearWavyProgressIndicator(Modifier.fillMaxWidth())
+            TextButton(onClick = { act("cancel_login") }) { Text("Cancel sign-in") }
+        }
+        if (account.message.isNotBlank()) {
+            Text(
+                account.message,
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        TextButton(onClick = onBack) { Text("Back to Microsoft / offline") }
     }
 }
 
@@ -517,7 +690,7 @@ private fun AccountIdentity(state: Snapshot, actions: LauncherActions) {
 
 /** Microsoft sign-in: the device code when one is open, the message, and the sign-in buttons. */
 @Composable
-private fun AccountSignIn(account: Account) {
+private fun AccountSignIn(account: Account, onEly: () -> Unit) {
     account.code?.let { code ->
         Surface(
             shape = RoundedCornerShape(24.dp),
@@ -565,6 +738,11 @@ private fun AccountSignIn(account: Account) {
         }
         FilledTonalButton(onClick = { act("device_sign_in") }, modifier = Modifier.fillMaxWidth().height(48.dp)) {
             Text("Use a device code instead")
+        }
+        OutlinedButton(onClick = onEly, modifier = Modifier.fillMaxWidth().height(48.dp)) {
+            Icon(Icons.Rounded.Public, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Sign in with Ely.by")
         }
     }
 }

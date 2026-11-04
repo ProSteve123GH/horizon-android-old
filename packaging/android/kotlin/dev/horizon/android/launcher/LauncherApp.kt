@@ -2,6 +2,7 @@ package dev.horizon.android.launcher
 
 import android.content.Intent
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,6 +32,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Extension
+import androidx.compose.material.icons.rounded.Face
 import androidx.compose.material.icons.rounded.Inventory2
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Person
@@ -83,6 +85,7 @@ import kotlinx.coroutines.delay
 
 enum class Destination(val id: String, val label: String, val icon: ImageVector, val inNavigation: Boolean = true) {
     Play("play", "Play", Icons.Rounded.PlayArrow),
+    Skins("skins", "Skins", Icons.Rounded.Face),
     Mods("mods", "Mods", Icons.Rounded.Extension),
     Packs("packs", "Packs", Icons.Rounded.Palette),
     Shaders("shaders", "Shaders", Icons.Rounded.AutoAwesome),
@@ -126,10 +129,32 @@ fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit, onClass
     }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
     var importKind by rememberSaveable { mutableStateOf("mods") }
+    val context = LocalContext.current
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         onImport(importKind, uri?.toString())
     }
-    val context = LocalContext.current
+    var wardrobeKind by rememberSaveable { mutableStateOf("skin") }
+    val wardrobePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val bytes = runCatching {
+                context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            }.getOrNull()
+            if (bytes != null) {
+                val title = runCatching {
+                    context.contentResolver.query(
+                        uri,
+                        arrayOf(OpenableColumns.DISPLAY_NAME),
+                        null,
+                        null,
+                        null,
+                    )?.use { cursor ->
+                        if (cursor.moveToFirst()) cursor.getString(0) else null
+                    }
+                }.getOrNull() ?: "Imported ${if (wardrobeKind == "cape") "cape" else "skin"}"
+                NativeBridge.importWardrobe(wardrobeKind, title, bytes)
+            }
+        }
+    }
     val persist = { uri: Uri ->
         runCatching {
             context.contentResolver.takePersistableUriPermission(
@@ -181,6 +206,10 @@ fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit, onClass
         import = { kind ->
             importKind = kind
             picker.launch(arrayOf("*/*"))
+        },
+        importWardrobe = { kind ->
+            wardrobeKind = kind
+            wardrobePicker.launch(arrayOf("image/png"))
         },
         remove = { overlay = Overlay.Remove(it) },
         importFolder = { folderPicker.launch(null) },
@@ -303,6 +332,7 @@ class LauncherActions(
     val choose: (String) -> Unit,
     val edit: (id: String, title: String, value: String, hint: String) -> Unit,
     val import: (String) -> Unit,
+    val importWardrobe: (String) -> Unit,
     val remove: (LocalItem) -> Unit,
     val importFolder: () -> Unit,
     val importZip: () -> Unit,
@@ -353,6 +383,7 @@ private fun Page(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (page) {
                     Destination.Play -> PlayScreen(state, wide, short, actions)
+                    Destination.Skins -> SkinsScreen(state, wide, short, actions)
                     Destination.Mods, Destination.Packs, Destination.Shaders ->
                         CatalogScreen(page, state, wide, actions)
                     Destination.Installed -> InstalledScreen(state, actions)
@@ -374,6 +405,7 @@ private fun Header(page: Destination, state: Snapshot, short: Boolean, actions: 
         Text(
             when (page) {
                 Destination.Play -> "Horizon Android"
+                Destination.Skins -> "Skins & Capes"
                 Destination.Mods -> "Horizon Mods"
                 Destination.Packs -> "Resource Packs"
                 Destination.Shaders -> "Shader Packs"
