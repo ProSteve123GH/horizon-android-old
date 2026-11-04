@@ -31,18 +31,13 @@ updated PR branch, resolve the Android files again and record the result.
 
 ## Compose launcher coverage
 
-The Compose launcher covers Play, install/import progress, settings, profiles,
-accounts, content and diagnostics. It does **not** yet expose every newer Rust
-launcher page. In particular, the following remain in the classic Rust launcher:
-
-- the skin/cape gallery and wardrobe;
-- saved-account switching;
-- Ely.by sign-in.
-
-In this fork, **Settings → Open classic launcher for skins and saved accounts**
-starts the `:game` process without a pending play request, so those pages remain
-reachable. The game itself always runs as a client of the server thread or a
-remote server; opening the classic launcher does not change that architecture.
+The Compose launcher covers Play, install/import progress, Skins, settings,
+profiles, saved accounts and Ely.by sign-in, content and diagnostics. The
+skin/cape gallery and account controls use the same shared Rust wardrobe and
+account APIs as the classic Rust launcher. **Settings → Open classic launcher**
+remains a fallback and starts the `:game` process without a pending play request.
+The game itself always runs as a client of the server thread or a remote server;
+opening the classic launcher does not change that architecture.
 
 ## Package and signing identity
 

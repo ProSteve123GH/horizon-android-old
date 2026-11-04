@@ -44,13 +44,13 @@ dynamic slots and the separate terrain texture arrays.
 
 ## Skins, capes and Ely.by
 
-The classic Rust launcher owns the skin/cape gallery and wardrobe, saved-account
-switching and Ely.by sign-in. In this fork, open it from **Settings → Open
-classic launcher for skins and saved accounts**. Open **Skins** there to import
-PNG skins/capes, keep a local gallery and preview them on a rotating Classic/Slim
-model. Local choices affect your own view; explicit cloud actions change a
-supported provider's profile. **Accounts > Sign in with Ely.by** adds an Ely.by
-account; **Saved accounts** switches between saved accounts and Offline. See
+The Compose launcher's **Skins** tab and the classic Rust launcher use the same
+shared wardrobe APIs. Import PNG skins/capes, keep a local gallery and preview
+them on a Classic/Slim model. Local choices affect your own view; explicit cloud
+actions change a supported provider's profile. The account chip opens **Saved
+accounts** for switching between saved Microsoft/Ely.by accounts or Offline, and
+**Sign in with Ely.by** is available beside Microsoft sign-in. The classic
+launcher remains under **Settings → Open classic launcher** as a fallback. See
 [appearance and account capabilities](android-appearance.md) for cloud
 restrictions and the frontend-independent game contract.
 
@@ -58,20 +58,22 @@ restrictions and the frontend-independent game contract.
 
 The first screen is a Jetpack Compose launcher over the Rust controller bridge.
 The game runs in a separate `:game` process as an Android `NativeActivity`. The
-Rust launcher pages remain available through **Settings → Open classic launcher**
-for the pages Compose does not expose yet.
+The classic Rust launcher remains available through **Settings → Open classic
+launcher** as a fallback.
 
 - **Play:** download or import Minecraft 26.3, repair missing resources, and
   launch a world or server.
-- **Import:** reuse a 26.3 folder or ZIP from the phone; see
-  [Minecraft installation import](android-minecraft-import.md).
+- **Skins:** import and apply local skin/cape PNGs, preview Classic/Slim, and
+  perform explicit cloud actions.
 - **Mods:** import native Horizon packages using a direct HTTPS `.hmod` URL
   on 64-bit builds. New packages are disabled until enabled in Installed.
 - **Packs:** find and install resource packs with checksum verification.
+- **Shaders:** find and install shader packs.
 - **Installed:** enable, disable or remove installed additions.
-- **Settings:** rendering mode, input mode, profile, server, orientation and
-  the classic-launcher entry point. Profiles keep separate saves and settings.
-  Offline player names are edited alongside Microsoft sign-in in **Accounts**.
+- **Settings:** rendering mode, resolution, refresh rate, chunk-worker ceiling,
+  reusable RAM cache, orientation, aspect, immersive/cutout, profile, input,
+  offline name, server, Game files, World files and diagnostics. Profiles keep
+  separate saves and settings. Accounts are opened from the chip in the header.
 
 Java mod search and modpack import are not available on Android. Fabric, Forge,
 NeoForge and Mixin code require native ports; installing their JARs does not make
