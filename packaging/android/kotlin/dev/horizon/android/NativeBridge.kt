@@ -17,6 +17,9 @@ object NativeBridge {
     /** Runs a launcher action: `{"ok": …}` or `{"error": "…"}`. */
     @JvmStatic external fun call(method: String, arg: String): String?
 
+    /** Adds a picked PNG to the local skin or cape gallery. */
+    @JvmStatic external fun importWardrobe(kind: String, title: String, bytes: ByteArray)
+
     /** Hands a picked document to the content importer. */
     @JvmStatic external fun importDocument(activity: Activity, kind: String, uri: String?)
 

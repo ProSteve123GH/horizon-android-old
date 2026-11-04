@@ -10,7 +10,7 @@ pub(crate) mod login;
 #[path = "launcher_pages.rs"]
 mod pages;
 #[path = "wardrobe.rs"]
-mod wardrobe;
+pub(crate) mod wardrobe;
 use horizon_client::{
     Result,
     gfx::Renderer,

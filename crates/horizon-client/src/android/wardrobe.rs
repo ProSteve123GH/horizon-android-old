@@ -15,16 +15,17 @@ use horizon_client::{
     hud::rgba,
     ui_theme::{Face, Ui, color},
 };
+use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},
     sync::mpsc,
 };
 
-pub(super) enum CloudAction {
+pub(crate) enum CloudAction {
     Upload,
     Cape(usize),
 }
-pub(super) struct Wardrobe {
+pub(crate) struct Wardrobe {
     pub root: PathBuf,
     default_skin: PathBuf,
     library: Library,
@@ -40,6 +41,7 @@ pub(super) struct Wardrobe {
     fingers: std::collections::BTreeMap<u64, [f32; 2]>,
     note: String,
     damaged: bool,
+    preview_cache: Option<Vec<u8>>,
 }
 impl Wardrobe {
     pub fn new(home: &Path) -> Self {
@@ -66,6 +68,7 @@ impl Wardrobe {
             fingers: Default::default(),
             note,
             damaged,
+            preview_cache: None,
         };
         value.preview();
         value
@@ -297,7 +300,122 @@ impl Wardrobe {
         };
         Library::load(&self.root)?.prepare_game(&self.root, &key, game, cloud)
     }
-    pub fn preview(&mut self) {
+    /// The Compose wardrobe's serialisable state. Image paths are app-private files;
+    /// no account secret or provider token enters the snapshot.
+    pub(crate) fn state(&mut self) -> Value {
+        let selection = self
+            .library
+            .selections
+            .get(&self.key)
+            .cloned()
+            .unwrap_or_default();
+        let entries: Vec<Value> = self
+            .library
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                let image = Library::image(&self.root, &entry.id).ok()?;
+                Some(json!({
+                    "index": index,
+                    "id": entry.id,
+                    "title": entry.title,
+                    "kind": if entry.kind == Kind::Cape { "cape" } else { "skin" },
+                    "selected": match entry.kind {
+                        Kind::Skin => selection.skin.as_deref() == Some(entry.id.as_str()),
+                        Kind::Cape => selection.cape.as_deref() == Some(entry.id.as_str()),
+                    },
+                    "image": image.to_string_lossy(),
+                }))
+            })
+            .collect();
+        let cloud_capes: Vec<Value> = self
+            .cache
+            .snapshot
+            .capes
+            .iter()
+            .enumerate()
+            .map(|(index, cape)| {
+                json!({
+                    "index": index,
+                    "title": cape.title,
+                    "active": cape.active,
+                })
+            })
+            .collect();
+        let cloud_skins: Vec<Value> = self
+            .cache
+            .snapshot
+            .skins
+            .iter()
+            .map(|skin| {
+                json!({
+                    "title": skin.title,
+                    "active": skin.active,
+                    "slim": skin.slim,
+                })
+            })
+            .collect();
+        let preview = self.write_preview();
+        let preview_path = preview
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned());
+        let preview_stamp = preview
+            .as_ref()
+            .and_then(|path| std::fs::metadata(path).ok())
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_nanos() as u64)
+            .unwrap_or(0);
+        json!({
+            "key": self.key,
+            "provider": match self.provider {
+                Some(Provider::Microsoft) => Some("microsoft"),
+                Some(Provider::Ely) => Some("ely"),
+                None => None,
+            },
+            "capes": self.capes,
+            "model": if selection.model == Model::Slim { "slim" } else { "classic" },
+            "hide_cape": selection.hide_cape,
+            "selected_skin": selection.skin.is_some(),
+            "selected_cape": selection.cape.is_some(),
+            "entries": entries,
+            "cloud_capes": cloud_capes,
+            "cloud_skins": cloud_skins,
+            "preview": preview_path,
+            "preview_stamp": preview_stamp,
+            "busy": self.worker.is_some(),
+            "damaged": self.damaged,
+            "note": self.note,
+        })
+    }
+
+    pub(crate) fn rotate(&mut self, direction: i8) {
+        self.camera.rotate(direction as f32 * 25.0, 0.0);
+        self.preview();
+    }
+
+    pub(crate) fn zoom(&mut self, closer: bool) {
+        self.camera.zoom(if closer { 1.2 } else { 1.0 / 1.2 });
+        self.preview();
+    }
+
+    pub(crate) fn import_bytes(
+        &mut self,
+        title: &str,
+        kind: Kind,
+        bytes: &[u8],
+    ) -> Result<(), String> {
+        if self.damaged {
+            return Err("The wardrobe index is damaged; remove or repair it first.".into());
+        }
+        self.library.import(&self.root, title, kind, bytes)?;
+        self.reload();
+        self.note = "PNG added to the local gallery. Select it to apply locally.".into();
+        Ok(())
+    }
+
+    fn appearance(&self) -> (image::RgbaImage, Option<image::RgbaImage>, Model) {
         let selection = self
             .library
             .selections
@@ -325,7 +443,32 @@ impl Wardrobe {
                 .and_then(|p| skins::read_file(&p).ok())
                 .and_then(|b| skins::read_cape(&b).ok())
         };
-        let model = selection.model;
+        (skin, cape, selection.model)
+    }
+
+    /// A PNG the Compose wardrobe can decode. It is rewritten only when the
+    /// rendered pixels change, so polling the snapshot does not touch the disk
+    /// every frame.
+    fn write_preview(&mut self) -> Option<PathBuf> {
+        let (skin, cape, model) = self.appearance();
+        let image = preview::render(&skin, cape.as_ref(), model, self.camera, [240, 300]);
+        let mut png = Vec::new();
+        image
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .ok()?;
+        let path = self.root.join("preview.png");
+        if !path.is_file() || self.preview_cache.as_deref() != Some(png.as_slice()) {
+            std::fs::create_dir_all(&self.root).ok()?;
+            let temporary = self.root.join("preview.png.tmp");
+            std::fs::write(&temporary, &png).ok()?;
+            std::fs::rename(&temporary, &path).ok()?;
+            self.preview_cache = Some(png);
+        }
+        Some(path)
+    }
+
+    pub fn preview(&mut self) {
+        let (skin, cape, model) = self.appearance();
         let image = preview::render(&skin, cape.as_ref(), model, self.camera, [160, 200]);
         self.bitmap.clear();
         for y in 0..image.height() {

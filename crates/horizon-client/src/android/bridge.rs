@@ -6,11 +6,14 @@
 //! Android main thread; slow work stays on the same worker threads the native
 //! launcher uses.
 use crate::catalog::{Catalog, Page};
-use crate::launcher::login::Login;
+use crate::launcher::{
+    login::Login,
+    wardrobe::{CloudAction, Wardrobe},
+};
 use horizon_client::content_files::Kind;
 use jni::{
     JNIEnv,
-    objects::{JClass, JObject, JString},
+    objects::{JByteArray, JClass, JObject, JString},
     sys::jstring,
 };
 use serde_json::{Value, json};
@@ -24,6 +27,7 @@ struct Controller {
     home: PathBuf,
     catalog: Catalog,
     login: Login,
+    wardrobe: Wardrobe,
     install: Arc<Mutex<horizon_client::official_install::InstallProgress>>,
     installation: horizon_client::minecraft_import::InstallationInfo,
     worker: Option<mpsc::Receiver<Result<(), String>>>,
@@ -132,9 +136,10 @@ impl Controller {
         }
         let installation = horizon_client::minecraft_import::info(&home);
         let mut controller = Self {
-            home,
+            home: home.clone(),
             catalog,
             login: Login::new(),
+            wardrobe: Wardrobe::new(&home),
             install: Arc::default(),
             installation,
             worker: None,
@@ -151,6 +156,10 @@ impl Controller {
         self.catalog.refresh(&self.home);
         self.installation = horizon_client::minecraft_import::info(&self.home);
         self.login.refresh_status();
+        self.wardrobe.open(
+            &self.catalog.config.name,
+            &self.catalog.config.microsoft_client_id,
+        );
         if let Ok(message) = std::fs::read_to_string(self.home.join("android-error.txt")) {
             self.error = Some(message);
         }
@@ -210,7 +219,14 @@ impl Controller {
         for result in crate::gallery::poll() {
             self.catalog.status = result.unwrap_or_else(|e| format!("File export failed: {e}"));
         }
-        self.login.poll();
+        let account_changed = self.login.poll();
+        self.wardrobe.poll();
+        if account_changed {
+            self.wardrobe.open(
+                &self.catalog.config.name,
+                &self.catalog.config.microsoft_client_id,
+            );
+        }
     }
 
     fn settings(&self) -> Value {
@@ -224,6 +240,10 @@ impl Controller {
                 row("display_hz", "Display refresh rate", c.device.display_label(), "choice"),
                 switch("performance_hints", "Performance hints", if c.device.performance_hints { "On (ADPF)" } else { "Off" }, c.device.performance_hints),
             ]},
+            {"group": "Performance", "rows": [
+                row("worker_limit", "Chunk worker limit", if c.worker_limit == 0 { "No additional limit".into() } else { format!("{} worker(s)", c.worker_limit) }, "choice"),
+                row("cache_budget_mib", "Reusable RAM cache", if c.cache_budget_mib == 0 { "Engine default (80 MiB)".into() } else { format!("{} MiB", c.cache_budget_mib) }, "choice"),
+            ]},
             {"group": "Screen", "rows": [
                 row("orientation", "Orientation", c.orientation.label().into(), "choice"),
                 row("aspect", "Aspect ratio", c.screen.aspect.label().into(), "choice"),
@@ -235,6 +255,10 @@ impl Controller {
                 row("input_host", "Input", c.input_host.label().into(), "choice"),
                 row("name", "Offline player name", if c.name.is_empty() { "Not set".into() } else { c.name.clone() }, "text"),
                 row("server", "Server", if c.server.is_empty() { "Singleplayer".into() } else { c.server.clone() }, "text"),
+            ]},
+            {"group": "Storage", "rows": [
+                row("game_files", "Game files", "Open in system Files".into(), "action"),
+                row("world_files", "World files", "Import / copy / back up in Files".into(), "action"),
             ]},
             {"group": "Diagnostics", "rows": [
                 switch("gpu_profile", "GPU profiling", if c.device.gpu_profile { "On / included in report" } else { "Off" }, c.device.gpu_profile),
@@ -307,6 +331,43 @@ impl Controller {
                             "",
                             hz,
                             c.device.display_hz == hz,
+                        )
+                    })
+                    .collect(),
+            ),
+            "worker_limit" => (
+                "Chunk worker limit",
+                "Ceiling for generation and meshing workers, not all app threads. Lower values can reduce CPU contention but slow loading. Applies on the next Play.",
+                (0..=64u32)
+                    .map(|limit| {
+                        choice(
+                            if limit == 0 {
+                                "No additional limit".into()
+                            } else {
+                                format!("{limit} worker(s)")
+                            },
+                            "",
+                            limit,
+                            c.worker_limit == limit,
+                        )
+                    })
+                    .collect(),
+            ),
+            "cache_budget_mib" => (
+                "Reusable RAM cache",
+                "Decoded sounds (80%) and empty mesh buffers (20%). Recreated at the same quality. Smaller budgets can increase CPU work. Not total RAM/VRAM. Applies on the next Play.",
+                [0, 16, 32, 64, 128, 256]
+                    .into_iter()
+                    .map(|mib| {
+                        choice(
+                            if mib == 0 {
+                                "Engine default (80 MiB)".into()
+                            } else {
+                                format!("{mib} MiB")
+                            },
+                            "",
+                            mib,
+                            c.cache_budget_mib == mib,
                         )
                     })
                     .collect(),
@@ -476,6 +537,29 @@ impl Controller {
             )
         };
         let free_bytes = horizon_client::official_install::available_space(&self.home);
+        let wardrobe = if self.catalog.page == Page::Skins {
+            self.wardrobe.state()
+        } else {
+            Value::Null
+        };
+        let accounts = crate::account::Accounts::load();
+        let selected_account = accounts.selected.clone();
+        let saved_accounts: Vec<Value> = self
+            .login
+            .saved_accounts
+            .iter()
+            .map(|account| {
+                json!({
+                    "key": account.key(),
+                    "name": account.name,
+                    "provider": match account.provider {
+                        crate::account::Provider::Microsoft => "microsoft",
+                        crate::account::Provider::Ely => "ely",
+                    },
+                    "selected": selected_account.as_deref() == Some(account.key().as_str()),
+                })
+            })
+            .collect();
         let c = &self.catalog.config;
         let results: Vec<Value> = self
             .catalog
@@ -560,6 +644,8 @@ impl Controller {
                 "message": self.login.message(),
                 "code": code,
                 "needs_review": self.login.message().contains("not approved by Mojang"),
+                "saved": saved_accounts,
+                "offline_name": c.name,
             },
             "config": {
                 "name": c.name,
@@ -573,6 +659,7 @@ impl Controller {
                 "shader_source": if c.shader_source == crate::shader_catalog::Origin::Modrinth { "modrinth" } else { "horizon" },
             },
             "settings": self.settings(),
+            "wardrobe": wardrobe,
             "catalog": {
                 "page": page_name(self.catalog.page),
                 "query": self.catalog.query,
@@ -659,6 +746,12 @@ impl Controller {
                 self.catalog.offset = 0;
                 self.error = None;
                 self.catalog.browse(&home);
+                if page == Page::Skins {
+                    self.wardrobe.open(
+                        &self.catalog.config.name,
+                        &self.catalog.config.microsoft_client_id,
+                    );
+                }
             }
             "search" => {
                 self.catalog.query = arg.to_owned();
@@ -735,6 +828,82 @@ impl Controller {
                     "Open the system Files app and choose Horizon Android.".into()
                 };
             }
+            "game_files" => {
+                self.catalog.status = if crate::platform::open_documents(
+                    crate::document_store::ROOT,
+                ) {
+                    "Game files opened. Worlds, mods, packs, shaders and reports are available here.".into()
+                } else {
+                    "Open system Files > Horizon Android.".into()
+                };
+            }
+            "world_files" => {
+                let id = crate::document_store::folder_id(self.catalog.config.profile, "worlds");
+                self.catalog.status = if crate::platform::open_documents(&id) {
+                    "Copy a complete world folder to back up or import. Finish copying before Play; never replace an existing world silently.".into()
+                } else {
+                    "Open system Files > Horizon Android > Worlds. Copy complete world folders while the game is closed.".into()
+                };
+            }
+            "select_account" => {
+                let mut accounts = crate::account::Accounts::load();
+                let Some(account) = accounts
+                    .accounts
+                    .iter()
+                    .find(|account| account.key() == arg)
+                    .cloned()
+                else {
+                    return Err("That saved account is no longer available.".into());
+                };
+                accounts.selected = Some(account.key());
+                accounts.save()?;
+                self.login.refresh_status();
+                self.wardrobe.open(
+                    &self.catalog.config.name,
+                    &self.catalog.config.microsoft_client_id,
+                );
+                self.catalog.status = format!("Playing as {}.", account.name);
+            }
+            "select_offline" => {
+                let mut accounts = crate::account::Accounts::load();
+                accounts.selected = None;
+                accounts.save()?;
+                self.login.refresh_status();
+                self.wardrobe.open(
+                    &self.catalog.config.name,
+                    &self.catalog.config.microsoft_client_id,
+                );
+                self.catalog.status = if self.catalog.config.name.trim().is_empty() {
+                    "Using the game's offline name.".into()
+                } else {
+                    format!("Playing offline as {}.", self.catalog.config.name)
+                };
+            }
+            "wardrobe_kind" => self.wardrobe.capes = arg == "cape",
+            "wardrobe_select" => self
+                .wardrobe
+                .select(arg.parse::<usize>().map_err(|e| e.to_string())?),
+            "wardrobe_model" => self.wardrobe.model(),
+            "wardrobe_hide_cape" => self.wardrobe.hide_cape(),
+            "wardrobe_use_cloud" => self.wardrobe.use_cloud(),
+            "wardrobe_cloud" => self
+                .wardrobe
+                .cloud(&self.catalog.config.microsoft_client_id, None),
+            "wardrobe_upload" => self.wardrobe.cloud(
+                &self.catalog.config.microsoft_client_id,
+                Some(CloudAction::Upload),
+            ),
+            "wardrobe_cape" => {
+                let index = arg.parse::<usize>().map_err(|e| e.to_string())?;
+                self.wardrobe.cloud(
+                    &self.catalog.config.microsoft_client_id,
+                    Some(CloudAction::Cape(index)),
+                )
+            }
+            "wardrobe_rotate" => self
+                .wardrobe
+                .rotate(arg.parse::<i8>().map_err(|e| e.to_string())?),
+            "wardrobe_zoom" => self.wardrobe.zoom(arg == "in"),
             "import_conflict" => crate::documents::resolve(match arg {
                 "keep_both" => crate::documents::Choice::KeepBoth,
                 "replace" => crate::documents::Choice::Replace,
@@ -769,10 +938,24 @@ impl Controller {
             "device_sign_in" => self
                 .login
                 .start_device(&self.catalog.config.microsoft_client_id),
+            "ely_sign_in" => {
+                let details: Value =
+                    serde_json::from_str(arg).map_err(|_| "Invalid Ely.by sign-in details")?;
+                self.login.username = details["username"].as_str().unwrap_or_default().to_owned();
+                self.login.password = details["password"].as_str().unwrap_or_default().to_owned();
+                self.login.otp = details["otp"].as_str().unwrap_or_default().to_owned();
+                self.login.start_ely();
+            }
             "copy_code" => self.login.copy_code(),
             "open_link" => self.login.open_link(),
             "cancel_login" => self.login.close(),
-            "sign_out" => self.login.sign_out(),
+            "sign_out" => {
+                self.login.sign_out();
+                self.wardrobe.open(
+                    &self.catalog.config.name,
+                    &self.catalog.config.microsoft_client_id,
+                );
+            }
             "review_app" => self.login.review_app(),
             "repository" => {
                 self.catalog.status = if crate::platform::open_repository() {
@@ -876,6 +1059,12 @@ impl Controller {
                 c.device.display_hz = value.parse::<u16>().map_err(|e| e.to_string())?;
                 c.device.sanitize();
             }
+            "worker_limit" => {
+                c.worker_limit = value.parse::<u32>().map_err(|e| e.to_string())?.min(64);
+            }
+            "cache_budget_mib" => {
+                c.cache_budget_mib = value.parse::<u32>().map_err(|e| e.to_string())?.min(1024);
+            }
             "orientation" => {
                 c.orientation =
                     crate::catalog::Orientation::ALL[index(crate::catalog::Orientation::ALL.len())?]
@@ -930,6 +1119,28 @@ impl Controller {
             _ => return Err("Unknown setting".into()),
         }
         self.save()
+    }
+
+    /// Adds a picked PNG to the local wardrobe gallery.
+    fn import_wardrobe(&mut self, kind: &str, title: &str, bytes: &[u8]) -> Result<Value, String> {
+        if bytes.is_empty() || bytes.len() > 8 * 1024 * 1024 {
+            return Err("Choose a PNG smaller than 8 MiB.".into());
+        }
+        let kind = match kind {
+            "cape" => crate::skins::library::Kind::Cape,
+            "skin" => crate::skins::library::Kind::Skin,
+            _ => return Err("Unknown wardrobe image kind.".into()),
+        };
+        let title = title.trim();
+        let title = if title.is_empty() {
+            "Imported image"
+        } else {
+            title
+        };
+        self.wardrobe.import_bytes(title, kind, bytes)?;
+        self.catalog.status =
+            format!("{title} added to the local gallery. Select it to apply it locally.");
+        Ok(json!({"imported": true}))
     }
 
     /// Imports a folder or ZIP picked in the Compose launcher.
@@ -1088,6 +1299,41 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_call(
         }
     };
     reply(&mut env, &value)
+}
+
+/// `NativeBridge.importWardrobe(String kind, String title, byte[] png)`: a picked skin or cape.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_horizon_android_NativeBridge_importWardrobe(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    kind: JString<'_>,
+    title: JString<'_>,
+    bytes: JByteArray<'_>,
+) {
+    let kind = string(&mut env, &kind);
+    let title = string(&mut env, &title);
+    let bytes = if bytes.is_null() {
+        Vec::new()
+    } else {
+        match env.convert_byte_array(&bytes) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                let _ = env.exception_clear();
+                Vec::new()
+            }
+        }
+    };
+    let result = CONTROLLER.with(|c| match c.borrow_mut().as_mut() {
+        Some(controller) => controller.import_wardrobe(&kind, &title, &bytes),
+        None => Err("Launcher is not initialized".into()),
+    });
+    if let Err(error) = result {
+        CONTROLLER.with(|c| {
+            if let Some(controller) = c.borrow_mut().as_mut() {
+                controller.catalog.status = error;
+            }
+        });
+    }
 }
 
 /// `NativeBridge.importDocument(Activity, String kind, String uri)`: a picker result.
