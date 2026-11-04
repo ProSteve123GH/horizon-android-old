@@ -181,9 +181,12 @@ folder are kept. The source is never deleted or modified.
 
 The platform-independent importer has 15 Rust unit tests for layout discovery,
 pinned metadata, cache reuse, cancellation, corruption, ZIP traversal and
-record restore. The Android glue and Compose screens are compiled into the
-arm64 dev APK by the remote workflow. CI run #5 (commit `2dd7d4312`) passed APK
-signing, package identity, ABI and payload checks; its artifact SHA-256
-(`421c6749…`) was verified locally. The APK has not been installed on a physical
-Android device in this workspace, so SAF provider behavior, ZIP file
-descriptors, the repair flow and the installer still need device validation.
+record restore. The installer has 11 unit tests, including a verified cache hit
+that must not download.
+
+The complete import and installation path was also exercised against a real
+5,149-file ZIP, using the APK's `engine-data.zip`: the import copied 5,149 files
+(527,120,546 bytes) with no missing files, the installer's download stage
+reported 0 bytes downloaded and 526,523,511 bytes verified from the cache, and
+the prepared installation reached `ready = true`. The arm64 APK is built and
+audited in CI; tablet validation is reported separately.
