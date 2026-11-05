@@ -10,13 +10,17 @@ pub const ROOT: &str = "horizon";
 const DIRECTORY: &str = "vnd.android.document/directory";
 const MAX_CHILDREN: usize = 32768;
 // DocumentsContract.Document flags. Advertising the operations the provider
-// really implements is what lets Files offer edit, copy, move and delete.
-const FLAG_SUPPORTS_WRITE: i32 = 1;
-const FLAG_SUPPORTS_DELETE: i32 = 1 << 1;
-const FLAG_SUPPORTS_RENAME: i32 = 1 << 2;
-const FLAG_SUPPORTS_COPY: i32 = 1 << 3;
-const FLAG_SUPPORTS_MOVE: i32 = 1 << 4;
-const FLAG_DIR_SUPPORTS_CREATE: i32 = 1 << 5;
+// really implements is what lets Files offer edit, rename, move and delete.
+// Copy is not advertised: copyDocument is not implemented, so a same-provider
+// copy would fail. Files can still copy a document out through openDocument.
+const FLAG_SUPPORTS_WRITE: i32 = 1 << 1;
+const FLAG_SUPPORTS_DELETE: i32 = 1 << 2;
+const FLAG_DIR_SUPPORTS_CREATE: i32 = 1 << 3;
+const FLAG_SUPPORTS_RENAME: i32 = 1 << 6;
+const FLAG_SUPPORTS_MOVE: i32 = 1 << 8;
+// DocumentsContract.Root flags are a separate namespace from Document flags.
+const ROOT_FLAG_LOCAL_ONLY: i32 = 1 << 1;
+const ROOT_FLAG_SUPPORTS_IS_CHILD: i32 = 1 << 4;
 const CONFIG_FILES: &[&str] = &[
     "options.txt",
     "horizon-graphics.txt",
@@ -281,8 +285,7 @@ fn row(home: &Path, id: &str) -> io::Result<Value> {
     let writable = !doc.reports && meta.is_file();
     let deletable = !doc.reports && doc.label.is_none();
     let renamable = deletable && meta.is_file();
-    let copyable = !doc.reports && doc.label.is_none();
-    let movable = copyable;
+    let movable = deletable;
     let dir_create = !doc.reports && meta.is_dir();
     let mut flags = 0;
     if writable {
@@ -293,9 +296,6 @@ fn row(home: &Path, id: &str) -> io::Result<Value> {
     }
     if renamable {
         flags |= FLAG_SUPPORTS_RENAME;
-    }
-    if copyable {
-        flags |= FLAG_SUPPORTS_COPY;
     }
     if movable {
         flags |= FLAG_SUPPORTS_MOVE;
@@ -401,7 +401,9 @@ pub fn call(home: &Path, op: &str, id: &str, arg: &str) -> io::Result<Value> {
     }
     match op {
         "roots" => Ok(json!([{"root_id": ROOT, "document_id": ROOT,
-            "title": "Horizon Android", "flags": 18, "mime_types": "*/*"}])),
+            "title": "Horizon Android",
+            "flags": ROOT_FLAG_LOCAL_ONLY | ROOT_FLAG_SUPPORTS_IS_CHILD,
+            "mime_types": "*/*"}])),
         "document" => Ok(json!([row(home, id)?])),
         "children" => Ok(json!(children(home, id)?)),
         "child" => Ok(json!(is_child(home, id, arg))),
@@ -484,7 +486,10 @@ pub fn call(home: &Path, op: &str, id: &str, arg: &str) -> io::Result<Value> {
                 return Err(invalid());
             }
             let parent = resolve(home, arg)?;
-            if parent.reports || !parent.path.is_dir() {
+            if parent.reports
+                || !parent.path.is_dir()
+                || (parent.configuration && !source.path.is_file())
+            {
                 return Err(invalid());
             }
             let name = source.path.file_name().ok_or_else(invalid)?;
@@ -622,11 +627,16 @@ mod world_tests {
         let config = children(&home, "p0/configuration").unwrap();
         assert_eq!(config.len(), 1);
         assert_eq!(config[0]["_display_name"], "options.txt");
-        // Write, delete, rename, copy and move are all advertised for a file.
-        assert_eq!(config[0]["flags"], 31);
+        // Write, delete, rename and move are advertised for a file. Copy is not,
+        // because copyDocument is not implemented; Files can still copy out.
+        assert_eq!(config[0]["flags"], 326);
         assert_eq!(
             call(&home, "document", "p0/configuration", "").unwrap()[0]["flags"],
-            32
+            8
+        );
+        assert_eq!(
+            call(&home, "roots", "", "").unwrap()[0]["flags"],
+            ROOT_FLAG_LOCAL_ONLY | ROOT_FLAG_SUPPORTS_IS_CHILD
         );
         assert!(open(&home, "p0/configuration/account.json", "r").is_err());
         assert!(open(&home, "p0/configuration/android-launcher.json", "r").is_err());
@@ -640,15 +650,15 @@ mod world_tests {
         assert!(call(&home, "create", "p0/configuration", "account.json").is_err());
         assert_eq!(
             call(&home, "document", "p0/worlds", "").unwrap()[0]["flags"],
-            32
+            8
         );
         assert_eq!(
             call(&home, "document", "p0/worlds/Example", "").unwrap()[0]["flags"],
-            58
+            268
         );
         assert_eq!(
             call(&home, "document", "p0/worlds/Example/level.dat", "").unwrap()[0]["flags"],
-            31
+            326
         );
         // Move is implemented for children, but a fixed root or a name outside
         // the configuration allowlist is still refused.
@@ -661,6 +671,20 @@ mod world_tests {
         assert!(home.join("horizon-mods/sub/move.hmod").is_file());
         assert!(!home.join("horizon-mods/move.hmod").exists());
         assert!(call(&home, "move", "p0/mods/sub/move.hmod", "p0/configuration").is_err());
+        // A directory cannot enter Configuration even when it uses an
+        // allowlisted file name.
+        fs::create_dir_all(home.join("horizon-mods/horizon-touch.json")).unwrap();
+        assert!(
+            call(
+                &home,
+                "move",
+                "p0/mods/horizon-touch.json",
+                "p0/configuration"
+            )
+            .is_err()
+        );
+        assert!(home.join("horizon-mods/horizon-touch.json").is_dir());
+        fs::remove_dir_all(home.join("horizon-mods/horizon-touch.json")).unwrap();
         assert!(call(&home, "move", "p0/mods", "p0/worlds").is_err());
         call(&home, "delete", "p0/mods/sub", "").unwrap();
         open(&home, "p0/configuration/options.txt", "wt")
