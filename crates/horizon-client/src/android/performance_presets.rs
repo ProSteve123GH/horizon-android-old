@@ -1283,6 +1283,9 @@ pub fn update_custom(
     let values = validated_values(values)?;
     store.custom[index].name = name;
     store.custom[index].values = values;
+    if store.selected.as_deref() == Some(id) {
+        store.selected = None;
+    }
     let preset = store.custom[index].clone();
     save_store(instance, &store, damaged.is_some())?;
     Ok(preset_view(&preset))
@@ -1468,10 +1471,19 @@ mod tests {
             "10"
         );
         assert_eq!(option(&scratch.path().join(OPTIONS_FILE), "maxFps"), "90");
-        let renamed = rename_custom(scratch.path(), &created.id, "Travel light").unwrap();
-        assert_eq!(renamed.name, "Travel light");
+        let updated = update_custom(
+            scratch.path(),
+            &created.id,
+            "Travel light",
+            &values(&[("render_distance", Value::Int(10))]),
+        )
+        .unwrap();
+        assert_eq!(updated.name, "Travel light");
+        assert_eq!(state(scratch.path()).unwrap().selected, None);
+        let renamed = rename_custom(scratch.path(), &created.id, "Traveler").unwrap();
+        assert_eq!(renamed.name, "Traveler");
         let duplicate = duplicate_custom(scratch.path(), &created.id).unwrap();
-        assert_eq!(duplicate.name, "Travel light copy");
+        assert_eq!(duplicate.name, "Traveler copy");
         delete_custom(scratch.path(), &created.id).unwrap();
         assert!(
             state(scratch.path())

@@ -63,6 +63,11 @@ import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 import kotlin.math.roundToInt
 
+private fun JSONObject.nullableString(key: String): String? {
+    val value = opt(key)
+    return (value as? String)?.takeIf { it.isNotBlank() }
+}
+
 internal data class PerformanceChoice(val value: String, val label: String)
 
 internal data class PerformanceSetting(
@@ -117,8 +122,8 @@ internal data class PerformanceState(
         fun parse(root: JSONObject): PerformanceState = PerformanceState(
             instance = root.optString("instance"),
             instanceId = root.optInt("instance_id"),
-            selected = root.optString("selected").takeIf { it.isNotBlank() },
-            selectedName = root.optString("selected_name").takeIf { it.isNotBlank() },
+            selected = root.nullableString("selected"),
+            selectedName = root.nullableString("selected_name"),
             presets = root.optJSONArray("presets")?.let { list ->
                 List(list.length()) { index ->
                     val item = list.getJSONObject(index)
@@ -134,7 +139,7 @@ internal data class PerformanceState(
             settings = root.optJSONArray("settings")?.let { list ->
                 List(list.length()) { index -> parseSetting(list.getJSONObject(index)) }
             }.orEmpty(),
-            warning = root.optString("warning").takeIf { it.isNotBlank() },
+            warning = root.nullableString("warning"),
         )
 
         private fun parseSetting(item: JSONObject): PerformanceSetting {
@@ -250,6 +255,7 @@ fun PerformanceSheet(onDismiss: () -> Unit) {
             error = reply.error ?: "Could not load performance presets"
         } else {
             state = PerformanceState.parse(root)
+            error = null
         }
     }
     LaunchedEffect(Unit) { reload() }
