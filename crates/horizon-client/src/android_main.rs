@@ -67,10 +67,18 @@ mod platform;
 #[allow(dead_code)]
 #[path = "../../../launcher/src/proxy.rs"]
 mod proxy;
+// The desktop launcher's servers.dat model: vanilla NBT, pictures and the fields the launcher
+// does not use. The Android Server Manager adds its UI, favorites and groups.
+#[rustfmt::skip]
+#[allow(dead_code)]
+#[path = "../../../launcher/src/server_list.rs"]
+mod server_list;
 #[path = "android/search_queue.rs"]
 mod search_queue;
 #[path = "android/secure_store.rs"]
 mod secure_store;
+#[path = "android/servers.rs"]
+mod servers;
 #[path = "android/shader_catalog.rs"]
 mod shader_catalog;
 #[rustfmt::skip]

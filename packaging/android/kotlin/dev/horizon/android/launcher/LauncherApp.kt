@@ -103,6 +103,7 @@ sealed interface Overlay {
     data object Profiles : Overlay
     data object Worlds : Overlay
     data object Performance : Overlay
+    data object Servers : Overlay
     data class Choose(val id: String, val options: Options) : Overlay
     data class Edit(val id: String, val title: String, val value: String, val hint: String) : Overlay
     data class Remove(val item: LocalItem) : Overlay
@@ -199,6 +200,7 @@ fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit, onClass
         openAccount = { overlay = Overlay.Account },
         openWorlds = { overlay = Overlay.Worlds },
         openPerformance = { overlay = Overlay.Performance },
+        openServers = { overlay = Overlay.Servers },
         choose = { id ->
             if (id == "profile") {
                 overlay = Overlay.Profiles
@@ -238,6 +240,7 @@ fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit, onClass
             Overlay.Profiles -> InstancesSheet(onDismiss = { overlay = null }, onPlay = onPlay)
             Overlay.Worlds -> WorldsSheet(onDismiss = { overlay = null }, onPlay = onPlay)
             Overlay.Performance -> PerformanceSheet(onDismiss = { overlay = null })
+            Overlay.Servers -> ServersSheet(onDismiss = { overlay = null }, onPlay = onPlay)
             is Overlay.Edit -> EditDialog(o, onDismiss = { overlay = null })
             is Overlay.Remove -> RemoveDialog(o.item, onDismiss = { overlay = null })
             Overlay.RemoveInstallation -> RemoveInstallationDialog(state.install, onDismiss = { overlay = null })
@@ -337,6 +340,7 @@ class LauncherActions(
     val openAccount: () -> Unit,
     val openWorlds: () -> Unit,
     val openPerformance: () -> Unit,
+    val openServers: () -> Unit,
     val choose: (String) -> Unit,
     val edit: (id: String, title: String, value: String, hint: String) -> Unit,
     val import: (String) -> Unit,

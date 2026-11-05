@@ -33,7 +33,8 @@ jobs:
             ~/.cargo/git
             .local/android/world-tests/target
             .local/android/document-store-tests/target
-          key: android-harness-tests-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'tools/test_android_worlds.py', 'launcher/src/worlds.rs', 'launcher/src/worlds/tests.rs', 'tools/test_android_document_store.py', 'crates/horizon-client/src/android/document_store.rs') }}
+            .local/android/server-manager-tests/target
+          key: android-harness-tests-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'tools/test_android_worlds.py', 'launcher/src/worlds.rs', 'launcher/src/worlds/tests.rs', 'tools/test_android_document_store.py', 'crates/horizon-client/src/android/document_store.rs', 'tools/test_android_servers.py', 'launcher/src/server_list.rs', 'crates/horizon-client/src/android/servers.rs') }}
           restore-keys: |
             android-harness-tests-${{ runner.os }}-
       - run: git diff --check
@@ -47,6 +48,7 @@ jobs:
       - run: python3 tools/test_android_worlds.py
       - run: python3 tools/test_android_document_store.py
       - run: python3 tools/test_android_performance_presets.py
+      - run: python3 tools/test_android_servers.py
       - name: Check workflow export matches the active workflow
         run: |
           cmp .github/workflows/android-source.yml packaging/android/source-checks.yml

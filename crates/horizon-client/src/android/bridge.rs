@@ -20,8 +20,10 @@ use jni::{
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,
+    collections::HashMap,
     path::PathBuf,
     sync::{Arc, Mutex, mpsc},
+    time::Duration,
 };
 
 struct Controller {
@@ -33,6 +35,9 @@ struct Controller {
     installation: horizon_client::minecraft_import::InstallationInfo,
     worker: Option<mpsc::Receiver<Result<(), String>>>,
     diagnostic_export: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Manual server status checks, keyed by the address in `servers.dat`. The UI asks for one
+    /// check and reads the result; nothing polls the network by itself.
+    server_pings: Arc<Mutex<HashMap<String, crate::servers::Ping>>>,
     error: Option<String>,
 }
 
@@ -119,6 +124,7 @@ impl Controller {
             installation,
             worker: None,
             diagnostic_export: None,
+            server_pings: Arc::default(),
             error: None,
         };
         controller.resume();
@@ -231,6 +237,7 @@ impl Controller {
                 row("input_host", "Input", c.input_host.label().into(), "choice"),
                 row("name", "Offline player name", if c.name.is_empty() { "Not set".into() } else { c.name.clone() }, "text"),
                 row("server", "Server", if c.server.is_empty() { "Singleplayer".into() } else { c.server.clone() }, "text"),
+                row("servers", "Saved servers", "Add, edit and organize".into(), "action"),
             ]},
             {"group": "Storage", "rows": [
                 row("game_files", "Game files", "Open in system Files".into(), "action"),
@@ -1180,6 +1187,89 @@ impl Controller {
                 crate::performance_presets::delete_custom(&instance, arg)?;
                 self.catalog.status = "Performance preset deleted.".into();
             }
+            "servers_state" => {
+                let game = self.catalog.config.game_home(&home);
+                let manager = crate::servers::Manager::load(&game);
+                let instance = instances::display_name(&game, self.catalog.config.profile);
+                return Ok(manager.state(&instance));
+            }
+            "server_add" | "server_update" => {
+                let request: Value = serde_json::from_str(arg)
+                    .map_err(|_| "Expected a server name, address and group".to_owned())?;
+                let name = request["name"].as_str().unwrap_or_default();
+                let address = request["address"]
+                    .as_str()
+                    .ok_or("Missing server address")?;
+                let group = request["group"].as_str().unwrap_or_default();
+                let favorite = request["favorite"].as_bool().unwrap_or(false);
+                let mut manager = self.server_manager(&home);
+                if method == "server_add" {
+                    manager.add(name, address, group, favorite)?;
+                    self.catalog.status = "Server added.".into();
+                } else {
+                    let index = request["index"].as_u64().ok_or("Missing server index")? as usize;
+                    manager.update(index, name, address, group, favorite)?;
+                    self.catalog.status = "Server updated.".into();
+                }
+            }
+            "server_remove" => {
+                let index = arg
+                    .parse::<usize>()
+                    .map_err(|_| "Missing server index".to_owned())?;
+                let server = self.server_manager(&home).remove(index)?;
+                self.catalog.status = format!("Removed {}.", server.name);
+            }
+            "server_duplicate" => {
+                let index = arg
+                    .parse::<usize>()
+                    .map_err(|_| "Missing server index".to_owned())?;
+                let copy = self.server_manager(&home).duplicate(index)?;
+                self.catalog.status = format!("Duplicated server as {}.", copy.name);
+            }
+            "server_move" => {
+                let request: Value = serde_json::from_str(arg)
+                    .map_err(|_| "Expected a server index and direction".to_owned())?;
+                let index = request["index"].as_u64().ok_or("Missing server index")? as usize;
+                let delta = request["delta"]
+                    .as_i64()
+                    .ok_or("Missing server direction")?;
+                self.server_manager(&home).move_by(index, delta)?;
+            }
+            "server_favorite" => {
+                let index = arg
+                    .parse::<usize>()
+                    .map_err(|_| "Missing server index".to_owned())?;
+                let favorite = self.server_manager(&home).toggle_favorite(index)?;
+                return Ok(json!({"favorite": favorite}));
+            }
+            "server_launch" => {
+                let index = arg
+                    .parse::<usize>()
+                    .map_err(|_| "Missing server index".to_owned())?;
+                let address = self.server_manager(&home).address(index)?;
+                crate::servers::validate_address(&address)?;
+                // The existing multiplayer path reads this setting and passes `--server`.
+                self.catalog.config.server = address;
+                self.save()?;
+                return self.play(None);
+            }
+            "server_ping" => {
+                let manager = self.server_manager(&home);
+                let addresses = if arg == "all" {
+                    manager.addresses()
+                } else {
+                    let index = arg
+                        .parse::<usize>()
+                        .map_err(|_| "Missing server index".to_owned())?;
+                    vec![manager.address(index)?]
+                };
+                let started = addresses
+                    .into_iter()
+                    .filter(|address| self.start_server_ping(address.clone()))
+                    .count();
+                return Ok(json!({"started": started}));
+            }
+            "server_status" => return Ok(self.server_ping_status()),
             _ => return Err(format!("Unknown launcher action {method}")),
         }
         Ok(Value::Null)
@@ -1347,6 +1437,46 @@ impl Controller {
         let game = self.catalog.config.game_home(&self.home);
         crate::worlds::find_lenient(&game, query)
             .map_err(|_| "That world no longer exists".to_owned())
+    }
+
+    fn server_manager(&self, home: &std::path::Path) -> crate::servers::Manager {
+        crate::servers::Manager::load(&self.catalog.config.game_home(home))
+    }
+
+    /// Starts one manual status request. A request already waiting for a reply is not repeated.
+    fn start_server_ping(&self, address: String) -> bool {
+        {
+            let mut pings = self
+                .server_pings
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if matches!(pings.get(&address), Some(crate::servers::Ping::Pending)) {
+                return false;
+            }
+            pings.insert(address.clone(), crate::servers::Ping::Pending);
+        }
+        let pings = Arc::clone(&self.server_pings);
+        std::thread::spawn(move || {
+            let result = horizon_client::net::ping(&address, Duration::from_secs(4));
+            let state = crate::servers::Ping::from_result(result);
+            pings
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .insert(address, state);
+        });
+        true
+    }
+
+    fn server_ping_status(&self) -> Value {
+        let pings = self
+            .server_pings
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let statuses: serde_json::Map<String, Value> = pings
+            .iter()
+            .map(|(address, ping)| (address.clone(), ping.to_json()))
+            .collect();
+        json!({"statuses": statuses})
     }
 
     fn play(&mut self, world: Option<&str>) -> Result<Value, String> {
