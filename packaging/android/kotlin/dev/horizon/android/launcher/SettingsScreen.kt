@@ -103,6 +103,7 @@ private fun settingIcon(id: String): ImageVector = when (id) {
     "render_scale" -> Icons.Rounded.HighQuality
     "display_hz" -> Icons.Rounded.Speed
     "performance_hints" -> Icons.Rounded.Memory
+    "performance_presets" -> Icons.Rounded.Speed
     "worker_limit" -> Icons.Rounded.Memory
     "cache_budget_mib" -> Icons.Rounded.Storage
     "game_files" -> Icons.Rounded.Folder
@@ -185,7 +186,7 @@ private fun SettingGroup(group: SettingGroup, state: Snapshot, actions: Launcher
                             if (row.id == "name") state.config.name else state.config.server,
                             if (row.id == "server") "Leave empty for singleplayer" else "Up to 16 characters",
                         )
-                        else -> act(row.id)
+                        else -> if (row.id == "performance_presets") actions.openPerformance() else act(row.id)
                     }
                 },
             ) {
