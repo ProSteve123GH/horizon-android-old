@@ -242,6 +242,7 @@ fun PerformanceSheet(onDismiss: () -> Unit) {
     var state by remember { mutableStateOf<PerformanceState?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var preview by remember { mutableStateOf<PerformancePreview?>(null) }
+    var previewError by remember { mutableStateOf<String?>(null) }
     var editor by remember { mutableStateOf<EditorTarget?>(null) }
     var editorError by remember { mutableStateOf<String?>(null) }
     var renaming by remember { mutableStateOf<PerformancePreset?>(null) }
@@ -267,6 +268,7 @@ fun PerformanceSheet(onDismiss: () -> Unit) {
             error = reply.error ?: "Could not preview ${preset.name}"
         } else {
             error = null
+            previewError = null
             preview = PerformancePreview.parse(root, preset.id, preset.name)
         }
     }
@@ -407,13 +409,15 @@ fun PerformanceSheet(onDismiss: () -> Unit) {
         PerformancePreviewDialog(
             preview = shown,
             state = state,
-            onDismiss = { preview = null },
+            error = previewError,
+            onDismiss = { preview = null; previewError = null },
             onApply = {
                 val reply = act("performance_apply", shown.id)
                 if (reply.error != null) {
-                    error = reply.error
+                    previewError = reply.error
                 } else {
                     preview = null
+                    previewError = null
                     error = null
                     reload()
                 }
@@ -474,8 +478,10 @@ fun PerformanceSheet(onDismiss: () -> Unit) {
             title = { Text("Restore engine defaults?") },
             text = {
                 Text(
-                    "This rewrites only the supported performance settings to their engine defaults. " +
-                        "Other options, add-ons and worlds are not touched.",
+                    "This rewrites the supported performance settings to their engine defaults. " +
+                        "It also marks both game graphics preset labels as Custom so the game does " +
+                        "not claim a preset these values do not match. Other options, add-ons and " +
+                        "worlds are not touched.",
                 )
             },
             confirmButton = {
@@ -588,6 +594,7 @@ private fun PresetRow(
 private fun PerformancePreviewDialog(
     preview: PerformancePreview,
     state: PerformanceState?,
+    error: String?,
     onDismiss: () -> Unit,
     onApply: () -> Unit,
 ) {
@@ -636,6 +643,14 @@ private fun PerformancePreviewDialog(
                         "Restart the game after applying to use the new worker-thread count.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 10.dp),
+                    )
+                }
+                error?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.padding(top = 10.dp),
                     )
                 }

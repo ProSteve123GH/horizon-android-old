@@ -925,15 +925,25 @@ fn preview_for(
     let (name, targets) = preset_values(store, id)?;
     let current = current_values(instance)?;
     let mut changes = changes(&current, &targets);
-    // These presets are not one of vanilla's fast/fancy/fabulous combinations,
-    // so the game's own preset label must not keep claiming a preset it no
-    // longer describes. The change is shown with the others, not hidden.
-    let engine = engine_preset(instance)?;
-    if engine != "custom" {
+    // These presets are not one of the engine's own presets, so neither of the
+    // game's preset labels may keep claiming a preset they no longer describe.
+    // Both changes are shown with the others, not hidden.
+    let (vanilla_preset, horizon_preset) = engine_presets(instance)?;
+    if vanilla_preset != "custom" {
         changes.push(Change {
             id: "engine_graphics_preset",
-            label: "Game graphics preset label",
-            current: Value::Text(engine),
+            label: "Vanilla graphics preset label",
+            current: Value::Text(vanilla_preset),
+            target: Value::Text("custom".into()),
+            restart: false,
+            unit: "",
+        });
+    }
+    if horizon_preset != "custom" {
+        changes.push(Change {
+            id: "horizon_graphics_preset",
+            label: "Horizon graphics preset label",
+            current: Value::Text(horizon_preset),
             target: Value::Text("custom".into()),
             restart: false,
             unit: "",
@@ -951,15 +961,26 @@ fn preview_for(
     ))
 }
 
-fn engine_preset(instance: &Path) -> Result<String, String> {
+fn engine_presets(instance: &Path) -> Result<(String, String), String> {
     let options = read_optional(&instance.join(OPTIONS_FILE))?;
-    let values = last_values(&options);
-    let raw = values.get("graphicsPreset").map_or("fancy", String::as_str);
-    Ok(raw
-        .strip_prefix('"')
+    let graphics = read_optional(&instance.join(GRAPHICS_FILE))?;
+    let options = last_values(&options);
+    let graphics = last_values(&graphics);
+    Ok((
+        preset_label(
+            options
+                .get("graphicsPreset")
+                .map_or("fancy", String::as_str),
+        ),
+        preset_label(graphics.get("preset").map_or("custom", String::as_str)),
+    ))
+}
+
+fn preset_label(raw: &str) -> String {
+    raw.strip_prefix('"')
         .and_then(|value| value.strip_suffix('"'))
         .unwrap_or(raw)
-        .to_owned())
+        .to_owned()
 }
 
 fn patch_settings(instance: &Path, targets: &BTreeMap<String, Value>) -> Result<(), String> {
@@ -985,7 +1006,9 @@ fn patch_settings(instance: &Path, targets: &BTreeMap<String, Value>) -> Result<
     }
     if !targets.is_empty() {
         options = patch_line(&options, "graphicsPreset", "\"custom\"");
+        graphics = patch_line(&graphics, "preset", "custom");
         options_changed = true;
+        graphics_changed = true;
     }
     if options_changed {
         atomic_write(&instance.join(OPTIONS_FILE), &options)?;
@@ -1404,12 +1427,12 @@ mod tests {
         let scratch = Scratch::new();
         fs::write(
             scratch.path().join(OPTIONS_FILE),
-            "version:4189\nrenderDistance:20\nmaxFps:240\nsomeFutureOption:42\nlang:fr_fr\n",
+            "version:4189\nrenderDistance:20\nmaxFps:240\ngraphicsPreset:\"fancy\"\nsomeFutureOption:42\nlang:fr_fr\n",
         )
         .unwrap();
         fs::write(
             scratch.path().join(GRAPHICS_FILE),
-            "resolutionScale:125\nworkers:4\nshaderPack:keep\n",
+            "preset:balanced\nresolutionScale:125\nworkers:4\nshaderPack:keep\n",
         )
         .unwrap();
         let result = apply(scratch.path(), "battery").unwrap();
@@ -1425,6 +1448,7 @@ mod tests {
         assert!(options.contains("particles:2\n"));
         assert!(options.contains("graphicsPreset:\"custom\"\n"));
         let graphics = fs::read_to_string(scratch.path().join(GRAPHICS_FILE)).unwrap();
+        assert!(graphics.contains("preset:custom\n"));
         assert!(graphics.contains("resolutionScale:50\n"));
         assert!(graphics.contains("workers:0\n"));
         assert!(graphics.contains("shaderPack:keep\n"));
@@ -1522,6 +1546,10 @@ mod tests {
             option(&scratch.path().join(OPTIONS_FILE), "graphicsPreset"),
             "\"custom\""
         );
+        assert_eq!(
+            option(&scratch.path().join(GRAPHICS_FILE), "preset"),
+            "custom"
+        );
         assert_eq!(option(&scratch.path().join(GRAPHICS_FILE), "workers"), "0");
         assert_eq!(
             option(&scratch.path().join(GRAPHICS_FILE), "shaderPack"),
@@ -1533,10 +1561,31 @@ mod tests {
     #[test]
     fn preview_reports_changes_and_the_restart_flag() {
         let scratch = Scratch::new();
-        fs::write(scratch.path().join(GRAPHICS_FILE), "workers:4\n").unwrap();
+        fs::write(
+            scratch.path().join(OPTIONS_FILE),
+            "graphicsPreset:\"fancy\"\n",
+        )
+        .unwrap();
+        fs::write(
+            scratch.path().join(GRAPHICS_FILE),
+            "preset:balanced\nworkers:4\n",
+        )
+        .unwrap();
         let preview = preview(scratch.path(), "balanced").unwrap();
         assert!(preview.restart);
         assert!(preview.changes.iter().any(|change| change.id == "workers"));
+        assert!(
+            preview
+                .changes
+                .iter()
+                .any(|change| change.id == "engine_graphics_preset")
+        );
+        assert!(
+            preview
+                .changes
+                .iter()
+                .any(|change| change.id == "horizon_graphics_preset")
+        );
     }
 
     #[test]

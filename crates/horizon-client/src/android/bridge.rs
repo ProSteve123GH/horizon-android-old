@@ -216,7 +216,7 @@ impl Controller {
                 switch("performance_hints", "Performance hints", if c.device.performance_hints { "On (ADPF)" } else { "Off" }, c.device.performance_hints),
             ]},
             {"group": "Performance", "rows": [
-                row("performance_presets", "Performance preset", crate::performance_presets::selected_label(&c.game_home(&self.home)).unwrap_or_else(|| "Engine defaults".into()), "action"),
+                row("performance_presets", "Performance preset", crate::performance_presets::selected_label(&c.game_home(&self.home)).unwrap_or_else(|| "No preset selected".into()), "action"),
                 row("worker_limit", "Chunk worker limit", if c.worker_limit == 0 { "No additional limit".into() } else { format!("{} worker(s)", c.worker_limit) }, "choice"),
                 row("cache_budget_mib", "Reusable RAM cache", if c.cache_budget_mib == 0 { "Engine default (80 MiB)".into() } else { format!("{} MiB", c.cache_budget_mib) }, "choice"),
             ]},
