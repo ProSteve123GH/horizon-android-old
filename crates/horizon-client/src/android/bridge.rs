@@ -216,6 +216,7 @@ impl Controller {
                 switch("performance_hints", "Performance hints", if c.device.performance_hints { "On (ADPF)" } else { "Off" }, c.device.performance_hints),
             ]},
             {"group": "Performance", "rows": [
+                row("performance_presets", "Performance preset", crate::performance_presets::selected_label(&c.game_home(&self.home)).unwrap_or_else(|| "Engine defaults".into()), "action"),
                 row("worker_limit", "Chunk worker limit", if c.worker_limit == 0 { "No additional limit".into() } else { format!("{} worker(s)", c.worker_limit) }, "choice"),
                 row("cache_budget_mib", "Reusable RAM cache", if c.cache_budget_mib == 0 { "Engine default (80 MiB)".into() } else { format!("{} MiB", c.cache_budget_mib) }, "choice"),
             ]},
@@ -1087,6 +1088,97 @@ impl Controller {
                 }
                 self.choose("profile", &id.to_string())?;
                 return self.play(None);
+            }
+            "performance_state" => {
+                let instance = self.catalog.config.game_home(&home);
+                let mut state = serde_json::to_value(crate::performance_presets::state(&instance)?)
+                    .map_err(|e| e.to_string())?;
+                state["instance"] = json!(instances::display_name(
+                    &instance,
+                    self.catalog.config.profile
+                ));
+                state["instance_id"] = json!(self.catalog.config.profile);
+                return Ok(state);
+            }
+            "performance_preview" => {
+                let instance = self.catalog.config.game_home(&home);
+                return serde_json::to_value(crate::performance_presets::preview(&instance, arg)?)
+                    .map_err(|e| e.to_string());
+            }
+            "performance_apply" => {
+                let instance = self.catalog.config.game_home(&home);
+                let result = crate::performance_presets::apply(&instance, arg)?;
+                self.catalog.status = format!(
+                    "Applied {}. {} changed{}",
+                    result.name,
+                    result.changes,
+                    if result.restart {
+                        "; restart the game to apply worker-thread changes"
+                    } else {
+                        ""
+                    }
+                );
+                return serde_json::to_value(result).map_err(|e| e.to_string());
+            }
+            "performance_reset" => {
+                let instance = self.catalog.config.game_home(&home);
+                let result = crate::performance_presets::reset_defaults(&instance)?;
+                self.catalog.status = format!(
+                    "Restored engine defaults for the supported performance settings ({} changed){}",
+                    result.changes,
+                    if result.restart {
+                        ". Restart the game to apply worker-thread changes."
+                    } else {
+                        "."
+                    }
+                );
+                return serde_json::to_value(result).map_err(|e| e.to_string());
+            }
+            "performance_create" | "performance_update" => {
+                let request: Value = serde_json::from_str(arg)
+                    .map_err(|_| "Expected a performance preset name and values".to_owned())?;
+                let name = request["name"]
+                    .as_str()
+                    .ok_or("Missing performance preset name")?;
+                let values: std::collections::BTreeMap<String, crate::performance_presets::Value> =
+                    serde_json::from_value(request["values"].clone())
+                        .map_err(|_| "Invalid performance preset values".to_owned())?;
+                let instance = self.catalog.config.game_home(&home);
+                let preset = if method == "performance_create" {
+                    crate::performance_presets::create_custom(&instance, name, &values)?
+                } else {
+                    let id = request["id"]
+                        .as_str()
+                        .ok_or("Missing performance preset id")?;
+                    crate::performance_presets::update_custom(&instance, id, name, &values)?
+                };
+                self.catalog.status = format!("Saved performance preset {}.", preset.name);
+                return serde_json::to_value(preset).map_err(|e| e.to_string());
+            }
+            "performance_rename" => {
+                let request: Value = serde_json::from_str(arg)
+                    .map_err(|_| "Expected a performance preset id and name".to_owned())?;
+                let id = request["id"]
+                    .as_str()
+                    .ok_or("Missing performance preset id")?;
+                let name = request["name"]
+                    .as_str()
+                    .ok_or("Missing performance preset name")?;
+                let instance = self.catalog.config.game_home(&home);
+                let preset = crate::performance_presets::rename_custom(&instance, id, name)?;
+                self.catalog.status = format!("Renamed performance preset to {}.", preset.name);
+                return serde_json::to_value(preset).map_err(|e| e.to_string());
+            }
+            "performance_duplicate" => {
+                let instance = self.catalog.config.game_home(&home);
+                let preset = crate::performance_presets::duplicate_custom(&instance, arg)?;
+                self.catalog.status = format!("Duplicated performance preset as {}.", preset.name);
+                return serde_json::to_value(preset).map_err(|e| e.to_string());
+            }
+            "performance_delete" => {
+                let instance = self.catalog.config.game_home(&home);
+                crate::performance_presets::delete_custom(&instance, arg)?;
+                self.catalog.status = "Performance preset deleted.".into();
             }
             _ => return Err(format!("Unknown launcher action {method}")),
         }

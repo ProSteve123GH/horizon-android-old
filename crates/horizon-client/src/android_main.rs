@@ -59,6 +59,8 @@ mod minecraft_import;
 mod native_ime;
 #[path = "android/performance.rs"]
 mod performance;
+#[path = "android/performance_presets.rs"]
+mod performance_presets;
 #[path = "android/platform.rs"]
 mod platform;
 #[rustfmt::skip]
