@@ -316,7 +316,7 @@ fun PerformanceSheet(onDismiss: () -> Unit) {
                                     fontWeight = FontWeight.SemiBold,
                                 )
                                 Text(
-                                    "For ${current.instance}. Tap a preset to see every change before applying it.",
+                                    "For ${current.instance}. Tap a preset to see every change before applying it; changes take effect when the game next starts.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
