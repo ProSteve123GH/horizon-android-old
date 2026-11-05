@@ -1473,6 +1473,20 @@ mod tests {
     }
 
     #[test]
+    fn a_stored_preset_with_an_unknown_key_is_marked_unavailable() {
+        let scratch = Scratch::new();
+        fs::write(
+            scratch.path().join(STORE_FILE),
+            r#"{"selected":"custom-1","custom":[{"id":"custom-1","name":"Old","values":{"not_a_setting":1}}]}"#,
+        )
+        .unwrap();
+        let state = state(scratch.path()).unwrap();
+        let warning = state.warning.unwrap();
+        assert!(warning.contains("invalid"), "{warning}");
+        assert!(preview(scratch.path(), "custom-1").is_err());
+    }
+
+    #[test]
     fn malformed_or_missing_engine_values_fall_back_without_touching_other_lines() {
         let scratch = Scratch::new();
         fs::write(
