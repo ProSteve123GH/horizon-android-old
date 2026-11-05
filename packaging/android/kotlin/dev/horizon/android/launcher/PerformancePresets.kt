@@ -766,7 +766,8 @@ private fun PerformanceValueDialog(
                             value = position,
                             onValueChange = { position = it },
                             valueRange = 0f..steps.toFloat(),
-                            steps = (steps - 1).coerceAtLeast(0),
+                            // Hundreds of tick marks are noise; the value still snaps below.
+                            steps = if (steps <= 12) (steps - 1).coerceAtLeast(0) else 0,
                         )
                         Row(Modifier.fillMaxWidth()) {
                             Text(

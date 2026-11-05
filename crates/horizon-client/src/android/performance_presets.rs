@@ -101,6 +101,7 @@ const PARTICLES: &[Choice] = &[
         label: "Minimal",
     },
 ];
+/// The engine's own LOD Distance slider stops (`LOD_STEPS` in graphics_ui.rs).
 const LOD: &[Choice] = &[
     Choice {
         value: "0",
@@ -121,6 +122,58 @@ const LOD: &[Choice] = &[
     Choice {
         value: "512",
         label: "512 chunks",
+    },
+    Choice {
+        value: "1024",
+        label: "1,024 chunks",
+    },
+    Choice {
+        value: "2048",
+        label: "2,048 chunks",
+    },
+    Choice {
+        value: "4096",
+        label: "4,096 chunks",
+    },
+    Choice {
+        value: "8192",
+        label: "8,192 chunks",
+    },
+    Choice {
+        value: "16384",
+        label: "16,384 chunks",
+    },
+    Choice {
+        value: "32768",
+        label: "32,768 chunks",
+    },
+    Choice {
+        value: "65536",
+        label: "65,536 chunks",
+    },
+    Choice {
+        value: "131072",
+        label: "131,072 chunks",
+    },
+    Choice {
+        value: "262144",
+        label: "262,144 chunks",
+    },
+    Choice {
+        value: "524288",
+        label: "524,288 chunks",
+    },
+    Choice {
+        value: "1048576",
+        label: "1,048,576 chunks",
+    },
+    Choice {
+        value: "2097152",
+        label: "2,097,152 chunks",
+    },
+    Choice {
+        value: "4194304",
+        label: "4,194,304 chunks",
     },
 ];
 
@@ -252,7 +305,7 @@ const SETTINGS: &[Setting] = &[
         "Render distance",
         "Distance",
         2,
-        32,
+        128,
         1,
         "12",
         "Full-detail chunks drawn around the player. Lower values load and draw less terrain.",
@@ -700,6 +753,23 @@ fn default_value(setting: &Setting) -> Value {
     value_from_text(setting, setting.default)
 }
 
+/// What the engine effectively uses for a file value this catalog can express.
+/// A hand-edited frame cap such as 125 is rounded down to the engine's step;
+/// values outside a range are clamped, as `OptionsFile` does on load.
+fn effective_value(setting: &Setting, value: Value) -> Value {
+    if normalize(setting, &value).is_ok() {
+        return value;
+    }
+    match (&setting.kind, &value) {
+        (Kind::Int { min, max, step }, Value::Int(number)) => {
+            let min = *min;
+            let clamped = (*number).clamp(min, *max);
+            Value::Int((min + ((clamped - min) / *step) * *step).min(*max))
+        }
+        _ => default_value(setting),
+    }
+}
+
 fn value_text(setting: &Setting, value: &Value) -> Result<String, String> {
     match (&setting.kind, value) {
         (Kind::Int { .. }, Value::Int(number)) => Ok(number.to_string()),
@@ -737,13 +807,11 @@ fn current_values(instance: &Path) -> Result<BTreeMap<String, Value>, String> {
             TargetFile::Options => options.get(setting.key),
             TargetFile::Graphics => graphics.get(setting.key),
         };
-        current.insert(
-            setting.id.to_owned(),
-            raw.map_or_else(
-                || default_value(setting),
-                |text| value_from_text(setting, text),
-            ),
+        let value = raw.map_or_else(
+            || default_value(setting),
+            |text| value_from_text(setting, text),
         );
+        current.insert(setting.id.to_owned(), effective_value(setting, value));
     }
     Ok(current)
 }
@@ -1491,7 +1559,7 @@ mod tests {
         let scratch = Scratch::new();
         fs::write(
             scratch.path().join(OPTIONS_FILE),
-            "renderDistance:not-a-number\nsomeFutureOption:42\n",
+            "renderDistance:not-a-number\nmaxFps:125\nsomeFutureOption:42\n",
         )
         .unwrap();
         let state = state(scratch.path()).unwrap();
@@ -1501,6 +1569,12 @@ mod tests {
             .find(|setting| setting.id == "render_distance")
             .unwrap();
         assert_eq!(distance.current, Value::Int(12));
+        let frame_cap = state
+            .settings
+            .iter()
+            .find(|setting| setting.id == "max_fps")
+            .unwrap();
+        assert_eq!(frame_cap.current, Value::Int(120));
         apply(scratch.path(), "balanced").unwrap();
         assert_eq!(
             option(&scratch.path().join(OPTIONS_FILE), "renderDistance"),
