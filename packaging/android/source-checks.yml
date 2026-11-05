@@ -35,7 +35,8 @@ jobs:
             .local/android/document-store-tests/target
             .local/android/server-manager-tests/target
             .local/android/launcher-appearance-tests/target
-          key: android-harness-tests-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'tools/test_android_worlds.py', 'launcher/src/worlds.rs', 'launcher/src/worlds/tests.rs', 'tools/test_android_document_store.py', 'crates/horizon-client/src/android/document_store.rs', 'tools/test_android_servers.py', 'launcher/src/server_list.rs', 'crates/horizon-client/src/android/servers.rs', 'tools/test_android_launcher_appearance.py', 'crates/horizon-client/src/android/appearance.rs') }}
+            .local/android/screenshot-tests/target
+          key: android-harness-tests-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'tools/test_android_worlds.py', 'launcher/src/worlds.rs', 'launcher/src/worlds/tests.rs', 'tools/test_android_document_store.py', 'crates/horizon-client/src/android/document_store.rs', 'tools/test_android_servers.py', 'launcher/src/server_list.rs', 'crates/horizon-client/src/android/servers.rs', 'tools/test_android_launcher_appearance.py', 'crates/horizon-client/src/android/appearance.rs', 'tools/test_android_screenshots.py', 'crates/horizon-client/src/android/screenshots.rs') }}
           restore-keys: |
             android-harness-tests-${{ runner.os }}-
       - run: git diff --check
@@ -51,6 +52,7 @@ jobs:
       - run: python3 tools/test_android_performance_presets.py
       - run: python3 tools/test_android_servers.py
       - run: python3 tools/test_android_launcher_appearance.py
+      - run: python3 tools/test_android_screenshots.py
       - name: Check workflow export matches the active workflow
         run: |
           cmp .github/workflows/android-source.yml packaging/android/source-checks.yml

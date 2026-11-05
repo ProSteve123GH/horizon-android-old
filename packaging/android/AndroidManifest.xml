@@ -13,6 +13,8 @@
                 <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
             </intent-filter>
         </provider>
+        <!-- Share one screenshot through a temporary read grant; never a private path. -->
+        <provider android:name="dev.horizon.android.ScreenshotProvider" android:authorities="${applicationId}.screenshots" android:exported="false" android:grantUriPermissions="true" />
         <!-- The Compose launcher. The game runs in its own process, which exits when the game closes. -->
         <activity android:name="dev.horizon.android.launcher.LauncherActivity" android:exported="false" android:theme="@style/HorizonLauncherTheme" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|density" android:windowSoftInputMode="adjustResize" />
         <activity android:name="dev.horizon.android.HorizonActivity" android:process=":game" android:exported="false" android:screenOrientation="sensorLandscape" android:configChanges="orientation|screenSize|keyboardHidden|keyboard|density|screenLayout" android:windowSoftInputMode="adjustResize" android:theme="@style/HorizonGameTheme">

@@ -75,6 +75,8 @@ mod proxy;
 #[allow(dead_code)]
 #[path = "../../../launcher/src/server_list.rs"]
 mod server_list;
+#[path = "android/screenshots.rs"]
+mod screenshots;
 #[path = "android/search_queue.rs"]
 mod search_queue;
 #[path = "android/secure_store.rs"]
@@ -106,6 +108,9 @@ mod backend {
     }
     pub fn data_dir() -> std::path::PathBuf {
         HOME.get().expect("android_main sets account home").clone()
+    }
+    pub fn try_data_dir() -> Option<std::path::PathBuf> {
+        HOME.get().cloned()
     }
 }
 

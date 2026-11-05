@@ -211,9 +211,20 @@ launcher entry; TV support is experimental and analog gamepad axes are not conne
 
 F2 keeps the original PNG in the profile and publishes a copy to
 **Pictures/HorizonAndroid** through Android MediaStore. Android 10+ needs no
-storage permission. Android 8.1�9 asks for storage permission when first saving;
+storage permission. Android 8.1–9 asks for storage permission when first saving;
 if access is denied, the profile copy remains available. Gallery publication runs
 outside the render thread and reports success or failure in game chat.
+
+Open **Play → Screenshots** or **Settings → Storage → Screenshots** to browse the
+originals kept in every instance. The grid samples thumbnails, so opening a large
+gallery does not decode every full-size image. Tap a screenshot for a full-screen
+preview with pinch zoom, pan, filename, resolution, file size and date. Sharing
+uses an app-private, read-only content provider with a temporary URI grant; raw
+private paths never reach the share sheet. Deletion asks for confirmation and
+keeps working if the file was already removed outside the app. The list can be
+sorted newest first, oldest first or by name, and grouped by instance when more
+than one instance has screenshots. Removing the original does not remove a copy
+already published to Pictures.
 
 ## Rendering, sound and vibration
 

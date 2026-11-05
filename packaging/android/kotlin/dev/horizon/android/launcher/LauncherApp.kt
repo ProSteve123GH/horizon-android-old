@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.Face
 import androidx.compose.material.icons.rounded.Inventory2
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -93,6 +94,8 @@ enum class Destination(val id: String, val label: String, val icon: ImageVector,
     Packs("packs", "Packs", Icons.Rounded.Palette),
     Shaders("shaders", "Shaders", Icons.Rounded.AutoAwesome),
     Installed("installed", "Installed", Icons.Rounded.Inventory2),
+    // Opened from Play, Settings or the gallery itself, not from the navigation.
+    Screenshots("screenshots", "Screenshots", Icons.Rounded.PhotoLibrary, inNavigation = false),
     // Opened from the gear beside the account chip on every page, not from the navigation.
     Settings("settings", "Settings", Icons.Rounded.Settings, inNavigation = false),
 }
@@ -155,6 +158,8 @@ private fun LauncherContent(
     // Settings is a layer over the current page, not a destination: closing it reveals that page as it was.
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(destination, settingsOpen) {
+        // The gallery is a launcher view, not one of the catalog pages.
+        if (!settingsOpen && destination == Destination.Screenshots) return@LaunchedEffect
         act("page", if (settingsOpen) Destination.Settings.id else destination.id)
     }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
@@ -254,6 +259,10 @@ private fun LauncherContent(
         openWorlds = { overlay = Overlay.Worlds },
         openPerformance = { overlay = Overlay.Performance },
         openServers = { overlay = Overlay.Servers },
+        openScreenshots = {
+            settingsOpen = false
+            destination = Destination.Screenshots
+        },
         openAppearance = {
             backgroundError = null
             overlay = Overlay.Appearance
@@ -421,6 +430,7 @@ class LauncherActions(
     val openWorlds: () -> Unit,
     val openPerformance: () -> Unit,
     val openServers: () -> Unit,
+    val openScreenshots: () -> Unit,
     val openAppearance: () -> Unit,
     val choose: (String) -> Unit,
     val edit: (id: String, title: String, value: String, hint: String) -> Unit,
@@ -480,6 +490,7 @@ private fun Page(
                     Destination.Mods, Destination.Packs, Destination.Shaders ->
                         CatalogScreen(page, state, wide, actions)
                     Destination.Installed -> InstalledScreen(state, actions)
+                    Destination.Screenshots -> ScreenshotGallery(state.config.profileName)
                     Destination.Settings -> {} // drawn as a layer by LauncherScaffold
                 }
             }
@@ -503,6 +514,7 @@ private fun Header(page: Destination, state: Snapshot, short: Boolean, actions: 
                 Destination.Packs -> "Resource Packs"
                 Destination.Shaders -> "Shader Packs"
                 Destination.Installed -> "Installed"
+                Destination.Screenshots -> "Screenshots"
                 Destination.Settings -> "Settings"
             },
             style = if (short) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,

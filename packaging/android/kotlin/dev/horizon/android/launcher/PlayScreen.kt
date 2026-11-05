@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Layers
+import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
@@ -77,6 +78,7 @@ fun PlayScreen(state: Snapshot, wide: Boolean, short: Boolean, actions: Launcher
                     VersionCard(state, onClick = { actions.choose("profile") })
                     WorldsButton(actions.openWorlds, Modifier.fillMaxWidth())
                     ServersButton(actions.openServers, Modifier.fillMaxWidth())
+                    ScreenshotsButton(actions.openScreenshots, Modifier.fillMaxWidth())
                 }
                 LaunchButton(state, actions.play, Modifier.fillMaxWidth().height(if (short) 64.dp else 72.dp))
             }
@@ -90,6 +92,7 @@ fun PlayScreen(state: Snapshot, wide: Boolean, short: Boolean, actions: Launcher
             VersionCard(state, onClick = { actions.choose("profile") })
             WorldsButton(actions.openWorlds, Modifier.fillMaxWidth())
             ServersButton(actions.openServers, Modifier.fillMaxWidth())
+            ScreenshotsButton(actions.openScreenshots, Modifier.fillMaxWidth())
             LaunchButton(state, actions.play, Modifier.fillMaxWidth().height(64.dp))
         }
     }
@@ -395,6 +398,15 @@ private fun ServersButton(onOpen: () -> Unit, modifier: Modifier) {
         Icon(Icons.Rounded.Dns, null, Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))
         Text("Servers", style = MaterialTheme.typography.titleSmall)
+    }
+}
+
+@Composable
+private fun ScreenshotsButton(onOpen: () -> Unit, modifier: Modifier) {
+    OutlinedButton(onClick = onOpen, modifier = modifier, shape = RoundedCornerShape(16.dp)) {
+        Icon(Icons.Rounded.PhotoLibrary, null, Modifier.size(20.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Screenshots", style = MaterialTheme.typography.titleSmall)
     }
 }
 

@@ -15,7 +15,7 @@ use horizon_client::content_files::Kind;
 use jni::{
     JNIEnv,
     objects::{JByteArray, JClass, JObject, JString},
-    sys::jstring,
+    sys::{jint, jstring},
 };
 use serde_json::{Value, json};
 use std::{
@@ -245,6 +245,7 @@ impl Controller {
                 row("servers", "Saved servers", "Add, edit and organize".into(), "action"),
             ]},
             {"group": "Storage", "rows": [
+                row("screenshots", "Screenshots", "Browse, preview, share or delete".into(), "action"),
                 row("game_files", "Game files", "Open in system Files".into(), "action"),
                 row("world_files", "World files", "Import / copy / back up in Files".into(), "action"),
             ]},
@@ -843,6 +844,25 @@ impl Controller {
                     "Open system Files > Horizon Android.".into()
                 };
             }
+            "screenshots" => return Ok(self.screenshots("newest")),
+            "screenshot_delete" => {
+                let result = crate::screenshots::delete(&home, arg)?;
+                self.catalog.status = if result.deleted {
+                    format!("Deleted {}.", result.name)
+                } else if result.missing {
+                    format!(
+                        "{} was already gone; the gallery was refreshed.",
+                        result.name
+                    )
+                } else {
+                    format!("Could not delete {}.", result.name)
+                };
+                return Ok(json!({
+                    "name": result.name,
+                    "deleted": result.deleted,
+                    "missing": result.missing,
+                }));
+            }
             "world_files" => {
                 let id = crate::document_store::folder_id(self.catalog.config.profile, "worlds");
                 self.catalog.status = if crate::platform::open_documents(&id) {
@@ -1435,6 +1455,11 @@ impl Controller {
         Ok(json!({"started": true}))
     }
 
+    /// Every instance's screenshots, in the order the gallery requested.
+    fn screenshots(&self, order: &str) -> Value {
+        screenshot_list(&self.home, order)
+    }
+
     /// Starts the install, or asks the Activity to start the game process.
     /// The active instance's worlds, with the metadata the World Manager shows.
     /// The list is lenient: a folder with no readable level.dat stays visible
@@ -1569,6 +1594,30 @@ const ASPECTS: [crate::display::Aspect; 4] = [
     crate::display::Aspect::Classic,
     crate::display::Aspect::Square,
 ];
+
+fn screenshot_list(home: &std::path::Path, order: &str) -> Value {
+    let order = match crate::screenshots::Order::parse(order) {
+        Ok(order) => order,
+        Err(error) => return json!({"items": [], "error": error}),
+    };
+    let items: Vec<Value> = crate::screenshots::list(home, order)
+        .into_iter()
+        .map(|item| {
+            json!({
+                "id": item.id,
+                "name": item.name,
+                "profile": item.profile,
+                "instance": item.instance,
+                "size": item.size,
+                "modified": item.modified,
+                "width": item.width,
+                "height": item.height,
+                "mime": item.mime,
+            })
+        })
+        .collect();
+    json!({"items": items})
+}
 
 fn string(env: &mut JNIEnv<'_>, value: &JString<'_>) -> String {
     if value.is_null() {
@@ -1759,4 +1808,79 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_importMinecraftZip(
     uri: JString<'_>,
 ) {
     import_minecraft(&mut env, crate::minecraft_import::Kind::Zip, uri);
+}
+
+/// `NativeBridge.screenshots(String order)`: the gallery list. The Compose
+/// screen calls this off the main thread, so it uses the immutable app home
+/// instead of the main-thread launcher controller.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_horizon_android_NativeBridge_screenshots(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    order: JString<'_>,
+) -> jstring {
+    let order = string(&mut env, &order);
+    let value = match crate::backend::try_data_dir() {
+        Some(home) => screenshot_list(&home, &order),
+        None => json!({"items": [], "error": "Launcher is not initialized"}),
+    };
+    reply(&mut env, &value)
+}
+
+/// `ScreenshotProvider.nativeCall(home, "inspect", id)`: metadata for a scoped
+/// share URI. Only IDs accepted by the Rust allowlist resolve to a file.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_horizon_android_ScreenshotProvider_nativeCall(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    home: JString<'_>,
+    operation: JString<'_>,
+    id: JString<'_>,
+) -> jstring {
+    let home = PathBuf::from(string(&mut env, &home));
+    let operation = string(&mut env, &operation);
+    let id = string(&mut env, &id);
+    if operation != "inspect" {
+        let _ = env.throw_new(
+            "java/io/FileNotFoundException",
+            "Unknown screenshot operation",
+        );
+        return std::ptr::null_mut();
+    }
+    match crate::screenshots::inspect(&home, &id) {
+        Ok(info) => reply(
+            &mut env,
+            &json!({
+                "_display_name": info.name,
+                "_size": info.size,
+                "last_modified": info.modified,
+                "mime_type": info.mime,
+            }),
+        ),
+        Err(error) => {
+            let _ = env.throw_new("java/io/FileNotFoundException", error.to_string());
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// `ScreenshotProvider.nativeOpen(home, id)`: a read descriptor for the share
+/// URI. The Java provider adopts it; the native side owns the allowlist.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_horizon_android_ScreenshotProvider_nativeOpen(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    home: JString<'_>,
+    id: JString<'_>,
+) -> jint {
+    use std::os::fd::IntoRawFd;
+    let home = PathBuf::from(string(&mut env, &home));
+    let id = string(&mut env, &id);
+    match crate::screenshots::open(&home, &id) {
+        Ok(file) => file.into_raw_fd(),
+        Err(error) => {
+            let _ = env.throw_new("java/io/FileNotFoundException", error.to_string());
+            -1
+        }
+    }
 }
