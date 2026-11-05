@@ -135,6 +135,7 @@ data class Snapshot(
     val install: Install,
     val account: Account,
     val config: Config,
+    val appearance: LauncherAppearance,
     val settings: List<SettingGroup>,
     val wardrobe: WardrobeState?,
     val catalog: CatalogState,
@@ -202,6 +203,8 @@ data class Snapshot(
                     modSource = config.optString("mod_source"),
                     shaderSource = config.optString("shader_source"),
                 ),
+                appearance = root.optJSONObject("appearance")?.let { LauncherAppearance.parse(it) }
+                    ?: LauncherAppearance(),
                 settings = root.optJSONArray("settings").list { group ->
                     SettingGroup(
                         group.optString("group"),

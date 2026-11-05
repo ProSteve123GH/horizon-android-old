@@ -21,6 +21,8 @@ mod account;
 mod browser;
 #[path = "android/dns.rs"]
 mod android_dns;
+#[path = "android/appearance.rs"]
+mod appearance;
 #[path = "android/bridge.rs"]
 mod bridge;
 #[path = "android/catalog.rs"]

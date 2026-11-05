@@ -71,9 +71,10 @@ launcher** as a fallback.
 - **Shaders:** find and install shader packs.
 - **Installed:** enable, disable or remove installed additions.
 - **Settings:** rendering mode, resolution, refresh rate, chunk-worker ceiling,
-  reusable RAM cache, orientation, aspect, immersive/cutout, instances, input,
-  offline name, server, Game files, World files and diagnostics. Accounts are
-  opened from the chip in the header.
+  reusable RAM cache, orientation, aspect, immersive/cutout, instances,
+  performance presets, saved servers, launcher appearance, input, offline name,
+  server, Game files, World files and diagnostics. Accounts are opened from the
+  chip in the header.
 
 Java mod search and modpack import are not available on Android. Fabric, Forge,
 NeoForge and Mixin code require native ports; installing their JARs does not make

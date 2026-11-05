@@ -1,7 +1,11 @@
 package dev.horizon.android.launcher
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MotionScheme
@@ -11,9 +15,12 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
+import androidx.core.view.WindowCompat
 
 /** Horizon's violet, used where Android has no wallpaper colours (before Android 12). */
 private val HorizonDark = darkColorScheme(
@@ -82,17 +89,75 @@ private val CompactTypography = Typography().run {
     )
 }
 
+private fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+internal fun String.toComposeColor(): Color? {
+    val text = if (startsWith("#")) this else "#$this"
+    return runCatching { Color(android.graphics.Color.parseColor(text)) }.getOrNull()
+}
+
+/** Replace the primary roles while keeping Horizon's readable neutrals. */
+private fun ColorScheme.withAccent(choice: AccentChoice?, dark: Boolean): ColorScheme {
+    val colors = (if (dark) choice?.dark else choice?.light) ?: return this
+    val primary = colors.primary.toComposeColor() ?: return this
+    val inverse = (if (dark) choice?.light?.primary else choice?.dark?.primary)
+        ?.toComposeColor()
+        ?: inversePrimary
+    val container = colors.primaryContainer.toComposeColor() ?: primaryContainer
+    val onContainer = colors.onPrimaryContainer.toComposeColor() ?: onPrimaryContainer
+    return copy(
+        primary = primary,
+        onPrimary = colors.onPrimary.toComposeColor() ?: onPrimary,
+        primaryContainer = container,
+        onPrimaryContainer = onContainer,
+        // Selected navigation indicators and launcher icon tiles use these material roles.
+        secondaryContainer = container,
+        onSecondaryContainer = onContainer,
+        inversePrimary = inverse,
+        surfaceTint = primary,
+    )
+}
+
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun HorizonTheme(content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
+fun HorizonTheme(
+    appearance: LauncherAppearance = LauncherAppearance(),
+    content: @Composable () -> Unit,
+) {
+    val systemDark = isSystemInDarkTheme()
+    val dark = when (appearance.theme) {
+        "light" -> false
+        "dark" -> true
+        else -> systemDark
+    }
     val context = LocalContext.current
-    val colors = when {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
+    val systemAccent = appearance.accent == "system"
+    val base = when {
+        systemAccent && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
             if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         dark -> HorizonDark
         else -> HorizonLight
     }
+    val accent = appearance.accents.firstOrNull { it.key == appearance.accent }
+    val colors = base.withAccent(accent, dark)
+
+    // Explicit Light/Dark can differ from the system setting; keep the edge-to-edge icons readable.
+    val view = LocalView.current
+    SideEffect {
+        if (!view.isInEditMode) {
+            context.findActivity()?.window?.let { window ->
+                WindowCompat.getInsetsController(window, view).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
+            }
+        }
+    }
+
     MaterialExpressiveTheme(
         colorScheme = colors,
         motionScheme = MotionScheme.expressive(),

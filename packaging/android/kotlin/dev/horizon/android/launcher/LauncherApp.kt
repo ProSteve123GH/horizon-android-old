@@ -62,6 +62,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -82,6 +83,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 enum class Destination(val id: String, val label: String, val icon: ImageVector, val inNavigation: Boolean = true) {
     Play("play", "Play", Icons.Rounded.PlayArrow),
@@ -104,15 +107,36 @@ sealed interface Overlay {
     data object Worlds : Overlay
     data object Performance : Overlay
     data object Servers : Overlay
+    data object Appearance : Overlay
     data class Choose(val id: String, val options: Options) : Overlay
     data class Edit(val id: String, val title: String, val value: String, val hint: String) : Overlay
     data class Remove(val item: LocalItem) : Overlay
     data object RemoveInstallation : Overlay
 }
 
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit, onClassicLauncher: () -> Unit) {
+    var appearance by remember { mutableStateOf(LauncherAppearance.load()) }
+    HorizonTheme(appearance) {
+        LauncherContent(
+            appearance = appearance,
+            onAppearance = { appearance = it },
+            onPlay = onPlay,
+            onImport = onImport,
+            onClassicLauncher = onClassicLauncher,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun LauncherContent(
+    appearance: LauncherAppearance,
+    onAppearance: (LauncherAppearance) -> Unit,
+    onPlay: () -> Unit,
+    onImport: (String, String?) -> Unit,
+    onClassicLauncher: () -> Unit,
+) {
     var snapshot by remember { mutableStateOf<Snapshot?>(null) }
     // Poll only while the launcher is on screen: never while the game runs.
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -124,6 +148,9 @@ fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit, onClass
             }
         }
     }
+    LaunchedEffect(snapshot?.appearance) {
+        snapshot?.appearance?.let { if (it != appearance) onAppearance(it) }
+    }
     var destination by rememberSaveable { mutableStateOf(Destination.Play) }
     // Settings is a layer over the current page, not a destination: closing it reveals that page as it was.
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
@@ -133,6 +160,32 @@ fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit, onClass
     var overlay by remember { mutableStateOf<Overlay?>(null) }
     var importKind by rememberSaveable { mutableStateOf("mods") }
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var backgroundError by remember { mutableStateOf<String?>(null) }
+    var importingBackground by remember { mutableStateOf(false) }
+    val backgroundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            importingBackground = true
+            scope.launch {
+                backgroundError = null
+                try {
+                    if (importLauncherBackground(context, uri).isFailure) {
+                        backgroundError = "That file could not be used. Choose a PNG, JPEG or WebP image."
+                    } else {
+                        val reply = act("appearance_background")
+                        val value = reply.ok as? JSONObject
+                        if (reply.error != null || value == null) {
+                            backgroundError = reply.error ?: "The launcher did not reply."
+                        } else {
+                            onAppearance(LauncherAppearance.parse(value))
+                        }
+                    }
+                } finally {
+                    importingBackground = false
+                }
+            }
+        }
+    }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         onImport(importKind, uri?.toString())
     }
@@ -195,12 +248,16 @@ fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit, onClass
     val actions = LauncherActions(
         play = {
             val reply = act("play")
-            if ((reply.ok as? org.json.JSONObject)?.optBoolean("launch") == true) onPlay()
+            if ((reply.ok as? JSONObject)?.optBoolean("launch") == true) onPlay()
         },
         openAccount = { overlay = Overlay.Account },
         openWorlds = { overlay = Overlay.Worlds },
         openPerformance = { overlay = Overlay.Performance },
         openServers = { overlay = Overlay.Servers },
+        openAppearance = {
+            backgroundError = null
+            overlay = Overlay.Appearance
+        },
         choose = { id ->
             if (id == "profile") {
                 overlay = Overlay.Profiles
@@ -231,7 +288,7 @@ fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit, onClass
         toggleSettings = { settingsOpen = !settingsOpen },
     )
 
-    LauncherScaffold(state, destination, { destination = it }, actions, snackbars, settingsOpen)
+    LauncherScaffold(state, destination, { destination = it }, appearance, actions, snackbars, settingsOpen)
 
     if (state != null) {
         when (val o = overlay) {
@@ -241,6 +298,23 @@ fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit, onClass
             Overlay.Worlds -> WorldsSheet(onDismiss = { overlay = null }, onPlay = onPlay)
             Overlay.Performance -> PerformanceSheet(onDismiss = { overlay = null })
             Overlay.Servers -> ServersSheet(onDismiss = { overlay = null }, onPlay = onPlay)
+            Overlay.Appearance -> AppearanceSheet(
+                appearance = appearance,
+                pickerError = backgroundError,
+                importing = importingBackground,
+                onDismiss = {
+                    overlay = null
+                    backgroundError = null
+                },
+                onChooseBackground = {
+                    backgroundError = null
+                    backgroundPicker.launch(arrayOf("image/*"))
+                },
+                onChanged = {
+                    backgroundError = null
+                    onAppearance(it)
+                },
+            )
             is Overlay.Edit -> EditDialog(o, onDismiss = { overlay = null })
             is Overlay.Remove -> RemoveDialog(o.item, onDismiss = { overlay = null })
             Overlay.RemoveInstallation -> RemoveInstallationDialog(state.install, onDismiss = { overlay = null })
@@ -257,81 +331,87 @@ fun LauncherScaffold(
     state: Snapshot?,
     destination: Destination,
     onDestination: (Destination) -> Unit,
+    appearance: LauncherAppearance,
     actions: LauncherActions,
     snackbars: SnackbarHostState,
     settingsOpen: Boolean = false,
 ) {
     // Status snackbars sit over the page, never over the navigation bar or rail.
     val snackbarHost = @Composable { SnackbarHost(snackbars, Modifier.padding(bottom = 4.dp)) }
-    Scaffold(
-        contentWindowInsets = WindowInsets(0),
-    ) { padding ->
-        BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
-            val wide = maxWidth >= 600.dp
-            // Phones held sideways are ~400 dp tall: tighter header, no rail logo.
-            val short = maxHeight < 520.dp
-            if (state == null) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingIndicator() }
-                return@BoxWithConstraints
-            }
-            if (wide) {
-                Row(Modifier.fillMaxSize()) {
-                    NavigationRail(
-                        modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing),
-                    ) {
-                        Spacer(Modifier.weight(1f))
-                        Destination.entries.filter { it.inNavigation }.forEach { d ->
-                            NavigationRailItem(
-                                selected = destination == d,
-                                onClick = { onDestination(d) },
-                                icon = { Icon(d.icon, contentDescription = null) },
-                                label = { Text(d.label, maxLines = 1, softWrap = false) },
-                            )
+    Box(Modifier.fillMaxSize()) {
+        LauncherBackground(appearance)
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            containerColor = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onBackground,
+            contentWindowInsets = WindowInsets(0),
+        ) { padding ->
+            BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
+                val wide = maxWidth >= 600.dp
+                // Phones held sideways are ~400 dp tall: tighter header, no rail logo.
+                val short = maxHeight < 520.dp
+                if (state == null) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingIndicator() }
+                    return@BoxWithConstraints
+                }
+                if (wide) {
+                    Row(Modifier.fillMaxSize()) {
+                        NavigationRail(
+                            modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing),
+                        ) {
+                            Spacer(Modifier.weight(1f))
+                            Destination.entries.filter { it.inNavigation }.forEach { d ->
+                                NavigationRailItem(
+                                    selected = destination == d,
+                                    onClick = { onDestination(d) },
+                                    icon = { Icon(d.icon, contentDescription = null) },
+                                    label = { Text(d.label, maxLines = 1, softWrap = false) },
+                                )
+                            }
+                            Spacer(Modifier.weight(1f))
                         }
-                        Spacer(Modifier.weight(1f))
+                        Box(Modifier.weight(1f).windowInsetsPadding(WindowInsets.safeDrawing)) {
+                            Page(destination, state, wide = true, short, actions, Modifier.fillMaxSize())
+                            if (!settingsOpen) Box(Modifier.align(Alignment.BottomCenter)) { snackbarHost() }
+                        }
                     }
-                    Box(Modifier.weight(1f).windowInsetsPadding(WindowInsets.safeDrawing)) {
-                        Page(destination, state, wide = true, short, actions, Modifier.fillMaxSize())
-                        if (!settingsOpen) Box(Modifier.align(Alignment.BottomCenter)) { snackbarHost() }
+                } else {
+                    Column(Modifier.fillMaxSize()) {
+                        Box(
+                            Modifier.weight(1f).windowInsetsPadding(
+                                WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
+                            ),
+                        ) {
+                            Page(destination, state, wide = false, short, actions, Modifier.fillMaxSize())
+                            if (!settingsOpen) Box(Modifier.align(Alignment.BottomCenter)) { snackbarHost() }
+                        }
+                        NavigationBar {
+                            Destination.entries.filter { it.inNavigation }.forEach { d ->
+                                NavigationBarItem(
+                                    selected = destination == d,
+                                    onClick = { onDestination(d) },
+                                    icon = { Icon(d.icon, contentDescription = null) },
+                                    label = { Text(d.label, maxLines = 1, softWrap = false) },
+                                )
+                            }
+                        }
                     }
                 }
-            } else {
-                Column(Modifier.fillMaxSize()) {
-                    Box(
-                        Modifier.weight(1f).windowInsetsPadding(
-                            WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
-                        ),
-                    ) {
-                        Page(destination, state, wide = false, short, actions, Modifier.fillMaxSize())
-                        if (!settingsOpen) Box(Modifier.align(Alignment.BottomCenter)) { snackbarHost() }
-                    }
-                    NavigationBar {
-                        Destination.entries.filter { it.inNavigation }.forEach { d ->
-                            NavigationBarItem(
-                                selected = destination == d,
-                                onClick = { onDestination(d) },
-                                icon = { Icon(d.icon, contentDescription = null) },
-                                label = { Text(d.label, maxLines = 1, softWrap = false) },
-                            )
+                // Settings covers everything, navigation included, and simply fades in and out.
+                AnimatedVisibility(settingsOpen, enter = fadeIn(), exit = fadeOut()) {
+                    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                        Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+                            Column(Modifier.fillMaxSize().padding(horizontal = if (wide) 24.dp else 16.dp)) {
+                                Header(Destination.Settings, state, short, actions)
+                                Box(Modifier.weight(1f).fillMaxWidth()) { SettingsScreen(state, wide, actions) }
+                            }
+                            Box(Modifier.align(Alignment.BottomCenter)) { snackbarHost() }
                         }
-                    }
-                }
-            }
-            // Settings covers everything, navigation included, and simply fades in and out.
-            AnimatedVisibility(settingsOpen, enter = fadeIn(), exit = fadeOut()) {
-                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-                    Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-                        Column(Modifier.fillMaxSize().padding(horizontal = if (wide) 24.dp else 16.dp)) {
-                            Header(Destination.Settings, state, short, actions)
-                            Box(Modifier.weight(1f).fillMaxWidth()) { SettingsScreen(state, wide, actions) }
-                        }
-                        Box(Modifier.align(Alignment.BottomCenter)) { snackbarHost() }
                     }
                 }
             }
         }
     }
-
 }
 
 /** What the pages ask the launcher shell to do. */
@@ -341,6 +421,7 @@ class LauncherActions(
     val openWorlds: () -> Unit,
     val openPerformance: () -> Unit,
     val openServers: () -> Unit,
+    val openAppearance: () -> Unit,
     val choose: (String) -> Unit,
     val edit: (id: String, title: String, value: String, hint: String) -> Unit,
     val import: (String) -> Unit,

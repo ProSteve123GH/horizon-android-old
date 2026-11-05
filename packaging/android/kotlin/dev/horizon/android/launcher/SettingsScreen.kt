@@ -56,6 +56,7 @@ import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Monitor
 import androidx.compose.material.icons.rounded.OpenInBrowser
+import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Storage
@@ -104,6 +105,7 @@ private fun settingIcon(id: String): ImageVector = when (id) {
     "display_hz" -> Icons.Rounded.Speed
     "performance_hints" -> Icons.Rounded.Memory
     "performance_presets" -> Icons.Rounded.Speed
+    "appearance" -> Icons.Rounded.Palette
     "worker_limit" -> Icons.Rounded.Memory
     "cache_budget_mib" -> Icons.Rounded.Storage
     "game_files" -> Icons.Rounded.Folder
@@ -190,6 +192,7 @@ private fun SettingGroup(group: SettingGroup, state: Snapshot, actions: Launcher
                         else -> when (row.id) {
                             "performance_presets" -> actions.openPerformance()
                             "servers" -> actions.openServers()
+                            "appearance" -> actions.openAppearance()
                             else -> act(row.id)
                         }
                     }

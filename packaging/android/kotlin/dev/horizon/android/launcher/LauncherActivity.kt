@@ -20,13 +20,11 @@ class LauncherActivity : ComponentActivity() {
         copyEngineData()
         NativeBridge.start(this, filesDir.absolutePath)
         setContent {
-            HorizonTheme {
-                LauncherApp(
-                    onPlay = ::startGame,
-                    onImport = { kind, uri -> NativeBridge.importDocument(this, kind, uri) },
-                    onClassicLauncher = ::startClassicLauncher,
-                )
-            }
+            LauncherApp(
+                onPlay = ::startGame,
+                onImport = { kind, uri -> NativeBridge.importDocument(this, kind, uri) },
+                onClassicLauncher = ::startClassicLauncher,
+            )
         }
     }
 

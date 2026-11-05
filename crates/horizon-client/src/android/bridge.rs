@@ -29,6 +29,7 @@ use std::{
 struct Controller {
     home: PathBuf,
     catalog: Catalog,
+    appearance: crate::appearance::Settings,
     login: Login,
     wardrobe: Wardrobe,
     install: Arc<Mutex<horizon_client::official_install::InstallProgress>>,
@@ -118,6 +119,7 @@ impl Controller {
         let mut controller = Self {
             home: home.clone(),
             catalog,
+            appearance: crate::appearance::Settings::load(&home),
             login: Login::new(),
             wardrobe: Wardrobe::new(&home),
             install: Arc::default(),
@@ -231,6 +233,9 @@ impl Controller {
                 row("aspect", "Aspect ratio", c.screen.aspect.label().into(), "choice"),
                 switch("immersive", "Immersive fullscreen", if c.screen.immersive { "On" } else { "Off" }, c.screen.immersive),
                 switch("cutout", "Avoid camera cutout", if c.screen.avoid_cutout { "On" } else { "Off" }, c.screen.avoid_cutout),
+            ]},
+            {"group": "Appearance", "rows": [
+                row("appearance", "Launcher appearance", self.appearance.summary(), "action"),
             ]},
             {"group": "Game", "rows": [
                 row("profile", "Instances", instances::display_name(&profile_dir(&self.home, c.profile), c.profile), "choice"),
@@ -641,6 +646,7 @@ impl Controller {
                 "mod_source": if c.mod_source == crate::shader_catalog::Origin::Modrinth { "modrinth" } else { "horizon" },
                 "shader_source": if c.shader_source == crate::shader_catalog::Origin::Modrinth { "modrinth" } else { "horizon" },
             },
+            "appearance": self.appearance.state(&self.home),
             "settings": self.settings(),
             "wardrobe": wardrobe,
             "catalog": {
@@ -1186,6 +1192,35 @@ impl Controller {
                 let instance = self.catalog.config.game_home(&home);
                 crate::performance_presets::delete_custom(&instance, arg)?;
                 self.catalog.status = "Performance preset deleted.".into();
+            }
+            "appearance_state" => return Ok(self.appearance.state(&home)),
+            "appearance_theme" => {
+                let theme = crate::appearance::Theme::parse(arg).ok_or("Unknown launcher theme")?;
+                self.appearance.set_theme(&home, theme)?;
+                self.catalog.status = format!("Launcher theme set to {}.", theme.label());
+                return Ok(self.appearance.state(&home));
+            }
+            "appearance_accent" => {
+                let accent =
+                    crate::appearance::Accent::parse(arg).ok_or("Unknown launcher accent color")?;
+                self.appearance.set_accent(&home, accent)?;
+                self.catalog.status = "Launcher accent color updated.".into();
+                return Ok(self.appearance.state(&home));
+            }
+            "appearance_background" => {
+                self.appearance.set_background(&home)?;
+                self.catalog.status = "Launcher background updated.".into();
+                return Ok(self.appearance.state(&home));
+            }
+            "appearance_background_reset" => {
+                self.appearance.reset_background(&home)?;
+                self.catalog.status = "Launcher background restored to the default.".into();
+                return Ok(self.appearance.state(&home));
+            }
+            "appearance_reset" => {
+                self.appearance.reset(&home)?;
+                self.catalog.status = "Launcher appearance reset to the defaults.".into();
+                return Ok(self.appearance.state(&home));
             }
             "servers_state" => {
                 let game = self.catalog.config.game_home(&home);
