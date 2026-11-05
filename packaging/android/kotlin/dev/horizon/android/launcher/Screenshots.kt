@@ -86,6 +86,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import dev.horizon.android.NativeBridge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -648,7 +649,7 @@ private const val THUMBNAIL_PX = 512
 private const val PREVIEW_PX = 2048
 
 private object ScreenshotThumbs {
-    private val cache = LruCache<String, Bitmap>(
+    private val cache = object : LruCache<String, Bitmap>(
         ((Runtime.getRuntime().maxMemory() / 8) / 1024).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
     ) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount / 1024
