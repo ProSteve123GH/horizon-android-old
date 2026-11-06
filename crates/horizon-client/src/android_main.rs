@@ -85,6 +85,8 @@ mod secure_store;
 mod servers;
 #[path = "android/shader_catalog.rs"]
 mod shader_catalog;
+#[path = "android/touch_layouts.rs"]
+mod touch_layouts;
 #[rustfmt::skip]
 #[allow(dead_code)]
 #[path = "../../../launcher/src/skins.rs"]

@@ -118,6 +118,7 @@ private fun settingIcon(id: String): ImageVector = when (id) {
     "cutout" -> Icons.Rounded.Smartphone
     "profile" -> Icons.Rounded.Person
     "input_host" -> Icons.Rounded.Gamepad
+    "touch_layouts" -> Icons.Rounded.DashboardCustomize
     "name" -> Icons.Rounded.Badge
     "server" -> Icons.Rounded.Dns
     "servers" -> Icons.Rounded.Dns
@@ -193,6 +194,7 @@ private fun SettingGroup(group: SettingGroup, state: Snapshot, actions: Launcher
                         )
                         else -> when (row.id) {
                             "performance_presets" -> actions.openPerformance()
+                            "touch_layouts" -> actions.openTouchLayouts()
                             "servers" -> actions.openServers()
                             "screenshots" -> actions.openScreenshots()
                             "appearance" -> actions.openAppearance()

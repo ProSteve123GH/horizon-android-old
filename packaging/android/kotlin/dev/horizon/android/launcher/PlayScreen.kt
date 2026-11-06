@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DashboardCustomize
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Download
@@ -79,6 +80,7 @@ fun PlayScreen(state: Snapshot, wide: Boolean, short: Boolean, actions: Launcher
                     WorldsButton(actions.openWorlds, Modifier.fillMaxWidth())
                     ServersButton(actions.openServers, Modifier.fillMaxWidth())
                     ScreenshotsButton(actions.openScreenshots, Modifier.fillMaxWidth())
+                    TouchLayoutsButton(actions.openTouchLayouts, Modifier.fillMaxWidth())
                 }
                 LaunchButton(state, actions.play, Modifier.fillMaxWidth().height(if (short) 64.dp else 72.dp))
             }
@@ -93,6 +95,7 @@ fun PlayScreen(state: Snapshot, wide: Boolean, short: Boolean, actions: Launcher
             WorldsButton(actions.openWorlds, Modifier.fillMaxWidth())
             ServersButton(actions.openServers, Modifier.fillMaxWidth())
             ScreenshotsButton(actions.openScreenshots, Modifier.fillMaxWidth())
+            TouchLayoutsButton(actions.openTouchLayouts, Modifier.fillMaxWidth())
             LaunchButton(state, actions.play, Modifier.fillMaxWidth().height(64.dp))
         }
     }
@@ -407,6 +410,15 @@ private fun ScreenshotsButton(onOpen: () -> Unit, modifier: Modifier) {
         Icon(Icons.Rounded.PhotoLibrary, null, Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))
         Text("Screenshots", style = MaterialTheme.typography.titleSmall)
+    }
+}
+
+@Composable
+private fun TouchLayoutsButton(onOpen: () -> Unit, modifier: Modifier) {
+    OutlinedButton(onClick = onOpen, modifier = modifier, shape = RoundedCornerShape(16.dp)) {
+        Icon(Icons.Rounded.DashboardCustomize, null, Modifier.size(20.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Touch layouts", style = MaterialTheme.typography.titleSmall)
     }
 }
 

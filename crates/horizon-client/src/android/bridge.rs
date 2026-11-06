@@ -240,6 +240,7 @@ impl Controller {
             {"group": "Game", "rows": [
                 row("profile", "Instances", instances::display_name(&profile_dir(&self.home, c.profile), c.profile), "choice"),
                 row("input_host", "Input", c.input_host.label().into(), "choice"),
+                row("touch_layouts", "Touch layout profiles", crate::touch_layouts::summary(&c.game_home(&self.home)), "action"),
                 row("name", "Offline player name", if c.name.is_empty() { "Not set".into() } else { c.name.clone() }, "text"),
                 row("server", "Server", if c.server.is_empty() { "Singleplayer".into() } else { c.server.clone() }, "text"),
                 row("servers", "Saved servers", "Add, edit and organize".into(), "action"),
@@ -1213,6 +1214,79 @@ impl Controller {
                 crate::performance_presets::delete_custom(&instance, arg)?;
                 self.catalog.status = "Performance preset deleted.".into();
             }
+            "touch_layouts" => return self.touch_state(),
+            "touch_layout_create" => {
+                let instance = self.catalog.config.game_home(&home);
+                let snapshot = touch_snapshot(&touch_settings(&instance));
+                let profile = crate::touch_layouts::create(&instance, arg, &snapshot)?;
+                self.catalog.status = format!(
+                    "Saved layout profile {} from the current layout.",
+                    profile.name
+                );
+                return serde_json::to_value(profile).map_err(|e| e.to_string());
+            }
+            "touch_layout_apply" => {
+                let instance = self.catalog.config.game_home(&home);
+                let snapshot = crate::touch_layouts::snapshot(&instance, arg)?;
+                let fields = crate::touch_layouts::apply_fields(
+                    &serde_json::to_value(touch_settings(&instance)).map_err(|e| e.to_string())?,
+                    &snapshot,
+                )?;
+                touch_write_fields(&instance, &fields)?;
+                crate::touch_layouts::set_selected(&instance, arg)?;
+                let name = crate::touch_layouts::selected_name(&instance)
+                    .unwrap_or_else(|| "layout profile".into());
+                self.catalog.status = format!(
+                    "Applied layout profile {name}. Open the game's Options › Controls to move or resize its controls."
+                );
+                return self.touch_state();
+            }
+            "touch_layout_save" => {
+                let instance = self.catalog.config.game_home(&home);
+                let snapshot = touch_snapshot(&touch_settings(&instance));
+                let profile = crate::touch_layouts::save_current(&instance, arg, &snapshot)?;
+                self.catalog.status = format!(
+                    "Updated {} with the layout currently in touch settings.",
+                    profile.name
+                );
+                return serde_json::to_value(profile).map_err(|e| e.to_string());
+            }
+            "touch_layout_rename" => {
+                let request: Value = serde_json::from_str(arg)
+                    .map_err(|_| "Expected a layout profile id and name".to_owned())?;
+                let id = request["id"].as_str().ok_or("Missing layout profile id")?;
+                let name = request["name"]
+                    .as_str()
+                    .ok_or("Missing layout profile name")?;
+                let instance = self.catalog.config.game_home(&home);
+                let profile = crate::touch_layouts::rename(&instance, id, name)?;
+                self.catalog.status = format!("Renamed layout profile to {}.", profile.name);
+                return serde_json::to_value(profile).map_err(|e| e.to_string());
+            }
+            "touch_layout_duplicate" => {
+                let instance = self.catalog.config.game_home(&home);
+                let profile = crate::touch_layouts::duplicate(&instance, arg)?;
+                self.catalog.status = format!("Duplicated layout profile as {}.", profile.name);
+                return serde_json::to_value(profile).map_err(|e| e.to_string());
+            }
+            "touch_layout_delete" => {
+                let instance = self.catalog.config.game_home(&home);
+                crate::touch_layouts::delete(&instance, arg)?;
+                self.catalog.status =
+                    "Layout profile deleted. The touch layout itself stays as it is.".into();
+            }
+            "touch_layout_reset" => {
+                let instance = self.catalog.config.game_home(&home);
+                let current =
+                    serde_json::to_value(touch_settings(&instance)).map_err(|e| e.to_string())?;
+                let defaults = serde_json::to_value(horizon_client::touch::Settings::default())
+                    .map_err(|e| e.to_string())?;
+                let fields = crate::touch_layouts::reset_fields(&current, &defaults)?;
+                touch_write_fields(&instance, &fields)?;
+                crate::touch_layouts::clear_selected(&instance)?;
+                self.catalog.status =
+                    "Default touch layout restored. Custom key actions were kept.".into();
+            }
             "appearance_state" => return Ok(self.appearance.state(&home)),
             "appearance_theme" => {
                 let theme = crate::appearance::Theme::parse(arg).ok_or("Unknown launcher theme")?;
@@ -1460,6 +1534,20 @@ impl Controller {
         screenshot_list(&self.home, order)
     }
 
+    /// The launcher's layout profiles and the instance's current touch layout.
+    fn touch_state(&self) -> Result<Value, String> {
+        let instance = self.catalog.config.game_home(&self.home);
+        let current = touch_snapshot(&touch_settings(&instance));
+        let mut state = serde_json::to_value(crate::touch_layouts::state(&instance)?)
+            .map_err(|e| e.to_string())?;
+        state["instance_id"] = json!(self.catalog.config.profile);
+        state["current_snapshot"] = current.clone();
+        state["mode"] = current["mode"].clone();
+        state["mode_label"] =
+            crate::touch_layouts::mode_label(current["mode"].as_str().unwrap_or_default());
+        Ok(state)
+    }
+
     /// Starts the install, or asks the Activity to start the game process.
     /// The active instance's worlds, with the metadata the World Manager shows.
     /// The list is lenient: a folder with no readable level.dat stays visible
@@ -1617,6 +1705,46 @@ fn screenshot_list(home: &std::path::Path, order: &str) -> Value {
         })
         .collect();
     json!({"items": items})
+}
+
+/// The engine's touch settings in an instance, with all validations applied.
+fn touch_settings(instance: &std::path::Path) -> horizon_client::touch::Settings {
+    horizon_client::touch::Settings::load_from(&instance.join(crate::touch_layouts::TOUCH_FILE))
+}
+
+/// The layout-only snapshot a touch layout profile stores: the control mode,
+/// the three placements rows, button visibility and the custom buttons.
+fn touch_snapshot(settings: &horizon_client::touch::Settings) -> Value {
+    let value = serde_json::to_value(settings).unwrap_or_default();
+    json!({
+        "mode": value["mode"],
+        "layouts": value["layouts"],
+        "button_visibility": value["button_visibility"],
+        "custom_buttons": value["custom_buttons"],
+    })
+}
+
+/// Copies one profile's fields into the engine's touch settings. Everything the
+/// profiles are not about (sensitivity, handedness, the dynamic joystick, the
+/// gyroscope, ...) stays exactly as it is, and the engine validates the result.
+fn touch_write_fields(instance: &std::path::Path, fields: &Value) -> Result<(), String> {
+    let path = instance.join(crate::touch_layouts::TOUCH_FILE);
+    let mut settings = touch_settings(instance);
+    let mut value = serde_json::to_value(&settings).map_err(|e| e.to_string())?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| "The touch settings are not an object".to_owned())?;
+    for key in ["mode", "layouts", "button_visibility", "custom_buttons"] {
+        object.insert(key.to_owned(), fields.get(key).cloned().unwrap_or_default());
+    }
+    let merged: horizon_client::touch::Settings =
+        serde_json::from_value(value).map_err(|error| {
+            format!("This layout snapshot is not compatible with this build: {error}")
+        })?;
+    merged.sanitize();
+    merged
+        .save_to(&path)
+        .map_err(|error| format!("Could not save the touch layout: {error}"))
 }
 
 fn string(env: &mut JNIEnv<'_>, value: &JString<'_>) -> String {

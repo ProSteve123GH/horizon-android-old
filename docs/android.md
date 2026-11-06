@@ -155,6 +155,28 @@ The top row includes F3, chat, pause, Options and F5 perspective. The auxiliary
 allow combinations. Menus support taps, list swipes and slider/inventory dragging.
 Android Back closes the keyboard first, then the current screen.
 
+### Layout profiles
+
+The launcher stores named snapshots of a touch layout per instance: **Play >
+Touch layouts** or **Settings > Game > Touch layout profiles** opens the sheet.
+**New** snapshots the controls exactly as the game has them right now (control
+mode, every placement, button visibility and custom-key positions); applying a
+profile switches the instance back to its arrangement, and **Save the current
+layout here** overwrites a profile with the game's current arrangement. Rename,
+duplicate and delete work on the snapshots only — deleting a profile never
+changes the layout itself. **Reset to the default layout** restores the factory
+placements and visibility, keeps custom keys with their actions at the factory
+grid and clears the active profile.
+
+Profiles are kept in `android-touch-layouts.json` beside the instance's other
+settings and apply instantly to the touch file; a running game reloads them when
+its touch controls are next (re)created. Sensitivity, handedness, the dynamic
+joystick and the gyroscope are never part of a snapshot. A profile never removes
+or rebinds a custom key: a key you added after saving keeps its own placement
+when the profile applies, and keys the game no longer has stay removed. Each
+card previews the snapshot's controls at their stored positions (outlines are
+hidden controls, squares are custom keys).
+
 ### HUD margins and orientation
 
 **Options > Accessibility** has horizontal and vertical HUD margins. These inset

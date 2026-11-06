@@ -110,6 +110,7 @@ sealed interface Overlay {
     data object Worlds : Overlay
     data object Performance : Overlay
     data object Servers : Overlay
+    data object TouchLayouts : Overlay
     data object Appearance : Overlay
     data class Choose(val id: String, val options: Options) : Overlay
     data class Edit(val id: String, val title: String, val value: String, val hint: String) : Overlay
@@ -258,6 +259,7 @@ private fun LauncherContent(
         openAccount = { overlay = Overlay.Account },
         openWorlds = { overlay = Overlay.Worlds },
         openPerformance = { overlay = Overlay.Performance },
+        openTouchLayouts = { overlay = Overlay.TouchLayouts },
         openServers = { overlay = Overlay.Servers },
         openScreenshots = {
             settingsOpen = false
@@ -306,6 +308,7 @@ private fun LauncherContent(
             Overlay.Profiles -> InstancesSheet(onDismiss = { overlay = null }, onPlay = onPlay)
             Overlay.Worlds -> WorldsSheet(onDismiss = { overlay = null }, onPlay = onPlay)
             Overlay.Performance -> PerformanceSheet(onDismiss = { overlay = null })
+            Overlay.TouchLayouts -> TouchLayoutsSheet(onDismiss = { overlay = null })
             Overlay.Servers -> ServersSheet(onDismiss = { overlay = null }, onPlay = onPlay)
             Overlay.Appearance -> AppearanceSheet(
                 appearance = appearance,
@@ -429,6 +432,7 @@ class LauncherActions(
     val openAccount: () -> Unit,
     val openWorlds: () -> Unit,
     val openPerformance: () -> Unit,
+    val openTouchLayouts: () -> Unit,
     val openServers: () -> Unit,
     val openScreenshots: () -> Unit,
     val openAppearance: () -> Unit,
