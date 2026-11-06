@@ -21,7 +21,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.DashboardCustomize
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Download
@@ -34,6 +33,7 @@ import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SportsEsports
+import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -416,7 +416,7 @@ private fun ScreenshotsButton(onOpen: () -> Unit, modifier: Modifier) {
 @Composable
 private fun TouchLayoutsButton(onOpen: () -> Unit, modifier: Modifier) {
     OutlinedButton(onClick = onOpen, modifier = modifier, shape = RoundedCornerShape(16.dp)) {
-        Icon(Icons.Rounded.DashboardCustomize, null, Modifier.size(20.dp))
+        Icon(Icons.Rounded.TouchApp, null, Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))
         Text("Touch layouts", style = MaterialTheme.typography.titleSmall)
     }

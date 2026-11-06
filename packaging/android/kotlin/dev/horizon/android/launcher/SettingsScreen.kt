@@ -65,6 +65,7 @@ import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Timer
+import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material.icons.rounded.UnfoldMore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -118,7 +119,7 @@ private fun settingIcon(id: String): ImageVector = when (id) {
     "cutout" -> Icons.Rounded.Smartphone
     "profile" -> Icons.Rounded.Person
     "input_host" -> Icons.Rounded.Gamepad
-    "touch_layouts" -> Icons.Rounded.DashboardCustomize
+    "touch_layouts" -> Icons.Rounded.TouchApp
     "name" -> Icons.Rounded.Badge
     "server" -> Icons.Rounded.Dns
     "servers" -> Icons.Rounded.Dns
