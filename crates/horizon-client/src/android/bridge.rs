@@ -1543,8 +1543,9 @@ impl Controller {
         state["instance_id"] = json!(self.catalog.config.profile);
         state["current_snapshot"] = current.clone();
         state["mode"] = current["mode"].clone();
-        state["mode_label"] =
-            crate::touch_layouts::mode_label(current["mode"].as_str().unwrap_or_default());
+        state["mode_label"] = json!(crate::touch_layouts::mode_label(
+            current["mode"].as_str().unwrap_or_default()
+        ));
         Ok(state)
     }
 
@@ -1729,7 +1730,7 @@ fn touch_snapshot(settings: &horizon_client::touch::Settings) -> Value {
 /// gyroscope, ...) stays exactly as it is, and the engine validates the result.
 fn touch_write_fields(instance: &std::path::Path, fields: &Value) -> Result<(), String> {
     let path = instance.join(crate::touch_layouts::TOUCH_FILE);
-    let mut settings = touch_settings(instance);
+    let settings = touch_settings(instance);
     let mut value = serde_json::to_value(&settings).map_err(|e| e.to_string())?;
     let object = value
         .as_object_mut()
@@ -1737,7 +1738,7 @@ fn touch_write_fields(instance: &std::path::Path, fields: &Value) -> Result<(), 
     for key in ["mode", "layouts", "button_visibility", "custom_buttons"] {
         object.insert(key.to_owned(), fields.get(key).cloned().unwrap_or_default());
     }
-    let merged: horizon_client::touch::Settings =
+    let mut merged: horizon_client::touch::Settings =
         serde_json::from_value(value).map_err(|error| {
             format!("This layout snapshot is not compatible with this build: {error}")
         })?;
