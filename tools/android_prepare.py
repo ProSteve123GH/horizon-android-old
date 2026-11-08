@@ -52,6 +52,11 @@ def parallel_download(files):
             pass
 
 
+def version_json_url(version, manifest_sha1):
+    """Mojang's immutable package URL for the pinned version JSON."""
+    return f"https://piston-meta.mojang.com/v1/packages/{manifest_sha1}/{version}.json"
+
+
 def download_game(version, directory):
     pins = json.loads((ROOT / 'research-lock.json').read_text())['minecraft']
     if version != pins['version']:
@@ -59,11 +64,12 @@ def download_game(version, directory):
     entry = next((v for v in fetch_json(MANIFEST)['versions'] if v['id'] == version), None)
     if entry is None:
         raise ValueError(f"Mojang does not list Minecraft {version}")
-    # Mojang metadata may be republished: lab.download checks the catalog SHA-1,
-    # and client/server jar hashes are checked against the engine pins below.
+    # version_manifest_v2 entries can be republished with a new hash. Download
+    # the immutable pinned package instead, which is the version horizon-prepare
+    # accepts; the catalog entry may point at an unaccepted republish.
     versions = directory / 'versions' / version
     manifest_path = versions / f'{version}.json'
-    lab.download(entry['url'], manifest_path, entry['sha1'])
+    lab.download(version_json_url(version, pins['manifest_sha1']), manifest_path, pins['manifest_sha1'])
     manifest = json.loads(manifest_path.read_text())
     files = []
     for side in ['client', 'server']:
