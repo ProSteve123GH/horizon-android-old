@@ -137,8 +137,17 @@ pub extern "system" fn document_result(
     result: i32,
     uri: JString<'_>,
 ) {
-    if request != 4101 {
-        return;
+    match request {
+        4102 => {
+            crate::minecraft_import::folder_result(env, activity, result, uri);
+            return;
+        }
+        4103 => {
+            crate::minecraft_import::archive_result(env, activity, result, uri);
+            return;
+        }
+        4101 => {}
+        _ => return,
     }
     let pending = STATE
         .lock()

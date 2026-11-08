@@ -39,10 +39,14 @@ mod document_provider;
 mod document_store;
 #[path = "android/documents.rs"]
 mod documents;
+#[path = "android/documents_tree.rs"]
+mod documents_tree;
 #[path = "android/exit_reports.rs"]
 mod exit_reports;
 #[path = "android/gallery.rs"]
 mod gallery;
+#[path = "android/minecraft_import.rs"]
+mod minecraft_import;
 #[path = "android/native_ime.rs"]
 mod native_ime;
 #[path = "android/performance.rs"]

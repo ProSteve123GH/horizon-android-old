@@ -33,6 +33,8 @@ enum Command {
     Capture(bool),
     Bounds,
     ImportDocument,
+    ImportArchive,
+    ImportTree,
     Screen(bool, bool),
 }
 struct Ui {
@@ -187,6 +189,53 @@ pub unsafe fn initialize(
     UI.set(ui).ok();
     Ok(())
 }
+fn start_picker(
+    env: &mut JNIEnv<'_>,
+    activity: &JObject<'_>,
+    request: i32,
+    tree: bool,
+) -> jni::errors::Result<()> {
+    let action = JObject::from(env.new_string(if tree {
+        "android.intent.action.OPEN_DOCUMENT_TREE"
+    } else {
+        "android.intent.action.OPEN_DOCUMENT"
+    })?);
+    let intent = env.new_object(
+        "android/content/Intent",
+        "(Ljava/lang/String;)V",
+        &[JValue::Object(&action)],
+    )?;
+    if !tree {
+        let category = JObject::from(env.new_string("android.intent.category.OPENABLE")?);
+        env.call_method(
+            &intent,
+            "addCategory",
+            "(Ljava/lang/String;)Landroid/content/Intent;",
+            &[JValue::Object(&category)],
+        )?;
+        let mime = JObject::from(env.new_string("*/*")?);
+        env.call_method(
+            &intent,
+            "setType",
+            "(Ljava/lang/String;)Landroid/content/Intent;",
+            &[JValue::Object(&mime)],
+        )?;
+    }
+    env.call_method(
+        &intent,
+        "addFlags",
+        "(I)Landroid/content/Intent;",
+        &[JValue::Int(1)],
+    )?;
+    env.call_method(
+        activity,
+        "startActivityForResult",
+        "(Landroid/content/Intent;I)V",
+        &[JValue::Object(&intent), JValue::Int(request)],
+    )?;
+    Ok(())
+}
+
 impl Ui {
     fn enqueue(&self, c: Command) {
         self.commands
@@ -326,48 +375,22 @@ impl Ui {
                 }
                 self.enqueue(Command::Bounds);
             }
-            Command::ImportDocument => {
-                let result = (|| -> jni::errors::Result<()> {
-                    let action =
-                        JObject::from(env.new_string("android.intent.action.OPEN_DOCUMENT")?);
-                    let intent = env.new_object(
-                        "android/content/Intent",
-                        "(Ljava/lang/String;)V",
-                        &[JValue::Object(&action)],
-                    )?;
-                    let category =
-                        JObject::from(env.new_string("android.intent.category.OPENABLE")?);
-                    env.call_method(
-                        &intent,
-                        "addCategory",
-                        "(Ljava/lang/String;)Landroid/content/Intent;",
-                        &[JValue::Object(&category)],
-                    )?;
-                    let mime = JObject::from(env.new_string("*/*")?);
-                    env.call_method(
-                        &intent,
-                        "setType",
-                        "(Ljava/lang/String;)Landroid/content/Intent;",
-                        &[JValue::Object(&mime)],
-                    )?;
-                    env.call_method(
-                        &intent,
-                        "addFlags",
-                        "(I)Landroid/content/Intent;",
-                        &[JValue::Int(1)],
-                    )?;
-                    env.call_method(
-                        &self.activity,
-                        "startActivityForResult",
-                        "(Landroid/content/Intent;I)V",
-                        &[JValue::Object(&intent), JValue::Int(4101)],
-                    )?;
-                    Ok(())
-                })();
+            Command::ImportDocument | Command::ImportArchive | Command::ImportTree => {
+                let (request, tree) = match &c {
+                    Command::ImportDocument => (4101, false),
+                    Command::ImportArchive => (4103, false),
+                    Command::ImportTree => (4102, true),
+                    _ => unreachable!(),
+                };
+                let result = start_picker(env, self.activity.as_obj(), request, tree);
                 if let Err(error) = result {
                     let _ = env.exception_clear();
                     log::warn!("Document picker: {error}");
-                    crate::documents::picker_failed("No Android document picker is available");
+                    let message = "No Android document picker is available";
+                    match request {
+                        4102 | 4103 => crate::minecraft_import::picker_failed(message),
+                        _ => crate::documents::picker_failed(message),
+                    }
                 }
             }
             Command::Show(text) => {
@@ -708,6 +731,22 @@ pub fn pick_document() -> bool {
         return false;
     };
     ui.enqueue(Command::ImportDocument);
+    true
+}
+
+pub fn pick_minecraft_archive() -> bool {
+    let Some(ui) = UI.get().filter(|ui| !ui.failed.load(Ordering::Acquire)) else {
+        return false;
+    };
+    ui.enqueue(Command::ImportArchive);
+    true
+}
+
+pub fn pick_minecraft_folder() -> bool {
+    let Some(ui) = UI.get().filter(|ui| !ui.failed.load(Ordering::Acquire)) else {
+        return false;
+    };
+    ui.enqueue(Command::ImportTree);
     true
 }
 

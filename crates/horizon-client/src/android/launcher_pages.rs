@@ -9,6 +9,8 @@ use winit::{
 pub(super) enum Action {
     Page(Page),
     Play,
+    ImportMinecraft,
+    ChooseMinecraftImport(crate::minecraft_import::Source),
     Search,
     ShaderSource(crate::shader_catalog::Origin),
     ModSource(crate::shader_catalog::Origin),
@@ -285,8 +287,13 @@ impl Launcher {
         if page == Page::Play {
             use horizon_client::official_install::InstallStage;
             let installed = horizon_client::official_install::ready(&self.home);
-            let installing = self.worker.is_some();
-            let progress = *self.install.lock().unwrap();
+            let importing = crate::minecraft_import::busy();
+            let installing = self.worker.is_some() || importing;
+            let progress = if importing {
+                crate::minecraft_import::progress()
+            } else {
+                *self.install.lock().unwrap()
+            };
             let top = 160.0;
             ui.text(
                 Face::Medium,
@@ -370,18 +377,21 @@ impl Launcher {
                 if overall > 0.0 {
                     ui.rounded(32.0, bar_y, (w - 64.0) * overall, 4.0, 2.0, color::ACCENT);
                 }
-                let detail = match progress.stage {
-                    InstallStage::Download => format!(
-                        "{:.1} / {:.1} MiB  - verified downloads",
-                        progress.done as f64 / 1048576.0,
-                        progress.total as f64 / 1048576.0
-                    ),
-                    InstallStage::Controls => format!(
-                        "{} / {} control files verified",
-                        progress.done, progress.total
-                    ),
-                    _ => "Please keep Horizon open. Downloaded files are kept for retry.".into(),
-                };
+                let detail =
+                    crate::minecraft_import::detail().unwrap_or_else(|| match progress.stage {
+                        InstallStage::Download => format!(
+                            "{:.1} / {:.1} MiB  - verified game files",
+                            progress.done as f64 / 1048576.0,
+                            progress.total as f64 / 1048576.0
+                        ),
+                        InstallStage::Controls => format!(
+                            "{} / {} control files verified",
+                            progress.done, progress.total
+                        ),
+                        _ => {
+                            "Please keep Horizon open. Downloaded files are kept for retry.".into()
+                        }
+                    });
                 ui.text(
                     Face::Regular,
                     14.0,
@@ -399,7 +409,7 @@ impl Launcher {
                     ]
                 } else {
                     [
-                        "01  Download resources from Mojang",
+                        "01  Download from Mojang or import local files",
                         "02  Install and verify on this phone",
                         "03  Play offline or sign in for servers",
                     ]
@@ -438,6 +448,18 @@ impl Launcher {
                     },
                     Action::Play,
                     true,
+                );
+                button(
+                    &mut ui,
+                    &mut self.targets,
+                    [32.0, h - 170.0, 320.0, 54.0],
+                    if installed {
+                        "Repair from local files"
+                    } else {
+                        "Import Minecraft files"
+                    },
+                    Action::ImportMinecraft,
+                    false,
                 );
             }
         } else if page.is_catalog() {
@@ -1471,6 +1493,18 @@ impl Launcher {
                 self.catalog.browse(&self.home);
             }
             Some(Action::Play) => self.action(events)?,
+            Some(Action::ImportMinecraft) => self.open_chooser(chooser::Kind::MinecraftImport),
+            Some(Action::ChooseMinecraftImport(source)) => {
+                self.chooser = None;
+                self.error = None;
+                match crate::minecraft_import::begin(source, self.home.clone()) {
+                    Ok(()) => {
+                        self.catalog.status =
+                            format!("Choose a Minecraft {} to import", source.label())
+                    }
+                    Err(error) => self.catalog.status = error,
+                }
+            }
             Some(Action::Search) => {
                 crate::platform::hide();
                 self.catalog.offset = 0;

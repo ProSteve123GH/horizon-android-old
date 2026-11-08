@@ -242,6 +242,7 @@ impl Launcher {
             || self.chooser.is_some()
             || self.worker.is_some()
             || self.session_worker.is_some()
+            || crate::minecraft_import::busy()
         {
             return Ok(());
         }
@@ -590,6 +591,19 @@ impl ApplicationHandler for Launcher {
             audio.tick(false, &Default::default());
         }
         self.catalog.poll(&self.home);
+        if let Some(result) = crate::minecraft_import::take_result() {
+            match result {
+                Ok(message) => {
+                    self.error = None;
+                    self.catalog.refresh(&self.home);
+                    self.catalog.status = message;
+                }
+                Err(error) => {
+                    log::warn!("Minecraft import: {error}");
+                    self.catalog.status = error;
+                }
+            }
+        }
         if let Some(notice) = crate::documents::poll() {
             self.catalog.status = notice.text;
             if notice.changed {

@@ -16,6 +16,7 @@ pub(super) enum Kind {
     Profile,
     Orientation,
     InputHost,
+    MinecraftImport,
 }
 pub(super) struct Chooser {
     title: &'static str,
@@ -173,6 +174,24 @@ impl Launcher {
                         )
                     })
                     .collect(),
+            ),
+            Kind::MinecraftImport => (
+                "Import Minecraft files",
+                "Uses verified 26.3 files from a folder or archive. Missing assets are downloaded only.",
+                vec![
+                    (
+                        "Folder".into(),
+                        "A .minecraft folder, or a folder with 26.3.jar and assets".into(),
+                        Action::ChooseMinecraftImport(crate::minecraft_import::Source::Folder),
+                        false,
+                    ),
+                    (
+                        "Archive".into(),
+                        ".zip, .tar, .tar.gz or .tar.xz of those files".into(),
+                        Action::ChooseMinecraftImport(crate::minecraft_import::Source::Archive),
+                        false,
+                    ),
+                ],
             ),
             Kind::Renderer => (
                 "Rendering mode",
