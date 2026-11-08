@@ -1,5 +1,7 @@
 name: Local import tests
 on:
+  pull_request:
+    branches: [android]
   workflow_dispatch:
 permissions:
   contents: read
