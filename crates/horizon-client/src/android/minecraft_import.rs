@@ -180,7 +180,7 @@ fn handle(
                         let result = (|| -> std::result::Result<String, String> {
                             {
                                 let mut copied = |bytes: u64| {
-                                    detail(format!(
+                                    set_detail(format!(
                                         "Copying selected folder - {:.1} MiB",
                                         bytes as f64 / 1048576.0
                                     ))
@@ -194,7 +194,7 @@ fn handle(
                                 )
                                 .map_err(|error| error.to_string())?;
                             }
-                            detail("Checking Minecraft 26.3 files...".into());
+                            set_detail("Checking Minecraft 26.3 files...".into());
                             official_install::install_from_directory(
                                 &request.home,
                                 &temporary,
@@ -220,7 +220,7 @@ fn handle(
                             let _ = env.exception_clear();
                         }
                         let (file, name) = opened.map_err(|error| error.to_string())?;
-                        detail(format!("Extracting {name}..."));
+                        set_detail(format!("Extracting {name}..."));
                         official_install::install_from_archive(&request.home, file, &name, publish)
                             .map_err(|error| error.to_string())?;
                         Ok(format!("Installed Minecraft 26.3 from {name}."))
@@ -234,7 +234,7 @@ fn handle(
     }
 }
 
-fn detail(text: String) {
+fn set_detail(text: String) {
     STATE.lock().unwrap_or_else(|e| e.into_inner()).detail = Some(text);
 }
 
