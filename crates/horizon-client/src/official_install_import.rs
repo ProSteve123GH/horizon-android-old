@@ -804,7 +804,11 @@ mod tests {
         fs::write(minecraft.join("versions/26.3/26.3.jar"), &client).unwrap();
         fs::write(minecraft.join("assets/indexes/34.json"), &index_bytes).unwrap();
         fs::write(
-            minecraft.join(format!("assets/objects/{object_hash}")),
+            minecraft.join(format!(
+                "assets/objects/{}/{}",
+                &object_hash[..2],
+                object_hash
+            )),
             &object,
         )
         .unwrap();
