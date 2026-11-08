@@ -20,4 +20,4 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev
-      - run: cargo test -p horizon-client --lib --no-default-features official_install_import -- --nocapture
+      - run: cargo test -p horizon-client --lib --no-default-features official_install::import::tests -- --nocapture
