@@ -7,14 +7,24 @@ and Java multiplayer. It does not run arbitrary Minecraft JAR versions.
 ## Install and play
 
 1. Install the APK matching the device architecture from [Releases](https://github.com/Vasysik/horizon-android/releases).
-2. Open Horizon and choose **Download Minecraft 26.3**.
+2. Open Horizon and choose **Download Minecraft 26.3**, or choose
+   **Import Minecraft files** to use a local folder or archive.
 3. Wait for resource verification and installation, then choose **Play**.
 
-The first installation downloads approximately 500 MiB, including sounds.
-Downloads use official Mojang HTTPS endpoints and pinned hashes. Verified cache
-entries are reused after an interrupted download. Subsequent launches can use
-the installed resources offline. No PC preparation or Java runtime is required
-on the phone. Use a licensed Minecraft account for authenticated servers.
+The first download is approximately 500 MiB, including sounds. Downloads use
+official Mojang HTTPS endpoints and pinned hashes. Verified cache entries are
+reused after an interrupted download. Subsequent launches can use the installed
+resources offline. No PC preparation or Java runtime is required on the phone.
+
+**Import Minecraft files** accepts a selected folder recursively, or a `.zip`,
+`.tar`, `.tar.gz` or `.tar.xz` archive recursively. Supported layouts are a Java
+`.minecraft` folder (or a folder containing one) with
+`versions/26.3/26.3.jar`, `assets/indexes/*.json` and `assets/objects/`, as well
+as a previous Horizon installer cache with `client.jar`, `asset-index.json` and
+`objects/`. Imported files are checked against the pinned 26.3 client and asset
+hashes. Only missing or corrupt assets are downloaded; the rest are copied from
+the selected files. Other Minecraft versions are not accepted. Use a licensed
+Minecraft account for authenticated servers.
 
 Worlds, profiles, resource caches and account data use app-private storage.
 Updating with the same signing certificate preserves them; uninstalling the app
@@ -47,9 +57,10 @@ Java mod search and modpack import are not available on Android. Fabric, Forge,
 NeoForge and Mixin code require native ports; installing their JARs does not make
 them executable by this engine. See [Android feature support](android-features.md).
 
-The installer displays the current stage: metadata checks, resource download,
-unpacking, world-data preparation, touch textures and finalization. Progress shows
-MiB or file counts where available. Retry retains previously verified downloads.
+The installer displays the current stage: metadata checks, resource download or
+local import, unpacking, world-data preparation, touch textures and finalization.
+Progress shows MiB or file counts where available. Retry retains previously
+verified downloads and locally imported files.
 
 ### Accounts
 
@@ -160,7 +171,7 @@ launcher entry; TV support is experimental and analog gamepad axes are not conne
 
 F2 keeps the original PNG in the profile and publishes a copy to
 **Pictures/HorizonAndroid** through Android MediaStore. Android 10+ needs no
-storage permission. Android 8.1–9 asks for storage permission when first saving;
+storage permission. Android 8.1ï¿½9 asks for storage permission when first saving;
 if access is denied, the profile copy remains available. Gallery publication runs
 outside the render thread and reports success or failure in game chat.
 

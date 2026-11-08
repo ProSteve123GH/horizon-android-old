@@ -3,7 +3,7 @@ use crate::Result;
 use serde_json::Value;
 use sha1::{Digest, Sha1};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     io::{Read, Write},
     path::{Component, Path, PathBuf},
@@ -15,6 +15,8 @@ use std::{
 
 #[path = "official_install_cache.rs"]
 mod cache_input;
+#[path = "official_install_import.rs"]
+mod import;
 
 const CATALOG: &str = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
 const LOCK: &str = include_str!("../../../research-lock.json");
@@ -301,7 +303,7 @@ impl InstallStage {
     pub fn label(self) -> &'static str {
         match self {
             Self::Metadata => "Checking Minecraft version",
-            Self::Download => "Downloading game resources and sound",
+            Self::Download => "Getting game resources and sound",
             Self::Extract => "Unpacking verified files",
             Self::WorldData => "Preparing worlds and registries",
             Self::Controls => "Downloading touch controls",
@@ -314,6 +316,215 @@ pub struct InstallProgress {
     pub stage: InstallStage,
     pub done: u64,
     pub total: u64,
+}
+
+struct Inputs {
+    client: PathBuf,
+    client_sha1: String,
+    index: Value,
+    objects: HashMap<String, PathBuf>,
+}
+
+/// Install from a folder holding a Java `.minecraft` layout, a Horizon installer
+/// cache, or any recursive mix of `client.jar`/`26.3.jar` and `assets/objects`.
+pub fn install_from_directory(
+    home: &Path,
+    source: &Path,
+    progress: impl Fn(InstallProgress) + Sync,
+) -> Result<()> {
+    import::install_directory(home, source, progress)
+}
+
+/// Install from a `.zip`, `.tar`, `.tar.gz` or `.tar.xz` archive of the same files.
+pub fn install_from_archive(
+    home: &Path,
+    source: fs::File,
+    name: &str,
+    progress: impl Fn(InstallProgress) + Sync,
+) -> Result<()> {
+    import::install_archive(home, source, name, progress)
+}
+
+/// Sound objects are optional in builds without the audio feature; every other
+/// object named by the 26.3 index is required for the install.
+fn needed_asset(name: &str) -> bool {
+    cfg!(feature = "audio")
+        || !(name.starts_with("minecraft/sounds/") || name == "minecraft/sounds.json")
+}
+
+fn verified_client(path: &Path, sha1: &str) -> Result<fs::File> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() > 1024 * 1024 * 1024
+    {
+        return Err("Minecraft client file is missing or invalid".into());
+    }
+    if hash(fs::File::open(path)?)? != sha1 {
+        return Err("Minecraft client JAR is not the pinned 26.3 build".into());
+    }
+    Ok(fs::File::open(path)?)
+}
+
+fn copy_verified(source: &Path, destination: &Path, sha1: &str, size: u64) -> Result<()> {
+    let metadata = fs::symlink_metadata(source)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != size {
+        return Err(format!("Minecraft file {} has the wrong size", source.display()).into());
+    }
+    let mut input = fs::File::open(source)?;
+    let mut output = fs::File::create(destination)?;
+    let mut digest = Sha1::new();
+    let mut buffer = [0; 65536];
+    let mut copied = 0u64;
+    loop {
+        let count = input.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        output.write_all(&buffer[..count])?;
+        digest.update(&buffer[..count]);
+        copied += count as u64;
+        if copied > size {
+            return Err("Minecraft asset exceeds its declared size".into());
+        }
+    }
+    if copied != size || format!("{:x}", digest.finalize()) != sha1 {
+        return Err(format!("Minecraft asset {} failed its checksum", source.display()).into());
+    }
+    Ok(())
+}
+
+fn install_inputs_locked(
+    home: &Path,
+    inputs: Inputs,
+    progress: impl Fn(InstallProgress) + Sync,
+) -> Result<()> {
+    let report = |stage, done, total| progress(InstallProgress { stage, done, total });
+    let version = horizon_core::VANILLA_VERSION;
+    let objects = inputs
+        .index
+        .get("objects")
+        .and_then(Value::as_object)
+        .ok_or("Missing asset objects")?;
+    let mut assets = Vec::new();
+    let mut total = 0u64;
+    for (name, object) in objects {
+        if !needed_asset(name) {
+            continue;
+        }
+        relative(name)?;
+        let checksum = object["hash"]
+            .as_str()
+            .ok_or("Missing asset hash")?
+            .to_ascii_lowercase();
+        let size = object["size"]
+            .as_u64()
+            .filter(|size| *size <= 1024 * 1024 * 1024)
+            .ok_or("Invalid asset size")?;
+        if checksum.len() != 40 || !checksum.bytes().all(|c| c.is_ascii_hexdigit()) {
+            return Err("Invalid asset hash".into());
+        }
+        let source = inputs
+            .objects
+            .get(&checksum)
+            .ok_or_else(|| format!("Minecraft asset {name} is missing from the selected files"))?;
+        total = total
+            .checked_add(size)
+            .filter(|total| *total <= 8 * 1024 * 1024 * 1024)
+            .ok_or("Minecraft assets exceed 8 GiB")?;
+        assets.push((name.clone(), source.clone(), checksum, size));
+    }
+    let versions = home.join(".local/horizon-client");
+    fs::create_dir_all(&versions)?;
+    let stage = versions.join("official.partial");
+    if stage.exists() {
+        fs::remove_dir_all(&stage)?;
+    }
+    fs::create_dir(&stage)?;
+    let result = (|| -> Result<()> {
+        report(InstallStage::Extract, 0, total);
+        let mut client =
+            zip::ZipArchive::new(verified_client(&inputs.client, &inputs.client_sha1)?)?;
+        for i in 0..client.len() {
+            let mut entry = client.by_index(i)?;
+            let name = entry.name()?;
+            if !(name.starts_with("assets/") || name.starts_with("data/")) || entry.is_dir() {
+                continue;
+            }
+            let name = entry.enclosed_name().ok_or("Unsafe client resource path")?;
+            if entry.is_symlink() {
+                return Err("Symlink in client resources".into());
+            }
+            let path = stage.join(name);
+            fs::create_dir_all(path.parent().ok_or("Missing resource parent")?)?;
+            std::io::copy(&mut entry, &mut fs::File::create(path)?)?;
+        }
+        let mut done = 0u64;
+        for (name, from, checksum, size) in assets {
+            let path = stage.join("assets").join(relative(&name)?);
+            fs::create_dir_all(path.parent().ok_or("Missing asset parent")?)?;
+            copy_verified(&from, &path, &checksum, size)
+                .map_err(|error| format!("Could not prepare Minecraft asset {name}: {error}"))?;
+            done += size;
+            report(InstallStage::Extract, done, total);
+        }
+        crate::resource_install::extract(&home.join("engine-data.zip"), &stage)?;
+        report(InstallStage::WorldData, 0, 0);
+        crate::android_resources::rebuild(&stage)?;
+        report(InstallStage::Controls, 0, 0);
+        crate::android_resources::controls_with_progress(&stage, |done, total| {
+            report(InstallStage::Controls, done, total)
+        })?;
+        report(InstallStage::Finalize, 0, 0);
+        fs::write(stage.join("android-downloads-v2.json"), b"{\"schema\":2}")?;
+        // Android can evict cache files under storage pressure. The verified
+        // index was already decoded above; finalization must not reopen it.
+        fs::write(
+            stage.join("asset-index.json"),
+            serde_json::to_vec(&inputs.index)?,
+        )
+        .map_err(|error| format!("Could not save prepared asset index: {error}"))?;
+        if !stage.join("horizon-resources.json").is_file() {
+            return Err("APK has no engine data for this version".into());
+        }
+        if cfg!(feature = "audio") {
+            fs::write(stage.join("audio-complete.json"), b"{}")?;
+        }
+        let destination = versions.join(version);
+        let backup = versions.join(format!("{version}.previous"));
+        if backup.exists() && !destination.exists() {
+            fs::rename(&backup, &destination)?;
+        }
+        if backup.exists() {
+            fs::remove_dir_all(&backup)?;
+        }
+        if destination.exists() {
+            fs::rename(&destination, &backup)?;
+        }
+        if let Err(error) = fs::rename(&stage, &destination) {
+            if backup.exists() {
+                let _ = fs::rename(&backup, &destination);
+            }
+            return Err(format!("Could not activate prepared Minecraft resources: {error}").into());
+        }
+        if backup.exists() {
+            let _ = fs::remove_dir_all(&backup);
+        }
+        Ok(())
+    })();
+    if stage.exists() {
+        let _ = fs::remove_dir_all(stage);
+    }
+    // `install_inputs_locked` runs under INSTALLATION, so use the inner helper
+    // rather than reacquiring the non-reentrant mutex through the public one.
+    if result.is_ok()
+        && let Err(error) = cleanup_completed_downloads_inner(home)
+    {
+        // Resources were committed successfully; failed housekeeping must not
+        // turn a working installation into a reported installation failure.
+        log::warn!("Could not clean completed Minecraft downloads: {error}");
+    }
+    result
 }
 
 pub fn install(home: &Path, progress: impl Fn(u64, u64) + Sync) -> Result<()> {
@@ -386,19 +597,20 @@ pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + S
     let mut assets = Vec::new();
     let mut seen = HashSet::new();
     for (name, object) in objects {
-        if !cfg!(feature = "audio")
-            && (name.starts_with("minecraft/sounds/") || name == "minecraft/sounds.json")
-        {
+        if !needed_asset(name) {
             continue;
         }
         relative(name)?;
-        let checksum = object["hash"].as_str().ok_or("Missing asset hash")?;
+        let checksum = object["hash"]
+            .as_str()
+            .ok_or("Missing asset hash")?
+            .to_ascii_lowercase();
         if checksum.len() != 40 || !checksum.bytes().all(|c| c.is_ascii_hexdigit()) {
             return Err("Invalid asset hash".into());
         }
-        let path = cache.join("objects").join(checksum);
+        let path = cache.join("objects").join(&checksum);
         assets.push((name, path.clone()));
-        if seen.insert(checksum) {
+        if seen.insert(checksum.clone()) {
             files.push(Download::from(&serde_json::json!({"url":format!("https://resources.download.minecraft.net/{}/{checksum}", &checksum[..2]), "sha1":checksum, "size":object["size"]}), path)?);
         }
     }
@@ -437,101 +649,34 @@ pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + S
     if let Some(error) = error.into_inner().unwrap() {
         return Err(error.into());
     }
-    let versions = home.join(".local/horizon-client");
-    fs::create_dir_all(&versions)?;
-    let stage = versions.join("official.partial");
-    if stage.exists() {
-        fs::remove_dir_all(&stage)?;
-    }
-    fs::create_dir(&stage)?;
-    let result = (|| -> Result<()> {
-        report(InstallStage::Extract, 0, 0);
-        let mut zip = zip::ZipArchive::new(files[0].open()?)?;
-        for i in 0..zip.len() {
-            let mut entry = zip.by_index(i)?;
-            let name = entry.name()?;
-            if !(name.starts_with("assets/") || name.starts_with("data/")) || entry.is_dir() {
-                continue;
-            }
-            let name = entry.enclosed_name().ok_or("Unsafe client resource path")?;
-            if entry.is_symlink() {
-                return Err("Symlink in client resources".into());
-            }
-            let path = stage.join(name);
-            fs::create_dir_all(path.parent().ok_or("Missing resource parent")?)?;
-            std::io::copy(&mut entry, &mut fs::File::create(path)?)?;
-        }
-        let downloads: std::collections::HashMap<_, _> = files
-            .iter()
-            .map(|file| (file.path.as_path(), file))
-            .collect();
-        for (name, from) in assets {
-            let path = stage.join("assets").join(relative(name)?);
-            fs::create_dir_all(path.parent().ok_or("Missing asset parent")?)?;
-            let input = downloads
-                .get(from.as_path())
-                .ok_or("Missing asset download metadata")?;
-            // Hold the verified source open throughout the copy, even if its
-            // disposable cache directory is reclaimed in the meantime.
-            std::io::copy(&mut input.open()?, &mut fs::File::create(&path)?)
-                .map_err(|error| format!("Could not prepare Minecraft asset {name}: {error}"))?;
-        }
-        crate::resource_install::extract(&home.join("engine-data.zip"), &stage)?;
-        report(InstallStage::WorldData, 0, 0);
-        crate::android_resources::rebuild(&stage)?;
-        report(InstallStage::Controls, 0, 0);
-        crate::android_resources::controls_with_progress(&stage, |done, total| {
-            report(InstallStage::Controls, done, total)
-        })?;
-        report(InstallStage::Finalize, 0, 0);
-        fs::write(stage.join("android-downloads-v2.json"), b"{\"schema\":2}")?;
-        // Android can evict cache files under storage pressure. The verified
-        // index was already decoded above; finalization must not reopen it.
-        fs::write(stage.join("asset-index.json"), serde_json::to_vec(&index)?)
-            .map_err(|error| format!("Could not save prepared asset index: {error}"))?;
-        if !stage.join("horizon-resources.json").is_file() {
-            return Err("APK has no engine data for this version".into());
-        }
-        if cfg!(feature = "audio") {
-            fs::write(stage.join("audio-complete.json"), b"{}")?;
-        }
-        let destination = versions.join(version);
-        let backup = versions.join(format!("{version}.previous"));
-        if backup.exists() && !destination.exists() {
-            fs::rename(&backup, &destination)?;
-        }
-        if backup.exists() {
-            fs::remove_dir_all(&backup)?;
-        }
-        if destination.exists() {
-            fs::rename(&destination, &backup)?;
-        }
-        if let Err(error) = fs::rename(&stage, &destination) {
-            if backup.exists() {
-                let _ = fs::rename(&backup, &destination);
-            }
-            return Err(format!("Could not activate prepared Minecraft resources: {error}").into());
-        }
-        if backup.exists() {
-            let _ = fs::remove_dir_all(&backup);
-        }
-        Ok(())
-    })();
-    if stage.exists() {
-        let _ = fs::remove_dir_all(stage);
-    }
-    // `install_with_progress` holds INSTALLATION for the entire transaction,
-    // so use the inner helper here rather than reacquiring the non-reentrant
-    // mutex through `cleanup_completed_downloads`.
-    if result.is_ok()
-        && let Err(error) = cleanup_completed_downloads_inner(home)
-    {
-        // The installation guard is still held here; do not lock it again.
-        // Resources were committed successfully; failed housekeeping must not
-        // turn a working installation into a reported installation failure.
-        log::warn!("Could not clean completed Minecraft downloads: {error}");
-    }
-    result
+    let objects = assets
+        .into_iter()
+        .map(|(_, path)| {
+            let checksum = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("Missing cached asset name")?
+                .to_owned();
+            Ok((checksum, path))
+        })
+        .collect::<Result<HashMap<_, _>>>()?;
+    let client_sha1 = pins["client_sha1"]
+        .as_str()
+        .ok_or("Missing pinned client checksum")?
+        .to_owned();
+    // The official cache was verified while downloading. `install_inputs_locked`
+    // checks it again while copying, so eviction or corruption cannot enter the
+    // prepared resources.
+    install_inputs_locked(
+        home,
+        Inputs {
+            client: cache.join("client.jar"),
+            client_sha1,
+            index,
+            objects,
+        },
+        progress,
+    )
 }
 
 #[cfg(test)]
