@@ -1,9 +1,29 @@
 //! Source-only native mixin bundles. Reading a bundle never executes its code.
 use super::{Facts, valid_id};
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::{collections::BTreeMap, io::Read, path::Path};
 
 pub const MANIFEST: &str = "horizon-native.json";
+
+/// A `.hmod` that still carries a WebAssembly mod: the registry kept publishing those until the
+/// native reader could read a `.hmod`'s content beside its sources.
+pub const WASM_GONE: &str = "mod.wasm: WebAssembly mods don't run any more, port the code to a native mod (docs/native-mods.md)";
+
+/// Whether the archive at `path` is a native bundle: a `horizon-native.json` at its root. The
+/// cheap test that routes a `.hmod` carrying sources beside its content.
+pub fn holds(path: &Path) -> bool {
+    std::fs::File::open(path)
+        .ok()
+        .and_then(|f| zip::ZipArchive::new(f).ok())
+        .is_some_and(|mut zip| zip.by_name(MANIFEST).is_ok())
+}
+
+/// Whether an entry `name` belongs to a `.hmod`'s content (`horizon-mod.toml`, `assets/`,
+/// `data/`), which [`crate::Package`] reads, rather than to its native sources.
+fn content(name: &str) -> bool {
+    name == crate::manifest::MANIFEST || name.starts_with("assets/") || name.starts_with("data/")
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -102,10 +122,13 @@ impl Bundle {
     pub fn read(path: &Path) -> Result<Self, String> {
         let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
         let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
-        if zip.len() > 512 {
+        // Content entries are skipped below; the archive's whole list is still bounded, so a
+        // bundle with a hundred thousand empty `assets/` entries cannot make reading it slow.
+        if zip.len() > 4096 {
             return Err("native bundle has too many entries".into());
         }
         let mut files = BTreeMap::new();
+        let mut content_id = None;
         let mut total = 0u64;
         for i in 0..zip.len() {
             let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
@@ -125,6 +148,25 @@ impl Bundle {
             {
                 return Err(format!("invalid native bundle path: {name}"));
             }
+            if name == crate::manifest::WASM {
+                return Err(WASM_GONE.into());
+            }
+            // A `.hmod` may carry its content beside its sources: the content is the content
+            // reader's, and only its id is checked here.
+            if content(&name) {
+                if name == crate::manifest::MANIFEST {
+                    let mut text = String::new();
+                    (&mut entry)
+                        .take(1 << 20)
+                        .read_to_string(&mut text)
+                        .map_err(|e| format!("{name}: {e}"))?;
+                    content_id = Some(crate::Manifest::parse(&text)?.id);
+                }
+                continue;
+            }
+            if files.len() >= 512 {
+                return Err("native bundle has too many entries".into());
+            }
             let mut bytes = Vec::new();
             (&mut entry)
                 .take(super::MAX_FILE + 1)
@@ -142,6 +184,13 @@ impl Bundle {
             serde_json::from_slice(files.get(MANIFEST).ok_or("missing horizon-native.json")?)
                 .map_err(|e| e.to_string())?;
         manifest.check()?;
+        if let Some(id) = content_id.filter(|id| *id != manifest.id) {
+            return Err(format!(
+                "its {} is mod {id}, its {MANIFEST} {}: one file is one mod",
+                crate::manifest::MANIFEST,
+                manifest.id
+            ));
+        }
         let prefix = format!("mixins/{}/", manifest.id);
         for name in files.keys().filter(|n| n.as_str() != MANIFEST) {
             let Some(rest) = name.strip_prefix(&prefix) else {
@@ -176,6 +225,37 @@ impl Bundle {
             return Err("native manifest and mixin identity/revision differ".into());
         }
         Ok(Self { manifest, files })
+    }
+
+    /// A digest of the files that go into a build: the same mod reinstalled has the same digest,
+    /// a changed one another. The launcher compares it with the digest its build's `build.json`
+    /// kept, so a mod whose source changed needs a new build even at the same version.
+    pub fn digest(&self) -> String {
+        let mut hash = sha2::Sha256::new();
+        for (name, bytes) in &self.files {
+            hash.update((name.len() as u64).to_be_bytes());
+            hash.update(name.as_bytes());
+            hash.update((bytes.len() as u64).to_be_bytes());
+            hash.update(bytes);
+        }
+        hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// The bundle as the Android build service needs it: its manifest and sources, without the
+    /// content only the game reads, so a mod's assets don't count against the request's size. The
+    /// same files always make the same bytes, which is how the service knows it built them before.
+    pub fn for_build(&self) -> Result<Vec<u8>, String> {
+        use std::io::Write as _;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .last_modified_time(zip::DateTime::default());
+        for (name, bytes) in &self.files {
+            zip.start_file(name.as_str(), options)
+                .map_err(|e| e.to_string())?;
+            zip.write_all(bytes).map_err(|e| e.to_string())?;
+        }
+        Ok(zip.finish().map_err(|e| e.to_string())?.into_inner())
     }
 }
 
@@ -319,5 +399,109 @@ mod tests {
             ..manifest()
         };
         assert!(zero.check().is_err());
+    }
+
+    #[test]
+    fn what_goes_to_the_build_service_leaves_the_content_out_and_repeats() {
+        let big = [7u8; 4096];
+        let bundle = read(
+            "for-build",
+            &[
+                ("mixins/veinminer/hook.rs", b"fn hook() {}"),
+                ("assets/veinminer/big.bin", &big),
+                ("data/veinminer/loot.json", b"{}"),
+            ],
+            &mixin(),
+        )
+        .unwrap();
+        let sent = bundle.for_build().unwrap();
+        assert_eq!(sent, bundle.for_build().unwrap());
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&sent)).unwrap();
+        let names: Vec<String> = (0..zip.len())
+            .map(|i| zip.by_index(i).unwrap().name().unwrap().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "horizon-native.json",
+                "mixins/veinminer/hook.rs",
+                "mixins/veinminer/horizon-mixin.toml"
+            ]
+        );
+        let path =
+            std::env::temp_dir().join(format!("native-bundle-sent-{}.hnmod", std::process::id()));
+        std::fs::write(&path, &sent).unwrap();
+        let again = Bundle::read(&path);
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(again.unwrap().files, bundle.files);
+    }
+
+    #[test]
+    fn holds_is_the_cheap_test_for_a_native_manifest() {
+        let dir = std::env::temp_dir();
+        let native = dir.join(format!("native-holds-{}.hnmod", std::process::id()));
+        let content = dir.join(format!("content-holds-{}.hmod", std::process::id()));
+        for (path, entries) in [
+            (&native, vec![("horizon-native.json", b"{}".as_slice())]),
+            (
+                &content,
+                vec![("horizon-mod.toml", b"id = \"x\"".as_slice())],
+            ),
+        ] {
+            let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+            for (name, bytes) in entries {
+                zip.start_file(name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                zip.write_all(bytes).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+        assert!(holds(&native));
+        assert!(!holds(&content));
+        std::fs::remove_file(native).unwrap();
+        std::fs::remove_file(content).unwrap();
+    }
+
+    #[test]
+    fn one_hmod_carries_content_beside_its_native_code() {
+        let toml = r#"id = "veinminer"
+name = "Veinminer"
+version = "0.3.0"
+api = "0.2"
+capabilities = ["registries"]
+"#;
+        let bundle = read(
+            "unified",
+            &[
+                ("horizon-mod.toml", toml.as_bytes()),
+                ("assets/veinminer/lang/en_us.json", b"{}"),
+                ("data/veinminer/tags/item/ores.json", b"{}"),
+                ("mixins/veinminer/hook.rs", b"fn hook() {}"),
+            ],
+            &mixin(),
+        )
+        .unwrap();
+        assert!(bundle.files.contains_key("mixins/veinminer/hook.rs"));
+        assert!(!bundle.files.contains_key("horizon-mod.toml"));
+        assert!(!bundle.files.keys().any(|n| n.starts_with("assets/")));
+        assert!(!bundle.files.keys().any(|n| n.starts_with("data/")));
+    }
+
+    #[test]
+    fn one_file_is_one_mod() {
+        let toml = r#"id = "other"
+name = "Other"
+version = "0.3.0"
+api = "0.2"
+capabilities = ["registries"]
+"#;
+        let error = read(
+            "two-ids",
+            &[("horizon-mod.toml", toml.as_bytes())],
+            &mixin(),
+        )
+        .err()
+        .unwrap();
+        assert!(error.contains("one file is one mod"), "{error}");
     }
 }

@@ -712,7 +712,7 @@ impl Launcher {
                         w - 150.0,
                         y + 12.0,
                         color::MUTED,
-                        ".hnmod: later",
+                        "Native mod",
                     );
                 } else if p.kind == crate::browser::Kind::Mod && !cfg!(target_pointer_width = "64")
                 {

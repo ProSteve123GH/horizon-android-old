@@ -206,6 +206,9 @@ mod native_hooks;
 use android_bundled::{
     official_minimap, official_recipes, official_recipes_glue, official_zoom, smartf3,
 };
+/// The native hook points' version (`game/native_hooks.rs`): a `.hnmod` that names `hooks` above
+/// it can't build on this game (the launcher checks it before sending the mod).
+pub(crate) use native_hooks::NATIVE_HOOKS_API;
 mod native_lifecycle;
 mod native_menus;
 mod native_mobs;
@@ -17746,6 +17749,10 @@ impl Game<'_> {
                                 "Horizon: first frame after {} ms",
                                 self.started.elapsed().as_millis()
                             );
+                            // A native-mod build that reached a frame works: stop counting
+                            // starts (`NativeMods.kt`).
+                            #[cfg(target_os = "android")]
+                            crate::platform::first_frame();
                         }
                         if self.title.is_some() {
                             self.perf.title_shown();

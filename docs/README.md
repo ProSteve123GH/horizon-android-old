@@ -35,6 +35,8 @@ To play, use [the launcher](../launcher/README.md); the project site is [playhor
 ## Android
 
 - [Android guide](android.md): install, touch controls, accounts, rendering, builds and checks.
+- [Native mods on Android](android-native-mods.md): importing `.hnmod`, the build service, its
+  sandbox, the gateway, GitHub builds and the launcher's native-mod settings.
 - [Minecraft installation import](android-minecraft-import.md): reuse a 26.3 folder or ZIP, what is verified, and repair.
 - [Fork notes](android-fork.md): Compose launcher, PR #56 status, package identity and gaps.
 - [Development APKs](android-dev-builds.md): CI builds, signing and artifact retrieval.
