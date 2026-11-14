@@ -29,7 +29,7 @@ request = urllib.request.Request(
     f"{gateway}/v1/github/{ask}/state",
     data=json.dumps(json.load(open(path))).encode(),
     method="POST",
-    headers={"Content-Type": "application/json"},
+    headers={"Content-Type": "application/json", "User-Agent": "horizon-mod-builds/github-actions"},
 )
 try:
     urllib.request.urlopen(request, timeout=120).read()
