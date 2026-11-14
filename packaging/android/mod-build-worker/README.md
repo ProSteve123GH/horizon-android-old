@@ -24,8 +24,19 @@ can't tell them apart: **Settings → Native mods → Build server** = the Worke
    ```
 
    `wrangler` also takes `CLOUDFLARE_API_TOKEN` in the environment instead of logging in, which is how
-   it runs from a phone.
-4. In Horizon, set the Build server to the `https://….workers.dev` URL `wrangler` prints.
+   it runs from a phone. If `wrangler` can't run at all (on Termux it fails with "Unsupported
+   platform: android arm64 LE", because it carries the `workerd` runtime, which has no Android
+   build), use the plain-curl deployer instead:
+
+   ```sh
+   CLOUDFLARE_API_TOKEN=… GITHUB_TOKEN=… bash deploy.sh
+   ```
+
+   It finds or makes the `STORE` namespace, puts its id in `wrangler.toml`, uploads `src/index.js`,
+   sets the `GITHUB_TOKEN` secret and enables `workers.dev`, then prints the URL. It needs a token
+   with **Workers Scripts: Edit** and **Workers KV Storage: Edit**; set `CLOUDFLARE_ACCOUNT_ID` if
+   the token sees more than one account.
+4. In Horizon, set the Build server to the `https://….workers.dev` URL `wrangler` (or `deploy.sh`) prints.
 
 ## What it does
 
