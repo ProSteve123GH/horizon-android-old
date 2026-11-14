@@ -1,4 +1,5 @@
 //! User-added keys share drawing/hit geometry and retain per-finger ownership.
+use super::draw::text_button;
 use super::*;
 use layout::Placement;
 use serde::{Deserialize, Serialize};

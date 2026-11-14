@@ -25,10 +25,12 @@ use horizon_world::{
     worldgen::{
         biome::BiomeId,
         blending::{BlendingData, Direction8, OldChunk, OldWorld, Sides},
-        generator::{GeneratorData, OverworldGenerator, ProtoChunk},
-        overrides::{PackFile, WorldgenOverrides},
+        generator::{FlatSettings, GeneratorData, OverworldGenerator, ProtoChunk},
+        overrides::WorldgenOverrides,
     },
 };
+#[path = "../datapacks/reader.rs"]
+mod pack_reader;
 use serde_json::Value;
 use std::{collections::HashMap, fmt::Write as _, fs, io::Write as _, path::Path, sync::Arc};
 
@@ -46,6 +48,42 @@ fn registry(resources: &Path) -> Result<&'static BlockRegistry, Error> {
         ("defaults", tag(&facts["defaults"])),
     ]))?;
     Ok(Box::leak(Box::new(registry)))
+}
+
+/// A `flat_level_generator_preset`'s settings, from the client resources' data.
+fn flat_preset(resources: &Path, id: &str) -> Result<FlatSettings, Error> {
+    let (namespace, path) = id.split_once(':').unwrap_or(("minecraft", id));
+    let file = resources.join(format!(
+        "data/{namespace}/worldgen/flat_level_generator_preset/{path}.json"
+    ));
+    let json: Value = serde_json::from_str(&fs::read_to_string(&file)?)?;
+    let s = &json["settings"];
+    let layers = s["layers"]
+        .as_array()
+        .ok_or("preset layers")?
+        .iter()
+        .map(|l| {
+            let block = l["block"].as_str().ok_or("layer block")?.to_owned();
+            Ok((block, l["height"].as_i64().ok_or("layer height")? as i32))
+        })
+        .collect::<Result<_, Error>>()?;
+    let structure_overrides = match &s["structure_overrides"] {
+        Value::Array(sets) => Some(
+            sets.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+        ),
+        Value::String(set) => Some(vec![set.clone()]),
+        _ => None,
+    };
+    Ok(FlatSettings {
+        layers,
+        biome: s["biome"].as_str().unwrap_or("minecraft:plains").to_owned(),
+        structure_overrides,
+        features: s["features"].as_bool().unwrap_or(false),
+        lakes: s["lakes"].as_bool().unwrap_or(false),
+    })
 }
 
 /// Type-prefixed scalars with sorted compound keys, as the oracle prints them.
@@ -109,45 +147,13 @@ fn canonical(tag: &Tag, out: &mut String) {
 /// HORIZON_DATAPACKS: a world's datapacks folder of folder packs, each enabled
 /// after vanilla in name order, as the oracle selects them.
 fn datapacks(dir: &Path) -> Result<WorldgenOverrides, Error> {
-    fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return;
-        };
-        let mut entries: Vec<_> = entries.flatten().map(|e| e.path()).collect();
-        entries.sort();
-        for path in entries {
-            if path.is_dir() {
-                walk(root, &path, out);
-            } else if let Ok(rel) = path.strip_prefix(root) {
-                out.push(rel.to_string_lossy().replace('\\', "/"));
-            }
-        }
-    }
     let mut packs: Vec<_> = fs::read_dir(dir)?
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.join("pack.mcmeta").exists())
         .collect();
     packs.sort();
-    let mut overrides = WorldgenOverrides::default();
-    for pack in packs {
-        let id = format!(
-            "file/{}",
-            pack.file_name().unwrap_or_default().to_string_lossy()
-        );
-        let mut files = Vec::new();
-        walk(&pack, &pack.join("data"), &mut files);
-        for file in files {
-            let read = || fs::read_to_string(pack.join(&file)).ok();
-            if let PackFile::Unreadable = overrides.add_file(&id, &file, read) {
-                return Err(format!("{id}: {file}: unreadable").into());
-            }
-        }
-    }
-    for warning in overrides.finish(|_| true) {
-        eprintln!("data pack worldgen: {warning}");
-    }
-    Ok(overrides)
+    pack_reader::overrides(&packs.iter().map(|p| p.as_path()).collect::<Vec<_>>())
 }
 
 /// HORIZON_OLD_CHUNKS=SEED:x0,z0,x1,z1: chunks another seed generated that
@@ -268,8 +274,15 @@ pub fn main() -> Result<(), Error> {
     for warning in data.warnings() {
         eprintln!("data pack worldgen: {warning}");
     }
-    let generator =
-        OverworldGenerator::for_dimension(data.clone(), seed, "minecraft:normal", &dimension)?;
+    // HORIZON_FLAT: a flat_level_generator_preset id; the overworld is that superflat world.
+    let generator = match std::env::var("HORIZON_FLAT") {
+        Ok(preset) => {
+            OverworldGenerator::flat(data.clone(), seed, &flat_preset(&resources, &preset)?, true)?
+        }
+        Err(_) => {
+            OverworldGenerator::for_dimension(data.clone(), seed, "minecraft:normal", &dimension)?
+        }
+    };
     let mut worker = generator.worker();
     let old_spec = std::env::var("HORIZON_OLD_CHUNKS").ok();
     let old_rect = match &old_spec {

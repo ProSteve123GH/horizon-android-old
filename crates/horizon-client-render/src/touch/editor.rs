@@ -1,3 +1,4 @@
+use super::draw::nine;
 use super::*;
 
 pub struct Editor {

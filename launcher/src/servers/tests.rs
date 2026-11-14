@@ -74,9 +74,10 @@ fn programs_are_laid_out_as_install_sh_does() {
     // The game's macOS bundle is the launcher's, not the server's.
     assert!(!rt.join("releases/v1/Horizon.app").exists());
     // The release finds the game files where horizon-server looks: .local beside it.
-    assert!(rt
-        .join("current/.local/horizon-client/26.3/horizon-resources.json")
-        .is_file());
+    assert!(
+        rt.join("current/.local/horizon-client/26.3/horizon-resources.json")
+            .is_file()
+    );
     // Again with newer game files: only they change, swapped in whole.
     fs::write(
         version.join(".local/horizon-client/26.3/horizon-resources.json"),
@@ -218,9 +219,10 @@ fn the_api_sends_the_token() {
         "{}",
         seen[0]
     );
-    assert!(seen
-        .iter()
-        .all(|h| h.to_ascii_lowercase().contains("authorization: bearer t0k")));
+    assert!(
+        seen.iter()
+            .all(|h| h.to_ascii_lowercase().contains("authorization: bearer t0k"))
+    );
     assert!(seen[1].starts_with("POST /api/v1/command"));
     fs::remove_dir_all(&dir).unwrap();
     // Nothing answers: stopped.
@@ -276,4 +278,19 @@ fn deleting_refuses_an_unrecognized_folder_and_keeps_files_on_trash_failure() {
     );
     assert!(root.join("server.toml").exists());
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn the_game_mode_comes_from_server_toml() {
+    let dir = scratch("game-mode");
+    assert_eq!(game_mode(&dir), None);
+    fs::write(
+        dir.join("server.toml"),
+        "[server]\nport = 25565\n\n[world]\nname = \"world\"\ngame_mode = \"creative\"\n",
+    )
+    .unwrap();
+    assert_eq!(game_mode(&dir).as_deref(), Some("creative"));
+    fs::write(dir.join("server.toml"), "[server]\nport = 25565\n").unwrap();
+    assert_eq!(game_mode(&dir), None);
+    let _ = fs::remove_dir_all(&dir);
 }

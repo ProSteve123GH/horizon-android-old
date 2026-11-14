@@ -5,7 +5,7 @@
 //! The launcher adds, edits, duplicates, reorders and removes entries; every other field of
 //! every entry is written back as it was read.
 use base64::Engine;
-use horizon_world::nbt::{self, Compound, JavaString, Limits, NamedTag, Tag};
+use horizon_platform::world::nbt::{self, Compound, JavaString, Limits, NamedTag, Tag};
 use std::fs;
 use std::path::Path;
 
@@ -211,7 +211,8 @@ impl List {
         let (from, to) = (positions[index], positions[target]);
         let entry = self.entries.remove(from);
         // Removing an earlier entry shifts a later target one place left.
-        self.entries.insert(if from < to { to - 1 } else { to }, entry);
+        self.entries
+            .insert(if from < to { to - 1 } else { to }, entry);
         Ok(())
     }
 

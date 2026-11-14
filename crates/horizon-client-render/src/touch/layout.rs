@@ -1,13 +1,21 @@
 //! Per-profile touch layouts. Coordinates are normalized; sizes are fractions
 //! of surface height, so a button stays square on wide phones and tablets.
+//!
+//! This is the file the touch HUD and its in-game editor share. The Compose
+//! launcher hardcodes these layouts for its previews; keep them in sync.
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
+/// How the player moves and aims.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Mode {
+    /// A joystick moves; attack and use act on the crosshair.
     #[default]
     Crosshair,
+    /// A joystick moves; tapping the world attacks or uses what was tapped.
     Tap,
+    /// A D-pad moves; tapping the world acts on it (or the crosshair, split).
     Dpad,
 }
 impl Mode {
@@ -19,20 +27,21 @@ impl Mode {
             Self::Dpad => "D-Pad & tap to interact",
         }
     }
-    pub const SCHEMES: [(Self, bool, &str); 4] = [
+    /// The four schemes a settings screen offers: mode, `split_controls`, label.
+    pub const SCHEMES: [(Self, bool, &'static str); 4] = [
         (Self::Crosshair, false, "Joystick & aim crosshair"),
         (Self::Tap, false, "Joystick & tap to interact"),
         (Self::Dpad, false, "D-Pad & tap to interact"),
         (Self::Dpad, true, "D-Pad & aim crosshair"),
     ];
+    /// This mode's row in [`Settings::layouts`].
     pub fn index(self) -> usize {
-        match self {
-            Self::Crosshair => 0,
-            Self::Tap => 1,
-            Self::Dpad => 2,
-        }
+        self as usize
     }
 }
+
+/// The built-in controls. The order is the index into a layout row and into
+/// `button_visibility`, so new controls go at the end.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Control {
     Move,
@@ -50,6 +59,8 @@ pub enum Control {
     Offhand,
     Shield,
 }
+/// How many built-in controls a layout row holds.
+pub const CONTROLS: usize = Control::ALL.len();
 impl Control {
     pub const ALL: [Self; 14] = [
         Self::Move,
@@ -67,6 +78,7 @@ impl Control {
         Self::Offhand,
         Self::Shield,
     ];
+    /// The name the layout editor shows.
     pub fn name(self) -> &'static str {
         match self {
             Self::Move => "Movement",
@@ -86,48 +98,51 @@ impl Control {
         }
     }
 }
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+/// `button_visibility` values: follow the scheme, always shown, always hidden.
+pub const FOLLOW_SCHEME: u8 = 0;
+pub const SHOWN: u8 = 1;
+pub const HIDDEN: u8 = 2;
+
+/// Where one control sits: its centre (0..1 of the surface), its size (a
+/// fraction of the surface height) and its opacity.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Placement {
     pub center: [f32; 2],
     pub size: f32,
     pub opacity: f32,
 }
 impl Placement {
-    pub(super) fn new(x: f32, y: f32, size: f32) -> Self {
+    pub const fn new(x: f32, y: f32, size: f32) -> Self {
         Self {
             center: [x, y],
             size,
             opacity: 0.65,
         }
     }
+    /// The square control as `[x, y, w, h]` in normalized surface coordinates,
+    /// for a surface `aspect` (width / height) wide.
     pub fn rect(self, aspect: f32) -> [f32; 4] {
-        let sx = self.size / aspect.max(0.1);
+        let w = self.size / aspect.max(0.1);
         [
-            self.center[0] - sx / 2.0,
+            self.center[0] - w / 2.0,
             self.center[1] - self.size / 2.0,
-            sx,
+            w,
             self.size,
         ]
     }
+    /// Brings a value read from disk back on screen and into range.
     pub fn sanitize(&mut self) {
-        if !self.size.is_finite() {
-            self.size = 0.15;
-        }
-        if !self.opacity.is_finite() {
-            self.opacity = 0.65;
-        }
-        self.size = self.size.clamp(0.045, 0.45);
-        self.opacity = self.opacity.clamp(0.0, 1.0);
+        self.size = finite_or(self.size, 0.15).clamp(0.045, 0.45);
+        self.opacity = finite_or(self.opacity, 0.65).clamp(0.0, 1.0);
         for c in &mut self.center {
-            *c = if c.is_finite() {
-                c.clamp(0.025, 0.975)
-            } else {
-                0.5
-            };
+            *c = finite_or(*c, 0.5).clamp(0.025, 0.975);
         }
     }
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+
+/// The player's touch layout, saved as JSON. Missing fields take their
+/// defaults, so later options can be added without resetting a saved file.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub mode: Mode,
@@ -194,6 +209,10 @@ fn deserialize_visibility<'de, D: serde::Deserializer<'de>>(d: D) -> Result<[u8;
     values[..old.len()].copy_from_slice(&old);
     Ok(values)
 }
+fn finite_or(value: f32, fallback: f32) -> f32 {
+    if value.is_finite() { value } else { fallback }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         // Zalith-style mobile layout: analog movement on the lower-left,
@@ -411,6 +430,7 @@ impl Settings {
         p
     }
 }
+
 pub fn contains([x, y, w, h]: [f32; 4], p: [f32; 2]) -> bool {
     (x..=x + w).contains(&p[0]) && (y..=y + h).contains(&p[1])
 }

@@ -93,7 +93,7 @@ pub fn launcher_entry(exe: &Path) -> String {
          StartupWMClass=horizon-launcher\n",
         quote(exe),
         exe.display(),
-        minecraft = horizon_core::VANILLA_VERSION,
+        minecraft = horizon_platform::version::VANILLA_VERSION,
     )
 }
 
@@ -273,9 +273,10 @@ mod tests {
         assert!(!install_in(&data, Path::new("/opt/a/horizon-launcher")).unwrap());
         let png = data.join("icons/hicolor/48x48/apps/horizon.png");
         assert!(fs::read(&png).unwrap().starts_with(b"\x89PNG"));
-        assert!(data
-            .join("icons/hicolor/scalable/apps/horizon.svg")
-            .exists());
+        assert!(
+            data.join("icons/hicolor/scalable/apps/horizon.svg")
+                .exists()
+        );
         assert!(install_in(&data, Path::new("/opt/b/horizon-launcher")).unwrap());
         let entry = fs::read_to_string(data.join("applications").join(LAUNCHER_ENTRY)).unwrap();
         assert!(entry.contains("Exec=\"/opt/b/horizon-launcher\""));
@@ -350,7 +351,9 @@ mod tests {
         assert_eq!(target_from(exe, Some(appimage)), appimage);
         assert_eq!(target_from(exe, None), exe);
         // Quoted, so the space in the player's folder survives.
-        assert!(launcher_entry(&target_from(exe, Some(appimage)))
-            .contains("Exec=\"/home/a b/Horizon.AppImage\"\n"));
+        assert!(
+            launcher_entry(&target_from(exe, Some(appimage)))
+                .contains("Exec=\"/home/a b/Horizon.AppImage\"\n")
+        );
     }
 }

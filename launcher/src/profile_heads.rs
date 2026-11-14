@@ -1,6 +1,6 @@
 //! Profile-head I/O stays on workers; every account surface shares the same pixel-sharp cache.
 use super::*;
-use gpui::{img, RenderImage};
+use gpui::{RenderImage, img};
 use std::{
     cell::RefCell,
     path::PathBuf,
@@ -24,21 +24,22 @@ struct Head {
 }
 
 impl Heads {
+    /// Asks for the heads of `accounts`; forgets the others.
     pub fn request(&mut self, accounts: &[account::Account], resources: PathBuf, tx: &Sender<Msg>) {
         self.0
-            .retain(|uuid, _| accounts.iter().any(|a| &a.uuid == uuid));
+            .retain(|key, _| accounts.iter().any(|a| &a.key() == key));
         for account in accounts {
             let url = account.skin.as_ref().map(|s| s.0.clone());
-            if self.0.get(&account.uuid).is_some_and(|h| {
+            if self.0.get(&account.key()).is_some_and(|h| {
                 h.url == url
                     && (h.pending
                         || h.face.is_some() && h.retry_at.is_none_or(|t| Instant::now() < t))
             }) {
                 continue;
             }
-            let previous = self.0.remove(&account.uuid).and_then(|h| h.face);
+            let previous = self.0.remove(&account.key()).and_then(|h| h.face);
             self.0.insert(
-                account.uuid.clone(),
+                account.key(),
                 Head {
                     url: url.clone(),
                     pending: true,
@@ -54,19 +55,19 @@ impl Heads {
                     &backend::data_dir().join("profile-heads"),
                     &resources,
                 );
-                let _ = tx.send(Msg::AccountHead(account.uuid, url, face, failed));
+                let _ = tx.send(Msg::AccountHead(account.key(), url, face, failed));
             });
         }
     }
 
     pub fn loaded(
         &mut self,
-        uuid: &str,
+        key: &str,
         url: &Option<String>,
         face: Option<Vec<[u8; 4]>>,
         failed: bool,
     ) {
-        if let Some(head) = self.0.get_mut(uuid).filter(|h| &h.url == url) {
+        if let Some(head) = self.0.get_mut(key).filter(|h| &h.url == url) {
             head.pending = false;
             head.retry_at = failed.then(|| Instant::now() + RETRY);
             if face.is_some() {
@@ -76,8 +77,8 @@ impl Heads {
         }
     }
 
-    pub fn draw(&self, uuid: Option<&str>, size: f32, scale: f32, t: &Theme) -> Div {
-        let image = uuid.and_then(|uuid| self.0.get(uuid)).and_then(|head| {
+    pub fn draw(&self, key: Option<&str>, size: f32, scale: f32, t: &Theme) -> Div {
+        let image = key.and_then(|key| self.0.get(key)).and_then(|head| {
             let face = head.face.as_ref()?;
             Some(
                 head.images

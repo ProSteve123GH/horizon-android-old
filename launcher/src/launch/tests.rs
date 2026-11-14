@@ -16,10 +16,38 @@ fn variables_are_read_and_written_back() {
         "DRI_PRIME=1 EMPTY=\"\" MANGOHUD=1 NAME=\"two words\""
     );
     assert!(parse_env("JUSTANAME").unwrap_err().contains("NAME=value"));
-    assert!(parse_env("1X=2")
-        .unwrap_err()
-        .contains("letters, digits and _"));
+    assert!(
+        parse_env("1X=2")
+            .unwrap_err()
+            .contains("letters, digits and _")
+    );
     assert!(parse_env("").unwrap().is_empty());
+}
+
+#[test]
+fn the_java_heap_slider_reaches_the_computers_memory() {
+    assert_eq!(memory_at(1., 16384), 16384);
+    assert_eq!(memory_at(0., 16384), 1);
+    assert_eq!(memory_at(0.25, 16384), 4096);
+    assert_eq!(memory_at(0.5, 8000), 4032);
+    assert_eq!(memory_fraction(16384, 16384), 1.);
+    assert_eq!(memory_fraction(4096, 16384), 0.25);
+    // Saved on a computer with more memory.
+    assert_eq!(memory_fraction(32768, 16384), 1.);
+}
+
+#[test]
+fn a_typed_memory_limit_is_read_in_mb_or_gb_with_no_lowest_value() {
+    assert_eq!(parse_memory("2048"), Ok(Some(2048)));
+    assert_eq!(parse_memory(" 512 MB "), Ok(Some(512)));
+    assert_eq!(parse_memory("4gb"), Ok(Some(4096)));
+    assert_eq!(parse_memory("2 G"), Ok(Some(2048)));
+    assert_eq!(parse_memory("1"), Ok(Some(1)));
+    assert_eq!(parse_memory(""), Ok(None));
+    assert_eq!(parse_memory("off"), Ok(None));
+    for bad in ["lots", "-5", "1.5gb", "4 tb", "99999999999", "9999999gb"] {
+        assert_eq!(parse_memory(bad), Err(NotMemory), "{bad}");
+    }
 }
 
 #[test]
@@ -226,16 +254,20 @@ fn the_post_exit_command_runs_with_the_instance_variables() {
             "INST_JAVA"
         ]
     );
-    assert!(after_exit(&launch, &dir, &vars)
-        .unwrap()
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        after_exit(&launch, &dir, &vars)
+            .unwrap()
+            .status()
+            .unwrap()
+            .success()
+    );
     let written = std::fs::read_to_string(dir.join("after.txt")).unwrap();
     assert_eq!(written.trim(), "My Pack my-pack java 1");
     // A Horizon instance has no Java.
-    assert!(!instance_vars("H", "horizon", &dir, None)
-        .iter()
-        .any(|(k, _)| *k == "INST_JAVA"));
+    assert!(
+        !instance_vars("H", "horizon", &dir, None)
+            .iter()
+            .any(|(k, _)| *k == "INST_JAVA")
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

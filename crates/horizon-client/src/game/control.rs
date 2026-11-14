@@ -1,6 +1,8 @@
 //! Commands from the control socket (`horizon-ctl`), run on the game thread.
 use super::event_loop::EventLoopCtl;
 use super::{Game, Screen};
+use horizon_client::gfx::pack_timing;
+use horizon_client::held::Source;
 use horizon_client::{Result, items::ItemStack};
 use horizon_core::geometry::Vec3;
 use serde_json::{Value, json};
@@ -10,11 +12,31 @@ use std::{
 };
 use winit::{event::MouseButton, keyboard::KeyCode};
 
+/// The control protocol's version (`docs/api/stability.md`): before 1.0 an
+/// addition makes the next patch and a breaking change the next line.
+const PROTOCOL: &str = "0.1.0";
+
+/// The command groups the game serves, as `help` chains them: what `hello` reports as its features.
+const FEATURES: &[&str] = &[
+    "game", "station", "blocks", "lan", "friends", "render", "sculk", "agent", "ui", "options",
+    "events", "saves", "pad", "studio",
+];
+
+/// `hello`: the protocol the socket speaks, the game's release and the command groups it serves.
+fn hello() -> Value {
+    json!({
+        "protocol": PROTOCOL,
+        "release": horizon_core::release::VERSION,
+        "features": FEATURES,
+    })
+}
+
 const HELP: &[&str] = &[
     "sky-order early|late           A/B vanilla sky ordering on supported Android Vulkan devices",
     "terrain-passes single|split    A/B terrain pipelines; split requires a supported backend",
     "static-cutout on|off           A/B skipping unused LOD dithering in proven unfaded cutouts",
     "settled-terrain on|off         A/B specialization for fully visible non-RGSS terrain",
+    "hello                          the control protocol's version, the game's release and the command groups it serves",
     "status                         game, player, streaming and renderer state",
     "simulation                     authoritative projectiles in the owner's level",
     "server-hold on|off             hold simulation and player packets at a control-fixture barrier",
@@ -36,13 +58,15 @@ const HELP: &[&str] = &[
     "fill X1 Y1 Z1 X2 Y2 Z2 BLOCK   set a box of loaded blocks",
     "resume                         leave the pause menu",
     "screenshot PATH                write the next frame as PNG",
+    "screenshot-sequence FRAMES STEP_MS PATH|cancel  a shader pack's first frames on a set clock (HORIZON_STILL), the last as PNG",
     "chat TEXT                      send a chat line or /command as if typed",
     "type TEXT                      type into the open chat box (key enter tap sends)",
     "chat-log [N]                   the newest N chat messages (default 10)",
-    "options [PAGE]                 open the options (video sound controls keybinds mouse chat accessibility language font packs mods graphics graphics-advanced graphics-hdr)",
-    "stats [reset]                  frame-time summary since the last reset",
+    "options [PAGE]                 open the options (video sound controls keybinds mouse chat accessibility language font packs mods graphics graphics-advanced graphics-hdr video-vanilla)",
+    "stats [reset] [raw]            frame-time summary since the last reset (raw: every frame time too)",
+    "profile [client|server] start|stop|status|mark NAME  capture the performance of the window and, in single player, its server thread to reports/ (horizon-ctl profile --help)",
     "narration                      the narrator's status and the last messages it was asked to say",
-    "bench SECONDS                  reset stats, wait, then reply with the summary",
+    "bench SECONDS [raw]            reset stats, wait, then reply with the summary (raw: every frame time too)",
     "fly X1 Y1 Z1 X2 Y2 Z2 SECONDS [PITCH [raw]]  fly the camera along a line at constant speed, then reply with the frame summary (raw: every frame time too)",
     "open WORLD [SEED] [creative]   open or create a world from the title screen",
     "save                           save the world",
@@ -102,45 +126,132 @@ impl Game<'_> {
             && let Some(flight) = self.flight.take()
         {
             let mut summary = self.frame_stats.summary();
+            self.add_async_occlusion_stats(&mut summary);
             let n = flight.tick_ms.len().max(1) as f32;
             summary["tick_ms"] = (flight.tick_ms.iter().sum::<f32>() / n).into();
             summary["tick_ms_max"] = flight.tick_ms.iter().copied().fold(0.0, f32::max).into();
             if flight.raw {
-                summary["frame_ms"] = self.frame_stats.frame_millis().into();
-                summary["cpu_ms"] = self.frame_stats.cpu_millis().into();
-                summary["gpu_ms"] = self.frame_stats.gpu_millis().into();
+                self.add_raw_series(&mut summary);
             }
             let _ = flight.reply.send(summary.to_string());
         }
     }
+    /// The game's settings a render capture records beside the renderer's own state.
+    fn render_capture_settings(&self) -> horizon_client::gfx::capture::Settings {
+        let s = &self.settings;
+        horizon_client::gfx::capture::Settings {
+            graphics_api: format!("{:?}", s.horizon.api),
+            translucent_batching: s.horizon.translucent_batching,
+            texture_filtering: s.file.int("textureFiltering"),
+            anisotropy_bit: s.file.int("maxAnisotropyBit"),
+            mipmap_levels: s.mipmap_levels.max(0) as u32,
+            resolution_scale: s.horizon.resolution_scale as f32 / 100.0,
+            fxaa: s.horizon.fxaa,
+            taa: s.horizon.taa,
+            upscale: s.horizon.upscaling.ratio(),
+            render_distance: self.streaming.radius,
+            lod_distance: self.far_terrain_choice().0,
+            resources: self.options.resources.clone(),
+            atlas: horizon_client::gfx::capture::AtlasCheck::of(&self.pack.render),
+        }
+    }
+    /// The frame summary, with Horizon's own passes' median GPU times while they are timed.
+    fn summary_with_passes(&self) -> Value {
+        let mut summary = self.frame_stats.summary();
+        let passes = self
+            .renderer
+            .as_ref()
+            .map(|r| r.own_pass_times())
+            .unwrap_or_default();
+        if !passes.is_empty() {
+            summary["gpu_passes"] = Value::Object(
+                passes
+                    .into_iter()
+                    .map(|(name, ms)| (name, json!(ms)))
+                    .collect(),
+            );
+        }
+        if let Some(r) = self.renderer.as_ref().filter(|r| r.pass_detail())
+            && let Some(support) = r.pass_detail_support()
+            && let Value::Object(detail) =
+                pack_timing::detail_json(&r.own_pass_parts(), &r.own_pass_counters(), support)
+            && let Some(summary) = summary.as_object_mut()
+        {
+            summary.extend(detail);
+        }
+        self.add_async_occlusion_stats(&mut summary);
+        summary
+    }
+
+    fn add_async_occlusion_stats(&self, summary: &mut Value) {
+        if let Some(culler) = &self.async_occlusion_culler {
+            summary["async_occlusion_culling"] = culler.stats_value();
+        }
+    }
+
+    /// Adds the allocations since the last rendered frame to the frame stats; the first frame has no mark.
+    pub(super) fn record_frame_allocs(&mut self) {
+        use horizon_threads::alloc_count::{here, process};
+        let now = (here(), process());
+        if let Some((window, all)) = self.alloc_mark.replace(now) {
+            self.frame_stats
+                .record_allocs(now.0.since(window), now.1.since(all), Instant::now());
+        }
+    }
+    /// Every frame's times, and its allocations in builds that count (`raw`).
+    fn add_raw_series(&self, summary: &mut Value) {
+        self.frame_stats.add_series(summary);
+        if horizon_threads::alloc_count::ON {
+            summary["alloc_count"] = self.frame_stats.alloc_counts().into();
+            summary["alloc_bytes"] = self.frame_stats.alloc_bytes().into();
+        }
+    }
+    fn reset_frame_stats(&mut self) {
+        self.frame_stats.reset();
+        if let Some(culler) = &self.async_occlusion_culler {
+            culler.reset_stats();
+        }
+    }
     pub(super) fn poll_control(&mut self, event_loop: &dyn EventLoopCtl) {
-        if let Some((deadline, reply)) = self.pending_bench.take() {
+        if let Some((deadline, reply, raw)) = self.pending_bench.take() {
             if Instant::now() >= deadline {
-                let _ = reply.send(self.frame_stats.summary().to_string());
+                let mut summary = self.summary_with_passes();
+                if raw {
+                    self.add_raw_series(&mut summary);
+                }
+                let _ = reply.send(summary.to_string());
             } else {
-                self.pending_bench = Some((deadline, reply));
+                self.pending_bench = Some((deadline, reply, raw));
             }
         }
         horizon_client::widgets::end_frame(self.frames);
         self.narrate_screen();
+        self.poll_repro(event_loop);
+        self.poll_profile();
         self.advance_agent();
         for request in self.ui_wait.ready() {
             self.answer(request, event_loop);
         }
         while let Some(request) = self.control.as_ref().and_then(|c| c.try_recv()) {
+            // Once per line received, not once per handler: a deferred `ui`
+            // comes back through `ui_wait` and must not be traced twice.
+            self.note_socket_line(&request.line);
             self.agent_command_seen();
             self.answer(request, event_loop);
             if self.pending_save.is_some() {
                 break;
             }
         }
-        if self.control.is_some() {
+        // A recording made from the F3 keys or the Settings page has no socket,
+        // and still wants its events.
+        if self.control.is_some() || self.repro.recording_active() {
             self.watch_events();
         }
         if self.screen == Screen::Options
             && self.ui.options.page() == horizon_client::options_ui::Page::Agent
         {
             self.ui.options.agent_status = self.agent_status_lines();
+            self.ui.options.agent_recording = self.repro.recording_active();
         }
     }
 
@@ -165,8 +276,12 @@ impl Game<'_> {
                     self.world_options_text(None);
                     return Ok(());
                 }
-                Screen::Inventory if self.mod_browser_typing() => {
+                Screen::Inventory | Screen::Creative if self.mod_browser_typing() => {
                     self.mod_browser_text(None, true);
+                    return Ok(());
+                }
+                Screen::Social => {
+                    self.social_backspace();
                     return Ok(());
                 }
                 _ => {}
@@ -180,6 +295,21 @@ impl Game<'_> {
     /// Nothing here is a key — the caller drops control characters. `Err` when
     /// no text box of the screen takes them.
     pub(super) fn type_chars_into_screen(&mut self, text: &str) -> Result<()> {
+        // Overlays own the input even when a text box remains focused behind them.
+        if self.dialog_open() {
+            self.dialog_type(text);
+            return Ok(());
+        }
+        if self.prompt_open() {
+            return Ok(());
+        }
+        if let Some(result) = self.type_text_field_input(text) {
+            return result;
+        }
+        self.type_chars_unhooked(text)
+    }
+
+    pub(super) fn type_chars_unhooked(&mut self, text: &str) -> Result<()> {
         if self.book.is_some() {
             self.book_type(text);
             return Ok(());
@@ -188,15 +318,24 @@ impl Game<'_> {
             self.sign_input(None, Some(text));
             return Ok(());
         }
+        // The title's screens: the world name, the seed, a server's address.
+        // A screen opened over the title (Options, say) keeps its own text.
+        if title_owns_text(&self.screen, self.title.is_some())
+            && let Some(title) = &mut self.title
+        {
+            title.type_text(text);
+            return Ok(());
+        }
         match self.screen {
             Screen::Chat => self.chat_type(text),
             Screen::CommandBlock => self.command_block_type(text),
+            Screen::Social => self.social_type(text),
             Screen::BlockEditor => self.block_editor_type(text),
             Screen::DebugOptions => self.debug_options_type(text),
             Screen::Options => self.ui.options.type_text(&self.gui.atlas, text),
             // The port, or the game rules' search and number boxes.
             Screen::WorldOptions => self.world_options_text(Some(text)),
-            Screen::Inventory if self.mod_browser_typing() => {
+            Screen::Inventory | Screen::Creative if self.mod_browser_typing() => {
                 self.mod_browser_text(Some(text), false)
             }
             Screen::Inventory if self.recipe_search_focused() => {
@@ -205,6 +344,11 @@ impl Game<'_> {
             // The anvil's rename box, while it has an input to name.
             Screen::Inventory if self.station_typing() => self.station_text(Some(text), false),
             Screen::Creative if self.creative_screen.tab().search => {
+                // CreativeModeInventoryScreen.charTyped: the chat key that
+                // opened the tab does not type its letter.
+                if std::mem::take(&mut self.creative_ignore_text) {
+                    return Ok(());
+                }
                 // As typed: replaces a selected query, keeps the length limit.
                 self.creative_search_edit(Some(text))
             }
@@ -234,6 +378,15 @@ impl Game<'_> {
         result
     }
 
+    /// A recorded control line fed back by a replay: not new input, so the
+    /// trace does not see it, and its reply has no one waiting.
+    pub(super) fn replay_line(&mut self, line: &str, event_loop: &dyn EventLoopCtl) {
+        let (reply, _) = std::sync::mpsc::channel();
+        if let Err(e) = self.control_command(line, &reply, event_loop) {
+            log::warn!("Horizon: replay: {line}: {e}");
+        }
+    }
+
     fn control_command_inner(
         &mut self,
         line: &str,
@@ -241,6 +394,10 @@ impl Game<'_> {
         event_loop: &dyn EventLoopCtl,
     ) -> Result<Option<Value>> {
         let words: Vec<&str> = line.split_whitespace().collect();
+        self.screenshot_sequence_gate(words.first().copied())?;
+        if words.first() == Some(&"screenshot-sequence") {
+            return self.screenshot_sequence_command(line, reply);
+        }
         if self.pending_save.is_some() && words.first() != Some(&"quit") {
             return Err("a world save is in progress".into());
         }
@@ -262,16 +419,34 @@ impl Game<'_> {
         if let Some(value) = self.events_command(&words, reply)? {
             return Ok(value);
         }
+        if let Some(value) = self.input_trace.command(&words)? {
+            return Ok(Some(value));
+        }
+        if let Some(value) = self.repro_command(&words, line, reply)? {
+            return Ok(value);
+        }
+        if words[0] == "profile" {
+            return self.profile_command(&words[1..], reply);
+        }
+        if words[0] == "trace" {
+            return self.trace_command(&words[1..], reply);
+        }
         if let Some(value) = self.saves_control(&words, line, reply)? {
             return Ok(value);
         }
         if let Some(value) = self.options_control(&words, line)? {
             return Ok(Some(value));
         }
+        if let Some(value) = self.lan_op_control(&words)? {
+            return Ok(Some(value));
+        }
         if let Some(value) = self.lan_control(&words)? {
             return Ok(Some(value));
         }
         if let Some(value) = self.friends_control(&words)? {
+            return Ok(Some(value));
+        }
+        if let Some(value) = self.studio_control(&words)? {
             return Ok(Some(value));
         }
         match self.agent_command(&words, line, reply, event_loop)? {
@@ -294,6 +469,9 @@ impl Game<'_> {
                 .chain(super::events::HELP)
                 .chain(super::saves_control::HELP)
                 .chain(super::pad::HELP)
+                .chain(super::input_trace::HELP)
+                .chain(super::repro::HELP)
+                .chain(super::studio::HELP)
                 .collect::<Vec<_>>() }))),
             "setblock" | "fill" | "particle" | "signedit" => self.render_command(&words),
             "section-draws" => {
@@ -305,6 +483,15 @@ impl Game<'_> {
                     Some(other) => return Err(format!("unknown section draw mode {other}").into()),
                 }
                 Ok(Some(json!({ "ok": true, "flat": r.flat_draws() })))
+            }
+            "section-layout" => {
+                let r = self.renderer.as_mut().ok_or("no renderer")?;
+                let compact = match words.get(1).copied() {
+                    Some("compact") => r.set_packed_layout(true),
+                    Some("wide") => r.set_packed_layout(false),
+                    _ => return Err("section-layout compact|wide".into()),
+                };
+                Ok(Some(json!({ "ok": true, "compact": compact })))
             }
             "section-indirect" => {
                 let r = self.renderer.as_mut().ok_or("no renderer")?;
@@ -373,6 +560,65 @@ impl Game<'_> {
                 }
                 Ok(Some(json!({ "ok": true, "cull": r.section_cull() })))
             }
+            "gpu-passes" => {
+                (self.gpu_passes, self.gpu_pass_detail) = gpu_pass_switches(
+                    words.get(1).copied(),
+                    (self.gpu_passes, self.gpu_pass_detail),
+                )?;
+                let support = self.renderer.as_ref().and_then(|r| r.pass_detail_support());
+                Ok(Some(gpu_passes_reply(
+                    self.gpu_passes,
+                    self.gpu_pass_detail,
+                    support,
+                )))
+            }
+            "render-capture" => match words.get(1).copied() {
+                None => {
+                    let r = self.renderer.as_ref().ok_or("no renderer")?;
+                    Ok(Some(
+                        json!({ "ok": true, "keeping": r.keeps_capture_copies() }),
+                    ))
+                }
+                Some("on") => {
+                    let r = self.renderer.as_mut().ok_or("no renderer")?;
+                    if !r.keeps_capture_copies() {
+                        r.keep_capture_copies(true);
+                        // The copies start empty: every section and far tile is meshed
+                        // again, as after a relayout.
+                        self.clear_lod();
+                        self.all_sections_changed();
+                    }
+                    Ok(Some(json!({ "ok": true, "keeping": true })))
+                }
+                Some("off") => {
+                    let r = self.renderer.as_mut().ok_or("no renderer")?;
+                    r.keep_capture_copies(false);
+                    Ok(Some(json!({ "ok": true, "keeping": false })))
+                }
+                Some(_) => {
+                    if self.pending_render_capture.is_some() {
+                        return Err("a render capture is already pending".into());
+                    }
+                    // The rest of the line: a path may hold spaces.
+                    let dir = line
+                        .trim_start()
+                        .strip_prefix("render-capture")
+                        .unwrap_or("");
+                    let settings = self.render_capture_settings();
+                    let r = self.renderer.as_mut().ok_or("no renderer")?;
+                    if !r.keeps_capture_copies() {
+                        return Err("no mesh copies kept: run render-capture on (or start with \
+                            HORIZON_RENDER_CAPTURE=1) and let the terrain settle first"
+                            .into());
+                    }
+                    r.capture = Some(horizon_client::gfx::capture::Request {
+                        dir: dir.trim().into(),
+                        settings,
+                    });
+                    self.pending_render_capture = Some(reply.clone());
+                    Ok(None)
+                }
+            },
             "section-sides" => {
                 let r = self.renderer.as_mut().ok_or("no renderer")?;
                 match words.get(1).copied() {
@@ -383,8 +629,59 @@ impl Game<'_> {
                 }
                 Ok(Some(json!({ "ok": true, "sides": r.section_sides() })))
             }
+            "parallel-tick" => {
+                use horizon_client::graphics::ParallelTickMode as Mode;
+                match words.get(1).copied() {
+                    None => {}
+                    Some(mode @ ("off" | "auto" | "on")) => {
+                        // The setting, as its switch sets it; not saved here (as `gpu-culling`).
+                        self.settings.horizon.parallel_tick = match mode {
+                            "on" => Mode::On,
+                            "auto" => Mode::Auto,
+                            _ => Mode::Off,
+                        };
+                        horizon_client::parallel::set_setting(self.settings.horizon.parallel_tick);
+                    }
+                    Some(other) => return Err(format!("unknown parallel tick mode {other}").into()),
+                }
+                let (setting, on, auto) = horizon_client::parallel::status();
+                Ok(Some(
+                    json!({ "ok": true, "setting": setting, "on": on, "auto": auto }),
+                ))
+            }
+            "gpu-culling" => {
+                let r = self.renderer.as_mut().ok_or("no renderer")?;
+                match words.get(1).copied() {
+                    None => {}
+                    Some(mode @ ("on" | "off" | "auto")) => {
+                        // Refused, with the reason, where it isn't offered.
+                        if let Some(why) = r.gpu_culling_offer().reason() {
+                            return Err(why.into());
+                        }
+                        // Auto starts from off and decides from the frames that follow.
+                        self.gpu_culling_auto.reset();
+                        r.set_gpu_culling(mode == "on")?;
+                        // The setting, as its switch sets it; not saved here (as
+                        // `lod-distance`): settings changes and new renderers keep it.
+                        self.settings.horizon.gpu_culling = match mode {
+                            "on" => horizon_client::graphics::GpuCullingMode::On,
+                            "auto" => horizon_client::graphics::GpuCullingMode::Auto,
+                            _ => horizon_client::graphics::GpuCullingMode::Off,
+                        };
+                    }
+                    Some(other) => return Err(format!("unknown GPU culling mode {other}").into()),
+                }
+                Ok(Some(json!({
+                    "ok": true,
+                    "gpu_culling": r.gpu_culling(),
+                    "mode": self.settings.horizon.gpu_culling.name(),
+                    "auto": self.gpu_culling_auto.state(),
+                })))
+            }
             "sculk" => Ok(Some(self.sculk_command(&words)?)),
+            "hello" => Ok(Some(hello())),
             "status" => Ok(Some(self.control_status())),
+            "memory" => Ok(Some(self.memory_value())),
             "stall" => {
                 let millis: u64 = arg(1)?.parse()?;
                 if millis > 5000 {
@@ -395,6 +692,27 @@ impl Game<'_> {
             }
             "simulation" => {
                 self.require_world()?;
+                // `simulation blocks X1 Y1 Z1 X2 Y2 Z2`: the server's own blocks in a box. `blocks` reads this
+                // window's copy, which the server's changes reach in the next tick's broadcast.
+                if words.get(1) == Some(&"blocks") {
+                    let mut c = [0i32; 6];
+                    for (i, v) in c.iter_mut().enumerate() {
+                        *v = arg(i + 2)?.parse()?;
+                    }
+                    let lo = [0, 1, 2].map(|i| c[i].min(c[i + 3]));
+                    let hi = [0, 1, 2].map(|i| c[i].max(c[i + 3]));
+                    let volume: i64 = (0..3).map(|i| i64::from(hi[i] - lo[i] + 1)).product();
+                    if volume > 32768 {
+                        return Err(format!("{volume} blocks; at most 32768 per request").into());
+                    }
+                    return Ok(Some(if let Some(server) = &self.integrated {
+                        server
+                            .call(move |g| g.in_owner_level(move |g| g.blocks_json(lo, hi)))
+                            .ok_or(super::integrated::NO_ANSWER)?
+                    } else {
+                        self.blocks_json(lo, hi)
+                    }));
+                }
                 let value = if let Some(server) = &self.integrated {
                     server
                         .call(|g| {
@@ -402,7 +720,7 @@ impl Game<'_> {
                                 json!({ "game_time": g.world.game_time, "projectiles": g.projectiles_status() })
                             })
                         })
-                        .ok_or("the integrated server stopped")?
+                        .ok_or(super::integrated::NO_ANSWER)?
                 } else {
                     json!({ "game_time": self.world.game_time, "projectiles": self.projectiles_status() })
                 };
@@ -418,12 +736,32 @@ impl Game<'_> {
                 if let Some(server) = &self.integrated {
                     server
                         .call(move |g| g.agent.hold_server = held)
-                        .ok_or("the integrated server stopped")?;
+                        .ok_or(super::integrated::NO_ANSWER)?;
                 } else if self.remote.is_some() {
                     return Err("server-hold requires the world's host".into());
                 } else {
                     self.agent.hold_server = held;
                 }
+                ok()
+            }
+            // The real event, so focus loss reaches all that a window's does (the radial menu
+            // cancels, held keys go).
+            "pad" if words.get(1) == Some(&"focus") => {
+                let focused = match arg(2)? {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err("pad focus true|false".into()),
+                };
+                let id = self
+                    .window
+                    .as_ref()
+                    .map_or_else(winit::window::WindowId::dummy, |w| w.id());
+                self.handle_window_event(
+                    event_loop,
+                    id,
+                    winit::event::WindowEvent::Focused(focused),
+                    super::input_trace::InputOrigin::Agent,
+                );
                 ok()
             }
             "pad" => Ok(Some(self.pad_command(&words)?)),
@@ -435,6 +773,18 @@ impl Game<'_> {
                         "key action must be down, up, tap or repeat, not {action}"
                     )
                     .into());
+                }
+                if arg(2)? != "up" {
+                    self.input_keyboard_used();
+                    // As a window's key press: the radial menu closes, and the key goes on.
+                    self.pad_radial_cancel();
+                }
+                // The command confirmation takes the keys; none go past it.
+                if self.command_prompt.is_some() {
+                    if arg(2)? != "up" {
+                        self.command_prompt_key(key);
+                    }
+                    return ok();
                 }
                 // A server's dialog takes the keys, in configuration too.
                 if self.dialog_open() {
@@ -456,7 +806,7 @@ impl Game<'_> {
                 // A held edit modifier (`key super down`) and A/C/V/X: the
                 // open book's Select All, Copy, Paste or Cut.
                 if self.book.is_some() && arg(2)? != "up" {
-                    let held = |k: [KeyCode; 2]| k.iter().any(|k| self.keys.contains(k));
+                    let held = |k: [KeyCode; 2]| k.iter().any(|k| self.keys.raw(k));
                     let edit = if cfg!(target_os = "macos") {
                         held([KeyCode::SuperLeft, KeyCode::SuperRight])
                     } else {
@@ -533,14 +883,22 @@ impl Game<'_> {
                         Some(Ok(k)) => k,
                         Some(Err(button)) => {
                             let action = arg(2)?;
-                            if self.screen == Screen::Playing {
+                            if self.screen == Screen::Playing
+                                && self.shared_default_acts(
+                                    button,
+                                    horizon_client::keybinds::key_name(physical),
+                                )
+                            {
                                 if action != "up" {
-                                    self.play_mouse(button, true)?;
+                                    self.mouse_mapping(button, true, Source::Agent)?;
                                 }
                                 // A repeat keeps the key held, as the window's.
                                 if action == "up" || action == "tap" {
-                                    self.play_mouse(button, false)?;
+                                    self.mouse_mapping(button, false, Source::Agent)?;
                                 }
+                            }
+                            if action == "tap" {
+                                self.physical_keys.remove(&physical);
                             }
                             return ok();
                         }
@@ -548,19 +906,19 @@ impl Game<'_> {
                     }
                 };
                 match arg(2)? {
-                    "down" => self.control_key_down(key)?,
+                    "down" => self.control_key_down(key, physical)?,
                     "up" => {
-                        self.keys.remove(&key);
+                        self.control_key_up(key);
                         self.physical_keys.remove(&key);
                     }
                     // The system's auto-repeat while the key is held.
                     "repeat" => {
                         self.physical_keys.insert(physical);
-                        self.mapped_key(key, true, true)?;
+                        self.mapped_key(key, true, true, key, Source::Agent)?;
                     }
                     "tap" => {
-                        self.control_key_down(key)?;
-                        self.keys.remove(&key);
+                        self.control_key_down(key, physical)?;
+                        self.control_key_up(key);
                         self.physical_keys.remove(&physical);
                         self.debug_key(physical, horizon_client::debug_keys::KeyAction::Release);
                     }
@@ -578,7 +936,7 @@ impl Game<'_> {
                 // controller still holding one keeps it.
                 let options = [self.settings.toggle_crouch, self.settings.toggle_sprint];
                 for (slot, name) in [(0, "key.sneak"), (1, "key.sprint")] {
-                    if !self.pad.holds_action(&self.settings.controller, name) {
+                    if !self.input_holds(name) {
                         self.toggles.key(
                             slot,
                             horizon_client::keymapping::KeyAction::Release,
@@ -607,24 +965,28 @@ impl Game<'_> {
                     )
                     .into());
                 }
+                // As a window's click: the radial menu closes, and the click goes on.
+                if arg(2)? != "up" {
+                    self.pad_radial_cancel();
+                }
                 match arg(2)? {
                     "down" => {
                         self.extras_mouse(button, true);
                         self.mod_mouse_key(button, true);
-                        self.play_mouse(button, true)?
+                        self.mouse_mapping(button, true, Source::Agent)?
                     }
                     "up" => {
                         self.extras_mouse(button, false);
                         self.mod_mouse_key(button, false);
-                        self.play_mouse(button, false)?
+                        self.mouse_mapping(button, false, Source::Agent)?
                     }
                     "click" => {
                         self.extras_mouse(button, true);
                         self.mod_mouse_key(button, true);
                         self.extras_mouse(button, false);
                         self.mod_mouse_key(button, false);
-                        self.play_mouse(button, true)?;
-                        self.play_mouse(button, false)?;
+                        self.mouse_mapping(button, true, Source::Agent)?;
+                        self.mouse_mapping(button, false, Source::Agent)?;
                     }
                     other => {
                         return Err(
@@ -655,6 +1017,23 @@ impl Game<'_> {
                 self.previous_position = to;
                 ok()
             }
+            "emote" => match words.get(1).copied() {
+                None => {
+                    let owned: Vec<String> =
+                        self.owned_emotes().iter().map(|i| i.id.clone()).collect();
+                    Ok(Some(
+                        json!({ "owned": owned, "playing": self.emote_playing() }),
+                    ))
+                }
+                Some("stop") => {
+                    self.stop_emote();
+                    ok()
+                }
+                Some(id) if self.play_emote(id) => ok(),
+                Some(id) => {
+                    Err(format!("can't play emote {id} now (not owned, or not standing)").into())
+                }
+            },
             "hotbar" => {
                 let slot: usize = arg(1)?.parse()?;
                 if !(1..=9).contains(&slot) {
@@ -682,7 +1061,7 @@ impl Game<'_> {
                     let command = format!("give @s {item} {count}");
                     server
                         .call(move |g| g.owner_console_command(&command))
-                        .ok_or("the integrated server stopped")?;
+                        .ok_or(super::integrated::NO_ANSWER)?;
                     return Ok(Some(json!({ "ok": true, "given": count })));
                 }
                 let max = info.max_stack;
@@ -735,7 +1114,7 @@ impl Game<'_> {
                 if let Some(server) = &self.integrated {
                     server
                         .call(move |g| g.world.day_time = time)
-                        .ok_or("the integrated server stopped")?;
+                        .ok_or(super::integrated::NO_ANSWER)?;
                 }
                 ok()
             }
@@ -744,7 +1123,24 @@ impl Game<'_> {
                 let baby = words.contains(&"baby");
                 let nums: Vec<f64> = words[2..].iter().filter_map(|w| w.parse().ok()).collect();
                 let at = (nums.len() >= 3).then(|| [nums[0], nums[1], nums[2]]);
-                let id = self.summon(arg(1)?, at, baby)?;
+                let kind = arg(1)?.to_owned();
+                // Single player on its server thread: spawn in the owner's level
+                // so the mob enters the server tick loop and is tracked to clients.
+                if let Some(server) = &self.integrated {
+                    let at = match at {
+                        Some(a) => a,
+                        None => self.default_summon_position()?,
+                    };
+                    let id = server
+                        .call(move |g| {
+                            g.in_owner_level(|g| {
+                                g.summon(&kind, Some(at), baby).map_err(|e| e.to_string())
+                            })
+                        })
+                        .ok_or(super::integrated::NO_ANSWER)??;
+                    return Ok(Some(json!({ "ok": true, "id": id })));
+                }
+                let id = self.summon(&kind, at, baby)?;
                 Ok(Some(json!({ "ok": true, "id": id })))
             }
             "mobs" => {
@@ -754,7 +1150,7 @@ impl Game<'_> {
                     let center = self.player.as_ref().map_or(Vec3::ZERO, |p| p.position);
                     let value = server
                         .call(move |g| g.in_owner_level(|g| g.control_mobs_at(radius, center)))
-                        .ok_or("the integrated server stopped")?;
+                        .ok_or(super::integrated::NO_ANSWER)?;
                     return Ok(Some(value));
                 }
                 Ok(Some(self.control_mobs(radius)))
@@ -764,7 +1160,7 @@ impl Game<'_> {
                 if let Some(server) = &self.integrated {
                     let value = server
                         .call(|g| g.control_hurt_log())
-                        .ok_or("the integrated server stopped")?;
+                        .ok_or(super::integrated::NO_ANSWER)?;
                     return Ok(Some(value));
                 }
                 Ok(Some(self.control_hurt_log()))
@@ -787,17 +1183,17 @@ impl Game<'_> {
                     path: path.trim().into(),
                     size: None,
                     scaled: false,
+                    background: false,
                 });
                 self.pending_screenshot = Some(reply.clone());
                 Ok(None)
             }
             "chat" => {
                 let text = line.trim_start().strip_prefix("chat").unwrap_or("").trim();
-                if self.remote.is_some() {
-                    self.send_chat(text);
-                    return ok();
-                }
                 self.require_world()?;
+                // As if typed: a client mod's command runs before the line
+                // reaches the server, and the Chat option's restrictions and
+                // the recent list apply to a connected server too.
                 self.handle_chat_input(text);
                 Ok(Some(
                     json!({ "ok": true, "chat": self.ui.chat.recent_lines(5) }),
@@ -822,6 +1218,12 @@ impl Game<'_> {
                 // key event fires it. A cancelled character is dropped, so
                 // `type` types the survivors only.
                 // `\b` is the socket's backspace sentinel, not two characters.
+                if text != "\\b"
+                    && let Some(result) = self.type_text_field_input(text)
+                {
+                    result?;
+                    return ok();
+                }
                 let typed = if text == "\\b" {
                     text.to_owned()
                 } else {
@@ -837,12 +1239,15 @@ impl Game<'_> {
                 use horizon_client::options_ui::Page;
                 let page = match words.get(1).copied().unwrap_or("main") {
                     "main" => Page::Main,
-                    "video" => Page::Video,
+                    // What Video Settings... opens; vanilla's own layout, which no menu opens.
+                    "video" => Page::Graphics,
+                    "video-vanilla" => Page::Video,
                     "sound" => Page::Sound,
                     "controls" => Page::Controls,
                     "keybinds" => Page::KeyBinds,
                     "controller" => Page::Controller,
                     "controller-binds" => Page::PadBinds,
+                    "controller-radial" => Page::ControllerRadial,
                     "mouse" => Page::Mouse,
                     "chat" => Page::Chat,
                     "accessibility" => Page::Accessibility,
@@ -855,6 +1260,7 @@ impl Game<'_> {
                     "graphics-advanced" => Page::GraphicsAdvanced,
                     "graphics-hdr" => Page::GraphicsHdr,
                     "extras" => Page::Extras,
+                    "pvp" => Page::Pvp,
                     "credits" => Page::Credits,
                     "horizon" => Page::Horizon,
                     "agent" => Page::Agent,
@@ -868,6 +1274,7 @@ impl Game<'_> {
                 if page == Page::ShaderPacks {
                     self.settings.shader_packs =
                         horizon_client::shader_pack_list::scan(&Self::shader_packs_dir());
+                    self.open_shader_options();
                 }
                 ok()
             }
@@ -888,21 +1295,29 @@ impl Game<'_> {
                 })))
             }
             "stats" => {
-                let summary = self.frame_stats.summary();
-                if words.get(1) == Some(&"reset") {
-                    self.frame_stats.reset();
+                let mut summary = self.summary_with_passes();
+                if words[1..].contains(&"raw") {
+                    self.add_raw_series(&mut summary);
+                }
+                if words[1..].contains(&"reset") {
+                    self.reset_frame_stats();
                 }
                 Ok(Some(summary))
             }
             "bench" => {
                 let seconds: f64 = arg(1)?.parse()?;
+                // `Duration::from_secs_f64` panics on a negative, NaN or huge number.
+                if !(seconds.is_finite() && (0.0..=86_400.0).contains(&seconds)) {
+                    return Err("bench takes 0 to 86400 seconds".into());
+                }
                 if self.pending_bench.is_some() {
                     return Err("a benchmark is already running".into());
                 }
-                self.frame_stats.reset();
+                self.reset_frame_stats();
                 self.pending_bench = Some((
                     Instant::now() + Duration::from_secs_f64(seconds),
                     reply.clone(),
+                    words[2..].contains(&"raw"),
                 ));
                 Ok(None)
             }
@@ -913,7 +1328,7 @@ impl Game<'_> {
                 }
                 let n = |i: usize| -> Result<f64> { Ok(arg(i)?.parse()?) };
                 let pitch = words.get(8).map_or(Ok(10.0), |p| p.parse::<f32>())?;
-                self.frame_stats.reset();
+                self.reset_frame_stats();
                 self.flight = Some(Flight {
                     from: Vec3::new(n(1)?, n(2)?, n(3)?),
                     to: Vec3::new(n(4)?, n(5)?, n(6)?),
@@ -989,7 +1404,7 @@ impl Game<'_> {
                 if let Some(server) = &self.integrated {
                     server
                         .call(move |g| g.control_save(all).map_err(|e| e.to_string()))
-                        .ok_or("the integrated server stopped")??;
+                        .ok_or(super::integrated::NO_ANSWER)??;
                 } else if self.remote.is_none() {
                     self.begin_control_save(all, reply.clone())?;
                     return Ok(None);
@@ -1046,7 +1461,7 @@ impl Game<'_> {
         Ok(())
     }
 
-    fn control_key_down(&mut self, key: KeyCode) -> Result<()> {
+    fn control_key_down(&mut self, key: KeyCode, raw: KeyCode) -> Result<()> {
         self.physical_keys.insert(key);
         // The window's shortcuts come before any screen, here too.
         if self.screenshot_shortcut(key, false) {
@@ -1067,10 +1482,17 @@ impl Game<'_> {
             self.block_editor_key_code(key, None, None);
             return Ok(());
         }
-        if self.keys.insert(key) {
-            self.key_pressed(key)?;
+        if self.keys.press(key, Source::Agent) {
+            self.key_pressed(key, raw)?;
         }
         Ok(())
+    }
+
+    /// `key ... up`: the script lets go. What it pressed as the keyboard's stand-in goes with it
+    /// (a fixture's untagged press), and a controller's hold stays.
+    fn control_key_up(&mut self, key: KeyCode) {
+        self.keys.release(&key, Source::Agent);
+        self.keys.release(&key, Source::Keyboard);
     }
 
     fn screen_name(&self) -> &'static str {
@@ -1083,6 +1505,7 @@ impl Game<'_> {
         match self.screen {
             Screen::Playing => "playing",
             Screen::GameModeSwitcher => "gamemode-switcher",
+            Screen::EmoteWheel => "emote-wheel",
             Screen::Paused => "paused",
             Screen::Options => "options",
             Screen::Inventory => "inventory",
@@ -1093,6 +1516,7 @@ impl Game<'_> {
             Screen::Advancements => "advancements",
             Screen::WorldOptions => "world-options",
             Screen::Friends => "friends",
+            Screen::Social => "social",
             Screen::ServerLinks => "server-links",
             Screen::ConfirmLink => "confirm-link",
             Screen::DialogWarning => "dialog-warning",
@@ -1101,6 +1525,9 @@ impl Game<'_> {
             Screen::Win => "win",
             Screen::Mod => "mod",
             Screen::DebugOptions => "debug-options",
+            Screen::Mod => "mod",
+            Screen::HudEditor => "hud-editor",
+            Screen::Studio => "studio",
         }
     }
 
@@ -1152,7 +1579,7 @@ impl Game<'_> {
         json!({ "ok": true, "players": players })
     }
 
-    fn control_status(&self) -> Value {
+    pub(super) fn control_status(&self) -> Value {
         let player = self.player.as_ref().map(|p| {
             json!({
                 "position": [p.position.x, p.position.y, p.position.z],
@@ -1196,10 +1623,26 @@ impl Game<'_> {
                 "section_draw_calls": r.section_draw_calls,
                 "terrain_pass_draws": r.terrain_pass_draws,
                 "culled_sections": r.culled_sections(),
+                "gpu_culling": r.gpu_culling(),
+                "gpu_culling_mode": self.settings.horizon.gpu_culling.name(),
+                "gpu_culling_auto": self.gpu_culling_auto.state(),
+                // The world's resolution scale in percent, Dynamic Resolution's where it is on.
+                "resolution_scale": super::frame_autotune::world_scale(
+                    &self.settings.horizon,
+                    &self.dynamic_resolution
+                ),
+                "dynamic_resolution": self.settings.horizon.dynamic_resolution,
+                "gpu_frame": r.gpu_frame(),
+                "gpu_fading": r.gpu_fading(),
+                "gpu_culling_offer": format!("{:?}", r.gpu_culling_offer()),
+                "gpu_occluding": r.gpu_occluding(),
+                "stats_lag": r.stats_lag(),
                 "uploaded_bytes": r.uploaded_bytes,
                 "resident_sections": r.resident_sections(),
                 "arena_bytes": arena_bytes,
                 "section_vertex_bytes": section_vertex_bytes,
+                "packed_layout": r.packed_layout(),
+                "vertex_bytes_split": r.vertex_bytes_split(),
                 "gpu_allocated_bytes": memory.as_ref().map(|m| m.total_allocated_bytes),
                 "gpu_reserved_bytes": memory.as_ref().map(|m| m.total_reserved_bytes),
             })
@@ -1215,7 +1658,7 @@ impl Game<'_> {
             "distance": self.settings.horizon.lod_distance,
             "effective_distance": self.lod_distance(),
             "terrain_distance": self.terrain_distance(),
-            "source": if self.lod.is_none() { "none" } else if self.integrated.is_some() { "integrated" } else { "local" },
+            "source": if self.lod.is_none() { "none" } else if self.integrated.is_some() { "integrated" } else if self.server_far_terrain().is_some() { "server" } else if self.remote.is_some() { "server-terrain" } else { "local" },
             "source_attempted": self.lod_source_attempted,
             "active_tiles": self.lod.as_ref().map_or(0, |lod| lod.stats().0),
             "cached_tiles": self.lod.as_ref().map_or(0, |lod| lod.stats().1),
@@ -1278,11 +1721,11 @@ impl Game<'_> {
             "streaming": self.streaming.stages().into_iter().map(|(k, v)| (k.to_string(), v.into())).collect::<serde_json::Map<_, _>>(),
             "dirty_light": self.world.dirty_light.len(),
             "renderer": renderer,
-            "display": self.window.as_deref().and_then(horizon_client::telemetry::monitor).map(|m| json!({
-                "width": m.size().width,
-                "height": m.size().height,
-                "scale": m.scale_factor(),
-                "refresh_hz": m.refresh_rate_millihertz().map(|r| r.div_ceil(1000)),
+            "display": self.window.as_deref().and_then(horizon_client::window::display).map(|d| json!({
+                "width": d.width,
+                "height": d.height,
+                "scale": d.scale,
+                "refresh_hz": d.refresh_hz,
             })),
             "uptime_seconds": self.started.elapsed().as_secs_f64(),
             "server": self.remote_status(),
@@ -1292,9 +1735,21 @@ impl Game<'_> {
                 .map(|e| self.shown_name_tags(glam::DVec3::from_array(e))),
         });
         status["lod"] = lod;
+        // Parallel Tick: the setting, whether the next tick shares its work, and Auto's state.
+        let (setting, on, auto) = horizon_client::parallel::status();
+        status["parallel_tick"] = json!({ "setting": setting, "on": on, "auto": auto });
         let (target, sampled) = self.lod.as_ref().map_or((0, 0), |lod| lod.progress());
         status["lod"]["target_tiles"] = target.into();
         status["lod"]["sampled_target_tiles"] = sampled.into();
+        let (kept, kept_bytes) = self.lod.as_ref().map_or((0, 0), |lod| lod.kept());
+        status["lod"]["kept_tiles"] = kept.into();
+        status["lod"]["kept_mb"] = (kept_bytes >> 20).into();
+        let (wanted, refined) = self
+            .lod
+            .as_ref()
+            .map_or((0, 0), |lod| lod.detail_progress());
+        status["lod"]["detail_target_columns"] = wanted.into();
+        status["lod"]["refined_target_columns"] = refined.into();
         status["pending_uploads"] = self.pending_uploads.len().into();
         status["destroying"] = json!(destroying);
         status["physical_keys"] = json!(physical_keys);
@@ -1318,6 +1773,11 @@ impl Game<'_> {
         status["border"] = json!({ "center": self.border.center(), "size": self.border.size() });
         // The scoreboard sidebar the HUD shows.
         status["sidebar"] = self.sidebar_status();
+        // Who caused the input, and whether a repro recording runs.
+        let mut input = self.input_trace.summary();
+        self.repro
+            .fill_summary(&mut input, self.input_trace.events());
+        status["input"] = input;
         status
     }
 }
@@ -1348,6 +1808,10 @@ fn released_modifier(line: &str) -> Option<KeyCode> {
 
 fn key_code(name: &str) -> Option<KeyCode> {
     let name = name.to_ascii_lowercase();
+    // The game's own names (`key.keyboard.w`), which a recording writes.
+    if let Some(code) = horizon_client::keybinds::key_code(&name) {
+        return Some(code);
+    }
     let letters = [
         KeyCode::KeyA,
         KeyCode::KeyB,
@@ -1423,9 +1887,104 @@ fn key_code(name: &str) -> Option<KeyCode> {
     })
 }
 
+/// The (times, detail) switches `gpu-passes [on|off|detail]` leaves, given the current ones.
+fn gpu_pass_switches(word: Option<&str>, now: (bool, bool)) -> Result<(bool, bool)> {
+    match word {
+        None => Ok(now),
+        Some("on") => Ok((true, false)),
+        Some("detail") => Ok((true, true)),
+        Some("off") => Ok((false, false)),
+        Some(other) => Err(format!("unknown gpu pass mode {other}").into()),
+    }
+}
+
+/// The `gpu-passes` reply: the switches and what detail can show on this device.
+fn gpu_passes_reply(
+    passes: bool,
+    detail: bool,
+    support: Option<pack_timing::DetailSupport>,
+) -> Value {
+    let shown = support.map(pack_timing::support_json);
+    let field = |key: &str, none: Value| shown.as_ref().map_or(none, |s| s[key].clone());
+    json!({
+        "ok": true,
+        "gpu_passes": passes,
+        "detail": detail,
+        "parts_mode": field("parts_mode", Value::Null),
+        "counters": field("counters", json!(false)),
+        "fragment_unit": field("fragment_unit", Value::Null),
+    })
+}
+
+/// The title's own screens (not one opened over it, as Options is) take the
+/// text: the world name, the seed, a server's address.
+pub(super) fn title_owns_text(screen: &Screen, title_up: bool) -> bool {
+    title_up && *screen == Screen::Playing
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_title_takes_text_only_on_its_own_screens() {
+        assert!(title_owns_text(&Screen::Playing, true));
+        assert!(!title_owns_text(&Screen::Playing, false));
+        assert!(!title_owns_text(&Screen::Options, true));
+        assert!(!title_owns_text(&Screen::Chat, true));
+    }
+
+    #[test]
+    fn hello_names_the_protocol_the_release_and_the_command_groups() {
+        let reply = hello();
+        assert_eq!(reply["release"], horizon_core::release::VERSION);
+        let protocol = reply["protocol"].as_str().unwrap();
+        let parts: Vec<_> = protocol.split('.').collect();
+        assert!(
+            parts.len() == 3 && parts.iter().all(|p| p.parse::<u32>().is_ok()),
+            "{protocol}"
+        );
+        let features = reply["features"].as_array().unwrap();
+        assert!(!features.is_empty());
+        let mut names: Vec<_> = features.iter().filter_map(Value::as_str).collect();
+        assert_eq!(names.len(), features.len());
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), features.len(), "a group is named twice");
+    }
+
+    #[test]
+    fn gpu_passes_detail_replies_detail_and_on_turns_it_off_again() {
+        let support = pack_timing::DetailSupport {
+            parts: pack_timing::PartsMode::SeparatePasses,
+            encoder_stamps: false,
+            counters: true,
+            fragment_unit: Some(pack_timing::FragmentUnit::Quad),
+        };
+        let (passes, detail) = gpu_pass_switches(Some("detail"), (false, false)).unwrap();
+        let reply = gpu_passes_reply(passes, detail, Some(support));
+        assert_eq!(reply["detail"], true);
+        assert_eq!(reply["gpu_passes"], true);
+        assert_eq!(reply["parts_mode"], "separate_passes");
+        assert_eq!(reply["counters"], true);
+        assert_eq!(reply["fragment_unit"], "quad");
+        let (passes, detail) = gpu_pass_switches(Some("on"), (passes, detail)).unwrap();
+        let reply = gpu_passes_reply(passes, detail, None);
+        assert_eq!(
+            (reply["gpu_passes"].as_bool(), reply["detail"].as_bool()),
+            (Some(true), Some(false))
+        );
+        assert_eq!(
+            (reply["parts_mode"].is_null(), reply["counters"].as_bool()),
+            (true, Some(false))
+        );
+        assert_eq!(
+            gpu_pass_switches(Some("off"), (true, true)).unwrap(),
+            (false, false)
+        );
+        assert_eq!(gpu_pass_switches(None, (true, true)).unwrap(), (true, true));
+        assert!(gpu_pass_switches(Some("nope"), (false, false)).is_err());
+    }
 
     #[test]
     fn taps_and_ups_always_release_their_key() {
@@ -1440,6 +1999,52 @@ mod tests {
             "key nope up",
         ] {
             assert_eq!(released_modifier(line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn a_benchmark_profile_only_goes_with_a_benchmark() {
+        let parse = |args: &[&str]| {
+            super::super::Options::parse(args.iter().map(|a| a.to_string())).map(|o| o.unwrap())
+        };
+        assert!(
+            parse(&["--benchmark", "village", "--profile"])
+                .unwrap()
+                .benchmark_profile
+        );
+        assert!(
+            !parse(&["--benchmark", "village"])
+                .unwrap()
+                .benchmark_profile
+        );
+        assert!(parse(&["--profile"]).is_err());
+    }
+
+    #[test]
+    fn a_benchmark_set_only_goes_with_the_trip() {
+        let parse = |args: &[&str]| {
+            super::super::Options::parse(args.iter().map(|a| a.to_string())).map(|o| o.unwrap())
+        };
+        let set = parse(&["--benchmark", "travel", "--benchmark-set", "gpu-culling=on"]).unwrap();
+        assert_eq!(set.benchmark_set, Some(("gpu-culling".into(), "on".into())));
+        let before = parse(&["--benchmark-set", "gpu-culling=on", "--benchmark", "travel"]);
+        assert!(before.is_ok());
+        for args in [
+            &[
+                "--benchmark",
+                "standard",
+                "--benchmark-set",
+                "gpu-culling=on",
+            ][..],
+            &["--benchmark-set", "gpu-culling=on"],
+            &[
+                "--benchmark",
+                "travel",
+                "--benchmark-set",
+                "gpu-culling=auto",
+            ],
+        ] {
+            assert!(parse(args).is_err(), "{args:?}");
         }
     }
 }

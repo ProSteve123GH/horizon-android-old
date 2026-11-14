@@ -2,7 +2,7 @@
 //! mcp`, as each common client wants it configured. `horizon-launcher agent-config` prints it and
 //! the Settings page's "Connect an AI agent" shows it. Nothing here runs a client's command: the
 //! window runs one only when the player clicks its button, and shows it first.
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 /// The name the server is added under in every client.
@@ -202,9 +202,11 @@ mod tests {
             exe.display().to_string()
         );
         let codex = &all[1];
-        assert!(codex
-            .config
-            .contains("command = \"/Applications/Horizon Launcher.app"));
+        assert!(
+            codex
+                .config
+                .contains("command = \"/Applications/Horizon Launcher.app")
+        );
         assert_eq!(
             toml_string(r#"C:\Horizon\"x".exe"#),
             r#""C:\\Horizon\\\"x\".exe""#

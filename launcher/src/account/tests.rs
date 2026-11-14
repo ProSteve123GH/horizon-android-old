@@ -20,6 +20,8 @@ struct Mock {
     no_profile: bool,
     /// What `launcher/login` answers instead of a token (an older service, an outage).
     launcher_login_refused: Option<u16>,
+    /// Mojang's session server refuses `join` (the token was revoked since it was renewed).
+    join_refused: bool,
     /// Every request: method, path and body.
     log: Vec<(String, String, String)>,
 }
@@ -157,6 +159,18 @@ fn route(mock: &mut Mock, method: &str, path: &str, auth: &str, body: &str) -> (
                           {"id": "c2", "state": "ACTIVE", "url": "http://textures.minecraft.net/texture/cape2", "alias": "Vanilla"}],
             }),
         ),
+        ("POST", "/session/session/minecraft/join") => {
+            let v: Value = serde_json::from_str(body).unwrap();
+            if mock.join_refused {
+                return reply(403, json!({"error": "ForbiddenOperationException"}));
+            }
+            assert_eq!(v["accessToken"], "mc-token");
+            assert_eq!(
+                (v["selectedProfile"].as_str(), v["serverId"].as_str()),
+                (Some(UUID), Some("svc-42"))
+            );
+            (204, String::new())
+        }
         _ => reply(404, json!({"error": "NotFound"})),
     }
 }
@@ -478,6 +492,154 @@ fn kept(store: &MemoryStore) -> Secrets {
 }
 
 #[test]
+fn splitscreen_gets_the_other_accounts_that_still_hold() {
+    let store = MemoryStore::default();
+    let mut accounts = signed_in(&store, &secrets("mc-token", true));
+    let other = |name: &str, uuid: &str| Account {
+        uuid: uuid.into(),
+        name: name.into(),
+        skin: None,
+        cape: None,
+    };
+    let expired = Secrets {
+        minecraft_expires_at: 0,
+        ..secrets("old", true)
+    };
+    for (name, uuid, s) in [
+        ("Bea", "b", secrets("bea-token", true)),
+        ("Cal", "c", expired),
+        ("Dan", "d", secrets("dan-token", false)),
+    ] {
+        accounts.add(&store, other(name, uuid), &s).unwrap();
+    }
+    accounts.selected = Some(UUID.into());
+    let dir = std::env::temp_dir().join(format!("hz-split-sessions-{}", std::process::id()));
+    // No network: Cal can't be renewed and Dan doesn't own the game; neither stops the launch.
+    let env = account_sessions(&offline(), Some("test-client"), &store, &dir, &mut accounts);
+    let (key, json) = &env[0];
+    assert_eq!(*key, "HORIZON_ACCOUNT_SESSIONS");
+    let list: Vec<Value> = serde_json::from_str(json).unwrap();
+    assert_eq!(list.len(), 3);
+    assert_eq!(list[0]["name"], "Bea");
+    assert_eq!(list[1]["name"], "Cal");
+    assert!(
+        list[1]["skipped"]
+            .as_str()
+            .unwrap()
+            .contains("Sign in again")
+    );
+    assert!(list[1].get("file").is_none());
+    assert_eq!(list[2]["name"], "Dan");
+    assert!(list[2]["skipped"].as_str().unwrap().contains("ownership"));
+    assert!(!json.contains("access_token") && !json.contains("dan-token"));
+    let path = PathBuf::from(list[0]["file"].as_str().unwrap());
+    let file = std::fs::read_to_string(&path).unwrap();
+    assert!(file.contains("bea-token") && !file.contains("mc-token"));
+    // Only the Minecraft token goes: the refresh token stays in the keychain.
+    assert!(!file.contains("ms-refresh-1"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600, "only the player reads it");
+        assert_eq!(mode(&dir), 0o700, "nor lists the folder");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    // Alone: nothing.
+    let mut alone = signed_in(&store, &secrets("mc-token", true));
+    let env = account_sessions(&offline(), Some("test-client"), &store, &dir, &mut alone);
+    assert!(env.is_empty());
+    // Only for a game whose Splitscreen setting is on.
+    std::fs::create_dir_all(&dir).unwrap();
+    assert!(!splitscreen_on(&dir));
+    std::fs::write(
+        dir.join("horizon-extras.txt"),
+        "zoom:false\nsplitscreen:false\n",
+    )
+    .unwrap();
+    assert!(!splitscreen_on(&dir));
+    std::fs::write(
+        dir.join("horizon-extras.txt"),
+        "zoom:false\nsplitscreen:true\n",
+    )
+    .unwrap();
+    assert!(splitscreen_on(&dir));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn splitscreen_never_hands_over_an_account_sent_back_to_sign_in() {
+    let store = MemoryStore::default();
+    let mut accounts = signed_in(&store, &secrets("mc-token", true));
+    // A token with hours left, for an account the services sent back to sign-in (a refused
+    // refresh, or a token that now names another profile).
+    let refused = Secrets {
+        sign_in_required: true,
+        ..secrets("other-profile-token", true)
+    };
+    let eve = Account {
+        uuid: "e".into(),
+        name: "Eve".into(),
+        skin: None,
+        cape: None,
+    };
+    accounts.add(&store, eve, &refused).unwrap();
+    accounts.selected = Some(UUID.into());
+    let dir = std::env::temp_dir().join(format!("hz-split-refused-{}", std::process::id()));
+    // With time to renew, and out of time: never offered either way.
+    for deadline in [
+        std::time::Instant::now() + std::time::Duration::from_secs(10),
+        std::time::Instant::now(),
+    ] {
+        let env = account_sessions_until(
+            &offline(),
+            Some("test-client"),
+            &store,
+            &dir,
+            &mut accounts,
+            deadline,
+        );
+        let list: Vec<Value> = serde_json::from_str(&env[0].1).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["name"], "Eve");
+        assert!(list[0].get("file").is_none());
+        assert!(
+            list[0]["skipped"]
+                .as_str()
+                .unwrap()
+                .contains("Sign in again")
+        );
+    }
+    let written = std::fs::read_dir(&dir).map_or(0, |d| d.count());
+    assert_eq!(written, 0, "no session file for it");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn unread_session_files_go_once_the_game_would_refuse_them() {
+    let dir = std::env::temp_dir().join(format!("hz-session-reap-{}", std::process::id()));
+    let secrets = secrets("not-a-real-token", true);
+    let waiting = write_session_file(&dir, &notch(), &secrets).unwrap();
+    let stale = write_session_file(&dir, &notch(), &secrets).unwrap();
+    let read = write_session_file(&dir, &notch(), &secrets).unwrap();
+    // A game that never started: its file is past the age the game takes.
+    std::fs::File::options()
+        .write(true)
+        .open(&stale)
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(300))
+        .unwrap();
+    // A game that started took its file (and deleted it).
+    std::fs::remove_file(&read).unwrap();
+    let mut unread = vec![waiting.clone(), stale.clone(), read];
+    reap(&mut unread, SESSION_FILE_LIFE);
+    assert!(waiting.exists(), "a game may still take it");
+    assert!(!stale.exists(), "no token left behind");
+    assert_eq!(unread, std::slice::from_ref(&waiting));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn an_owner_plays_with_a_session() {
     let (_, ep) = mock(|_| {});
     let store = MemoryStore::default();
@@ -544,17 +706,21 @@ fn a_no_from_the_services_blocks_at_once() {
     assert!(accounts.has_owner(&store));
     assert_eq!(
         launch(&ep, Some("test-client"), &store, &mut accounts).unwrap_err(),
-        NoOwner
+        NoOwner::default()
     );
     // The answer is kept beside the tokens: offline now, it still says no.
     assert!(!kept(&store).owns && !accounts.has_owner(&store));
     assert_eq!(
         launch(&offline(), Some("test-client"), &store, &mut accounts).unwrap_err(),
-        NoOwner
+        NoOwner::default()
     );
     assert_eq!(
-        NoOwner.to_string(),
+        NoOwner::default().to_string(),
         "Sign in with a Microsoft account that owns Minecraft: Java Edition to play."
+    );
+    assert_eq!(
+        NoOwner::default().in_window(),
+        "Sign in with a Microsoft account that owns Minecraft: Java Edition to play. Open Settings and sign in under Account."
     );
 }
 
@@ -607,7 +773,7 @@ fn any_owner_opens_the_gate_and_the_one_who_plays_brings_the_session() {
             .starts_with("Alex is no longer signed in")
     );
     assert_eq!(pass.owner.unwrap().0.name, "Notch");
-    // An offline name plays: Notch is asked, and no session goes to the game.
+    // Nobody selected (a download's gate): Notch is asked, and no session comes back.
     accounts.selected = None;
     m.lock().unwrap().log.clear();
     let pass = launch(&ep, Some("test-client"), &store, &mut accounts).unwrap();
@@ -618,73 +784,85 @@ fn any_owner_opens_the_gate_and_the_one_who_plays_brings_the_session() {
 }
 
 #[test]
-fn offline_names_play_only_beside_an_owner() {
+fn the_game_plays_only_as_an_account_that_owns_it() {
     let store = MemoryStore::default();
-    let mut accounts = Accounts::default();
-    let refused = accounts.play_as(&store, Player::Offline("Builder_1".into()));
-    assert_eq!(refused.unwrap_err(), OFFLINE_NEEDS_OWNER);
-    assert!(accounts.offline.is_empty());
-    let mut accounts = signed_in(&store, &secrets("mc-token", true));
-    accounts
-        .play_as(&store, Player::Offline("Builder_1".into()))
-        .unwrap();
-    // Signing the last owner out keeps the name, which no longer plays.
-    accounts.remove(&store, UUID).unwrap();
-    assert_eq!(accounts.offline, ["Builder_1"]);
-    assert_eq!(accounts.player(), Player::Offline("Builder_1".into()));
-    assert!(!accounts.has_owner(&store));
     let (_, ep) = mock(|_| {});
-    assert!(launch(&ep, Some("test-client"), &store, &mut accounts).is_err());
+    // No account: no game.
+    let refused = launch_for_game(&ep, Some("test-client"), &store, &mut Accounts::default());
+    assert_eq!(refused.unwrap_err(), NoOwner::default());
+    // A signed-in Ely account alone doesn't open the gate: no service says it owns the game,
+    // not even by the Microsoft-only secrets the gate reads.
+    let mut ely = signed_in(&store, &secrets("ely-token", true));
+    ely.accounts[0].provider = Provider::Ely;
+    ely.selected = None;
+    let refused = launch_for_game(&ep, Some("test-client"), &store, &mut ely).unwrap_err();
+    assert_eq!(refused, NoOwner::default());
+    // An owner, none selected: it plays, with its session.
+    let mut accounts = signed_in(&store, &secrets("mc-token", true));
+    accounts.selected = None;
+    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts).unwrap();
+    assert_eq!(pass.session.unwrap().0.name, "Notch");
+    assert_eq!(accounts.selected.as_deref(), Some(UUID));
+    // Another account plays: Notch owning the game doesn't let it play under a name of its own.
+    accounts.accounts.push(Account {
+        provider: Default::default(),
+        uuid: "other".into(),
+        name: "Alex".into(),
+        skin: None,
+        cape: None,
+    });
+    accounts.play_as("other").unwrap();
+    let refused = launch_for_game(&ep, Some("test-client"), &store, &mut accounts).unwrap_err();
     assert!(
-        accounts
-            .play_as(&store, Player::Offline("Builder_2".into()))
-            .is_err()
+        refused
+            .to_string()
+            .starts_with("Alex is no longer signed in")
     );
+    // The services say the account that plays doesn't own the game.
+    let (_, ep) = mock(|m| m.owns_game = false);
+    let mut accounts = signed_in(&store, &secrets("mc-token", true));
+    let refused = launch_for_game(&ep, Some("test-client"), &store, &mut accounts);
+    assert_eq!(refused.unwrap_err(), NoOwner::default());
 }
 
 #[test]
-fn the_developer_option_off_is_the_owner_gate() {
+fn files_from_launchers_with_offline_names_load_and_lose_them_on_save() {
+    let dir = std::env::temp_dir().join(format!("horizon-old-offline-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("skins")).unwrap();
     let store = MemoryStore::default();
-    let mut accounts = Accounts::default();
-    let refused = accounts.play_as_with(&store, Player::Offline("Builder_1".into()), false);
-    assert_eq!(refused.unwrap_err(), OFFLINE_NEEDS_OWNER);
-    assert_eq!(accounts, Accounts::default());
-    let (_, ep) = mock(|m| m.owns_game = false);
-    let refused = launch_for_game(&ep, Some("test-client"), &store, &mut accounts, false);
-    assert_eq!(refused.unwrap_err(), NoOwner);
-    let mut accounts = signed_in(&store, &secrets("mc-token", true));
-    let refused = launch_for_game(&ep, Some("test-client"), &store, &mut accounts, false);
-    assert_eq!(refused.unwrap_err(), NoOwner);
-}
-
-#[test]
-fn the_developer_option_plays_offline_names_without_an_owner() {
-    let store = MemoryStore::default();
-    let mut accounts = Accounts::default();
-    accounts
-        .play_as_with(&store, Player::Offline("Builder_1".into()), true)
-        .unwrap();
-    assert_eq!(accounts.player(), Player::Offline("Builder_1".into()));
-    assert_eq!(accounts.name_arg(), Some("Builder_1"));
-    // The game starts offline: no request, no session, and no owner to download the game for.
-    let (m, ep) = mock(|_| {});
-    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts, true).unwrap();
-    assert!(pass.session.is_none() && pass.owner.is_none() && pass.offline.is_none());
-    assert!(m.lock().unwrap().log.is_empty());
-    // Beside an account the services say doesn't own the game: the same, still no owner.
-    let (_, ep) = mock(|m| m.owns_game = false);
-    let mut accounts = signed_in(&store, &secrets("mc-token", true));
-    accounts
-        .play_as_with(&store, Player::Offline("Builder_1".into()), true)
-        .unwrap();
-    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts, true).unwrap();
-    assert!(pass.session.is_none() && pass.owner.is_none());
-    assert!(!accounts.has_owner(&store));
-    // A real owner is still found and brings what it brings without the option.
+    let mut old = serde_json::to_value(signed_in(&store, &secrets("mc-token", true))).unwrap();
+    old["selected"] = serde_json::Value::Null;
+    old["offline"] = serde_json::json!(["Builder_1"]);
+    old["offline_selected"] = serde_json::json!("Builder_1");
+    old["looks"] =
+        serde_json::json!({ "builder_1": { "skin": true, "cape": true, "model": "slim" } });
+    let path = dir.join("accounts.json");
+    std::fs::write(&path, old.to_string()).unwrap();
+    for file in ["builder_1.png", "builder_1.cape.png"] {
+        std::fs::write(dir.join("skins").join(file), b"png").unwrap();
+    }
+    let mut accounts = Accounts::load_from(&path);
+    assert_eq!(accounts.accounts, vec![notch()]);
+    assert!(accounts.selected().is_none());
+    // The account plays, and the save drops the names, their looks and their files.
     let (_, ep) = mock(|_| {});
-    let mut accounts = signed_in(&store, &secrets("mc-token", true));
-    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts, true).unwrap();
-    assert_eq!(pass.owner.unwrap().0.name, "Notch");
+    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts).unwrap();
+    assert_eq!(pass.session.unwrap().0.uuid, UUID);
+    accounts.save_to(&path).unwrap();
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(
+        saved,
+        serde_json::json!({ "accounts": accounts.accounts, "selected": UUID })
+    );
+    assert!(!dir.join("skins").exists());
+    // The developer option of 0.2.58 reads as nothing and is not written back.
+    let settings = crate::backend::Settings::parse(r#"{"dev_offline": true, "keep_versions": 3}"#);
+    let saved = serde_json::to_value(&settings).unwrap();
+    assert!(saved.get("dev_offline").is_none(), "{saved}");
+    assert_eq!(saved["keep_versions"], 3);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -1100,11 +1278,7 @@ fn client_id_is_configuration() {
 }
 
 #[test]
-fn offline_names_switch_with_accounts() {
-    let store = MemoryStore::default();
-    store
-        .set("abc", &serde_json::to_string(&secrets("t", true)).unwrap())
-        .unwrap();
+fn play_as_picks_a_signed_in_account() {
     let mut a = Accounts {
         accounts: vec![Account {
             provider: Default::default(),
@@ -1113,53 +1287,15 @@ fn offline_names_switch_with_accounts() {
             skin: None,
             cape: None,
         }],
-        selected: Some("abc".into()),
         ..Accounts::default()
     };
-    assert_eq!(a.player(), Player::Microsoft("abc".into()));
-    assert_eq!(a.name_arg(), None);
-    a.play_as(&store, Player::Offline("Builder_1".into()))
-        .unwrap();
-    assert_eq!(a.player(), Player::Offline("Builder_1".into()));
-    assert_eq!(a.name_arg(), Some("Builder_1"));
-    // Kept once, as first written, whatever the case.
-    a.play_as(&store, Player::Offline("builder_1".into()))
-        .unwrap();
-    assert_eq!(a.offline, ["Builder_1"]);
-    assert_eq!(a.name_arg(), Some("Builder_1"));
-    assert!(a.add_offline("no spaces").is_err());
-    assert!(a.add_offline("ab").is_err());
-    assert!(a.add_offline("seventeen_letters").is_err());
-    a.play_as(&store, Player::Microsoft("abc".into())).unwrap();
-    assert_eq!(a.name_arg(), None, "an account plays with its own name");
-    assert!(a.play_as(&store, Player::Microsoft("zzz".into())).is_err());
-    a.play_as(&store, Player::Offline("Builder_1".into()))
-        .unwrap();
-    // Forgetting drops the look and the name's skin and cape files too.
-    let dir = std::env::temp_dir().join(format!("horizon-accounts-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let (skin, cape) = crate::skins::files(&dir, "builder_1");
-    std::fs::write(&skin, b"skin").unwrap();
-    std::fs::write(&cape, b"cape").unwrap();
-    a.looks.insert(
-        "builder_1".into(),
-        crate::skins::Look {
-            skin: true,
-            cape: true,
-            ..crate::skins::Look::default()
-        },
-    );
-    a.remove_offline("BUILDER_1", &dir).unwrap();
-    assert_eq!(a.player(), Player::GameName);
-    assert!(a.looks.is_empty() && !skin.exists() && !cape.exists());
-    let _ = std::fs::remove_dir_all(&dir);
-    assert!(a.remove_offline("Builder_1", &dir).is_err());
-    // An accounts.json from before offline names reads as it was, and writes nothing new.
-    let old: Accounts = serde_json::from_str(r#"{"accounts":[],"selected":null}"#).unwrap();
-    assert_eq!(old.player(), Player::GameName);
+    a.play_as("abc").unwrap();
+    assert_eq!(a.selected().unwrap().name, "Ludo");
+    assert!(a.play_as("zzz").is_err());
+    assert_eq!(a.selected.as_deref(), Some("abc"));
+    // An accounts.json written now has nothing but the accounts and who plays.
     assert_eq!(
-        serde_json::to_string(&old).unwrap(),
+        serde_json::to_string(&Accounts::default()).unwrap(),
         r#"{"accounts":[],"selected":null}"#
     );
 }
@@ -1185,8 +1321,789 @@ fn the_java_edition_plays_as_an_owner_even_offline() {
     let mut accounts = signed_in(&store, &secrets("mc-token", false));
     assert_eq!(
         java_player_with(&offline(), Some("test-client"), &store, &mut accounts).unwrap_err(),
-        NoOwner.to_string()
+        NoOwner::default().to_string()
     );
+}
+
+/// A secrets file of the test's own, gone first.
+fn secrets_file(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("horizon-secrets-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir.join("launcher").join(SECRETS_FILE)
+}
+
+fn remove_secrets_dir(path: &Path) {
+    let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
+}
+
+/// The files beside the secrets file, by name.
+fn files_beside(path: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn the_secrets_file_keeps_sign_ins_across_starts() {
+    let path = secrets_file("starts");
+    let store = FileStore::new(path.clone());
+    assert!(store.persistent());
+    assert_eq!(store.get(UUID).unwrap(), None);
+    let signed_in = secrets("mc-secret", true);
+    let mut accounts = Accounts::default();
+    accounts.add(&store, notch(), &signed_in).unwrap();
+    // The next start reads the same file.
+    let again = FileStore::new(path.clone());
+    let read = secrets_in(&again, UUID).expect("kept across starts");
+    assert_eq!(
+        (read.minecraft_token, read.refresh_token, read.owns),
+        (signed_in.minecraft_token, signed_in.refresh_token, true)
+    );
+    // Never in accounts.json.
+    assert!(
+        !serde_json::to_string(&accounts)
+            .unwrap()
+            .contains("mc-secret")
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "only the player reads it");
+    }
+    // No temporary file left behind.
+    assert_eq!(
+        files_beside(&path),
+        [
+            "account-secrets.json",
+            "account-secrets.key",
+            "account-secrets.lock"
+        ]
+    );
+    // Signing the last account out removes the file.
+    accounts.remove(&again, UUID).unwrap();
+    assert_eq!(again.get(UUID).unwrap(), None);
+    assert!(!path.exists());
+    again.delete(UUID).unwrap();
+    remove_secrets_dir(&path);
+}
+
+#[test]
+fn a_broken_secrets_file_is_an_error_that_never_shows_it() {
+    let path = secrets_file("broken");
+    let store = FileStore::new(path.clone());
+    // Cut short, and a lone string: serde's own messages quote the latter.
+    for broken in [
+        "{\"a\":\"leaked-secret",
+        "\"leaked-secret\"",
+        "[\"leaked-secret\"]",
+    ] {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let sealed = store.seal(broken.as_bytes()).unwrap();
+        std::fs::write(&path, &sealed).unwrap();
+        let said = store.get("a").unwrap_err();
+        assert!(!said.contains("leaked-secret"), "{said}");
+        assert!(said.contains("line 1"), "{said}");
+        // Never written over: the secrets in it aren't lost in silence.
+        assert!(store.set("c", "four").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), sealed);
+    }
+    remove_secrets_dir(&path);
+}
+
+#[test]
+fn the_secrets_file_is_never_plain_text() {
+    let path = secrets_file("sealed");
+    let store = FileStore::new(path.clone());
+    store.set("a", "kept-secret").unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(bytes.starts_with(super::SEALED));
+    assert!(
+        !bytes.windows(11).any(|w| w == b"kept-secret"),
+        "the secret is encrypted"
+    );
+    assert_eq!(store.get("a").unwrap().as_deref(), Some("kept-secret"));
+    // Plain JSON, or one byte changed in the sealed file: refused, never quoted, never written over.
+    let mut changed = bytes.clone();
+    *changed.last_mut().unwrap() ^= 1;
+    for other in [b"{\"a\":\"leaked-secret\"}".to_vec(), changed] {
+        std::fs::write(&path, &other).unwrap();
+        let said = store.get("a").unwrap_err();
+        assert!(!said.contains("leaked-secret"), "{said}");
+        assert!(said.contains("Remove it and sign in again"), "{said}");
+        assert!(store.set("c", "four").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), other);
+    }
+    remove_secrets_dir(&path);
+}
+
+#[test]
+fn the_key_takes_the_install_secret_beside_the_file() {
+    let path = secrets_file("install");
+    let store = FileStore::new(path.clone());
+    store.set("a", "kept-secret").unwrap();
+    let secret = path.with_extension("key");
+    assert_eq!(std::fs::read(&secret).unwrap().len(), 32);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&secret).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "only the player reads it");
+    }
+    // The same file in another install's folder, with a secret of its own: unreadable there.
+    let other = secrets_file("install-other");
+    let elsewhere = FileStore::new(other.clone());
+    elsewhere.set("b", "other-secret").unwrap();
+    std::fs::copy(&path, &other).unwrap();
+    let said = elsewhere.get("a").unwrap_err();
+    assert!(said.contains("Remove it and sign in again"), "{said}");
+    // Without its secret, the file can't be read either: no key is left to work out.
+    std::fs::remove_file(&secret).unwrap();
+    assert!(store.get("a").is_err());
+    assert!(!secret.exists(), "a read never makes a new secret");
+    remove_secrets_dir(&path);
+    remove_secrets_dir(&other);
+}
+
+#[test]
+fn a_file_sealed_under_the_old_key_is_read_and_sealed_again() {
+    use chacha20poly1305::{KeyInit, aead::Aead};
+    let path = secrets_file("format1");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    // As launchers before format 2 wrote it.
+    let nonce = [7u8; 12];
+    let sealed = chacha20poly1305::ChaCha20Poly1305::new(&super::file_key_v1())
+        .encrypt(&nonce.into(), &b"{\"a\":\"old-secret\"}"[..])
+        .unwrap();
+    std::fs::write(&path, [b"HZSECv1\n".as_slice(), &nonce, &sealed].concat()).unwrap();
+    let store = FileStore::new(path.clone());
+    assert_eq!(store.get("a").unwrap().as_deref(), Some("old-secret"));
+    // Sealed again at once, under the install's secret, and still read.
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(bytes.starts_with(b"HZSECv2\n"));
+    assert!(path.with_extension("key").exists());
+    assert_eq!(
+        FileStore::new(path.clone()).get("a").unwrap().as_deref(),
+        Some("old-secret")
+    );
+    remove_secrets_dir(&path);
+}
+
+const WRITER: &str = "HORIZON_TEST_SECRETS_WRITER";
+
+/// One of the processes [`processes_sharing_the_secrets_file_lose_nothing`] starts: does nothing
+/// unless it gives the file and the writer's number.
+#[test]
+#[ignore = "a child process of processes_sharing_the_secrets_file_lose_nothing"]
+fn secrets_file_writer() {
+    let Some(spec) = std::env::var_os(WRITER) else {
+        return;
+    };
+    let spec = spec.into_string().unwrap();
+    let (w, path) = spec.split_once(':').unwrap();
+    let store = FileStore::new(PathBuf::from(path));
+    for i in 0..25 {
+        store
+            .set(&format!("{w}-{i}"), &format!("secret-{w}-{i}"))
+            .unwrap();
+    }
+    if w == "0" {
+        store.delete("signed-out").unwrap();
+    }
+}
+
+#[test]
+fn processes_sharing_the_secrets_file_lose_nothing() {
+    let path = secrets_file("processes");
+    FileStore::new(path.clone()).set("signed-out", "x").unwrap();
+    let exe = std::env::current_exe().unwrap();
+    let writers: Vec<_> = (0..6)
+        .map(|w| {
+            std::process::Command::new(&exe)
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "account::tests::secrets_file_writer",
+                    "--test-threads=1",
+                ])
+                .env(WRITER, format!("{w}:{}", path.display()))
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    for mut writer in writers {
+        assert!(writer.wait().unwrap().success());
+    }
+    let store = FileStore::new(path.clone());
+    for w in 0..6 {
+        for i in 0..25 {
+            assert_eq!(
+                store.get(&format!("{w}-{i}")).unwrap(),
+                Some(format!("secret-{w}-{i}"))
+            );
+        }
+    }
+    assert_eq!(store.get("signed-out").unwrap(), None);
+    assert_eq!(
+        files_beside(&path),
+        [
+            "account-secrets.json",
+            "account-secrets.key",
+            "account-secrets.lock"
+        ]
+    );
+    remove_secrets_dir(&path);
+}
+
+/// A keychain that can be away (a Secret Service that didn't start, a dismissed unlock prompt),
+/// refuse some keys, or hold every call while `prompt` is held (an unlock prompt left open).
+#[derive(Default)]
+struct Keychain {
+    kept: MemoryStore,
+    away: std::sync::atomic::AtomicBool,
+    refuses: Mutex<Vec<String>>,
+    prompt: Mutex<()>,
+    /// Calls that reached it: each one could have been a prompt.
+    asked: std::sync::atomic::AtomicUsize,
+    /// Run once, right after the next call it didn't answer.
+    after_away: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// Run once, while it takes the next secret.
+    while_taking: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl Keychain {
+    fn answer(&self) -> Result<(), String> {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        drop(self.prompt.lock().unwrap());
+        if self.away.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(then) = self.after_away.lock().unwrap().take() {
+                then();
+            }
+            return Err("The name org.freedesktop.secrets was not provided".into());
+        }
+        Ok(())
+    }
+    fn set_away(&self, away: bool) {
+        self.away.store(away, std::sync::atomic::Ordering::Relaxed);
+    }
+    fn asked(&self) -> usize {
+        self.asked.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// One keychain seen by several launchers.
+struct Shared(Arc<Keychain>);
+
+impl SecretStore for Shared {
+    fn get(&self, key: &str) -> Result<Option<String>, String> {
+        self.0.answer()?;
+        self.0.kept.get(key)
+    }
+    fn set(&self, key: &str, secret: &str) -> Result<(), String> {
+        self.0.answer()?;
+        if self.0.refuses.lock().unwrap().iter().any(|k| k == key) {
+            return Err("the keychain is full".into());
+        }
+        if let Some(meanwhile) = self.0.while_taking.lock().unwrap().take() {
+            meanwhile();
+        }
+        self.0.kept.set(key, secret)
+    }
+    fn delete(&self, key: &str) -> Result<(), String> {
+        self.0.answer()?;
+        self.0.kept.delete(key)
+    }
+    fn persistent(&self) -> bool {
+        true
+    }
+}
+
+/// A launcher starting with this keychain and secrets file.
+fn launcher_with(keychain: &Arc<Keychain>, path: &Path) -> Layered {
+    Layered::new(
+        Box::new(Shared(keychain.clone())),
+        FileStore::new(path.to_path_buf()),
+    )
+}
+
+#[test]
+fn the_keychain_takes_back_what_the_file_kept_while_it_was_away() {
+    let path = secrets_file("recovery");
+    let keychain = Arc::new(Keychain::default());
+    // A is signed in while the keychain answers: no file.
+    launcher_with(&keychain, &path)
+        .set("A", "secret-a")
+        .unwrap();
+    assert!(!path.exists());
+    // A start the keychain misses: B goes to the file, and A can't be read.
+    keychain.set_away(true);
+    let missed = launcher_with(&keychain, &path);
+    missed.set("B", "secret-b").unwrap();
+    assert!(missed.get("A").is_err());
+    assert_eq!(missed.get("B").unwrap(), Some("secret-b".into()));
+    // The keychain is back: the next start hands it B, and the file is gone.
+    keychain.set_away(false);
+    let back = launcher_with(&keychain, &path);
+    assert_eq!(
+        (
+            keychain.kept.get("A").unwrap(),
+            keychain.kept.get("B").unwrap()
+        ),
+        (Some("secret-a".into()), Some("secret-b".into()))
+    );
+    assert_eq!(back.get("B").unwrap(), Some("secret-b".into()));
+    assert!(!path.exists());
+    remove_secrets_dir(&path);
+}
+
+#[test]
+fn a_launcher_on_the_file_keeps_working_after_another_hands_it_to_the_keychain() {
+    let path = secrets_file("running");
+    let keychain = Arc::new(Keychain::default());
+    keychain.set_away(true);
+    let running = launcher_with(&keychain, &path);
+    running.set("A", "secret-a").unwrap();
+    // The keychain comes back and a second launcher (or the CLI) starts.
+    keychain.set_away(false);
+    let second = launcher_with(&keychain, &path);
+    assert!(!path.exists());
+    // The first one still reads, renews and signs out.
+    assert_eq!(running.get("A").unwrap(), Some("secret-a".into()));
+    running.set("A", "renewed-a").unwrap();
+    assert_eq!(second.get("A").unwrap(), Some("renewed-a".into()));
+    running.delete("A").unwrap();
+    assert_eq!(
+        (second.get("A").unwrap(), keychain.kept.get("A").unwrap()),
+        (None, None)
+    );
+    assert!(!path.exists());
+    remove_secrets_dir(&path);
+}
+
+#[test]
+fn launchers_started_on_an_old_file_find_it_after_another_hands_it_over() {
+    let path = secrets_file("inherited");
+    // A previous run kept A in the file.
+    FileStore::new(path.clone()).set("A", "secret-a").unwrap();
+    // Two launchers start while the keychain is away: their hand-overs fail. One reads A then.
+    let keychain = Arc::new(Keychain::default());
+    keychain.set_away(true);
+    let read_before = launcher_with(&keychain, &path);
+    let never_read = launcher_with(&keychain, &path);
+    assert_eq!(read_before.get("A").unwrap(), Some("secret-a".into()));
+    // The keychain is back and a third launcher hands A over.
+    keychain.set_away(false);
+    launcher_with(&keychain, &path);
+    assert!(!path.exists());
+    // Both running launchers still read A.
+    assert_eq!(read_before.get("A").unwrap(), Some("secret-a".into()));
+    assert_eq!(never_read.get("A").unwrap(), Some("secret-a".into()));
+    remove_secrets_dir(&path);
+}
+
+#[test]
+fn a_hand_over_by_another_process_right_after_a_start_missed_the_keychain() {
+    let path = secrets_file("inherited-race");
+    FileStore::new(path.clone()).set("A", "secret-a").unwrap();
+    let keychain = Arc::new(Keychain::default());
+    keychain.set_away(true);
+    // The moment this start's hand-over fails, the keychain is back and another process hands A
+    // over (the keychain takes it, the file lets it go), before this start has done anything else.
+    *keychain.after_away.lock().unwrap() = Some(Box::new({
+        let (keychain, path) = (keychain.clone(), path.clone());
+        move || {
+            keychain.set_away(false);
+            keychain.kept.set("A", "secret-a").unwrap();
+            FileStore::new(path).delete("A").unwrap();
+        }
+    }));
+    let started = launcher_with(&keychain, &path);
+    assert!(!path.exists());
+    assert_eq!(started.get("A").unwrap(), Some("secret-a".into()));
+    remove_secrets_dir(&path);
+}
+
+#[test]
+fn a_secret_renewed_in_the_file_during_the_hand_over_is_found_after_the_next() {
+    let path = secrets_file("renewed-in-file");
+    let file = FileStore::new(path.clone());
+    file.set("A", "old-a").unwrap();
+    file.set("B", "secret-b").unwrap();
+    let keychain = Arc::new(Keychain::default());
+    // While this start hands A over, a launcher on the file renews A there; then the keychain
+    // refuses B, and this run stops asking it.
+    *keychain.while_taking.lock().unwrap() = Some(Box::new({
+        let path = path.clone();
+        move || FileStore::new(path).set("A", "renewed-a").unwrap()
+    }));
+    keychain.refuses.lock().unwrap().push("B".into());
+    let started = launcher_with(&keychain, &path);
+    assert_eq!(keychain.kept.get("A").unwrap(), Some("old-a".into()));
+    // Another start hands both over: this run, which hasn't read A since, still reads both, the
+    // renewed A.
+    keychain.refuses.lock().unwrap().clear();
+    launcher_with(&keychain, &path);
+    assert!(!path.exists());
+    assert_eq!(
+        (started.get("A").unwrap(), started.get("B").unwrap()),
+        (Some("renewed-a".into()), Some("secret-b".into()))
+    );
+    remove_secrets_dir(&path);
+}
+
+#[test]
+fn a_move_the_keychain_half_refuses_then_a_sign_out_leaves_no_copy() {
+    let path = secrets_file("half");
+    let keychain = Arc::new(Keychain::default());
+    keychain.set_away(true);
+    let away = launcher_with(&keychain, &path);
+    away.set("A", "secret-a").unwrap();
+    away.set("B", "secret-b").unwrap();
+    // Back, but it refuses B: A moves, B stays in the file.
+    keychain.set_away(false);
+    keychain.refuses.lock().unwrap().push("B".into());
+    let back = launcher_with(&keychain, &path);
+    assert_eq!(
+        (
+            keychain.kept.get("A").unwrap(),
+            keychain.kept.get("B").unwrap()
+        ),
+        (Some("secret-a".into()), None)
+    );
+    assert_eq!(back.get("B").unwrap(), Some("secret-b".into()));
+    // A signs out on that run, which stopped asking the keychain: no launcher reads A again...
+    back.delete("A").unwrap();
+    assert_eq!(back.get("A").unwrap(), None);
+    // (A start where the keychain still refuses B then reads A as "away": no secret either.)
+    assert_eq!(
+        launcher_with(&keychain, &path).get("A").ok().flatten(),
+        None
+    );
+    // ...and the keychain's copy goes at the first start it takes everything.
+    keychain.refuses.lock().unwrap().clear();
+    let later = launcher_with(&keychain, &path);
+    assert_eq!(
+        (keychain.kept.get("A").unwrap(), later.get("B").unwrap()),
+        (None, Some("secret-b".into()))
+    );
+    assert!(!path.exists());
+    remove_secrets_dir(&path);
+}
+
+#[test]
+fn a_keychain_waiting_on_a_prompt_never_holds_the_file_up() {
+    let path = secrets_file("prompt");
+    let keychain = Arc::new(Keychain::default());
+    keychain.set_away(true);
+    launcher_with(&keychain, &path)
+        .set("B", "secret-b")
+        .unwrap();
+    keychain.set_away(false);
+    // An unlock prompt nobody answers yet, while one launcher signs A in.
+    let prompt = keychain.prompt.lock().unwrap();
+    let asked = keychain.asked();
+    let signing_in = {
+        let (keychain, path) = (keychain.clone(), path.clone());
+        std::thread::spawn(move || {
+            Layered {
+                keychain: Box::new(Shared(keychain)),
+                file: FileStore::new(path),
+                away: Default::default(),
+                parked: Default::default(),
+            }
+            .set("A", "secret-a")
+        })
+    };
+    while keychain.asked() == asked {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    // Another process still reads and writes the file meanwhile.
+    let (done, said) = std::sync::mpsc::channel();
+    let other = path.clone();
+    std::thread::spawn(move || {
+        let file = FileStore::new(other);
+        let _ = done.send((file.get("B"), file.set("C", "secret-c")));
+    });
+    let (read, written) = said
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the file waited on the keychain's prompt");
+    assert_eq!((read.unwrap(), written), (Some("secret-b".into()), Ok(())));
+    // The prompt is answered: A goes to the keychain, B and C are still in the file.
+    drop(prompt);
+    signing_in.join().unwrap().unwrap();
+    let file = FileStore::new(path.clone());
+    assert_eq!(keychain.kept.get("A").unwrap(), Some("secret-a".into()));
+    assert_eq!(
+        (
+            file.get("A").unwrap(),
+            file.get("B").unwrap(),
+            file.get("C").unwrap()
+        ),
+        (None, Some("secret-b".into()), Some("secret-c".into()))
+    );
+    remove_secrets_dir(&path);
+}
+
+/// A start handing the file's A to the keychain, held up mid-way by an unlock prompt, while a
+/// launcher already running does `meanwhile` to A. The running one waits for the hand-over instead
+/// of racing it, and goes on once the prompt is answered.
+fn hand_over_racing(
+    name: &str,
+    meanwhile: impl FnOnce(&Layered) + Send + 'static,
+) -> (Arc<Keychain>, PathBuf) {
+    let path = secrets_file(name);
+    let keychain = Arc::new(Keychain::default());
+    // Started before the file had anything: it asked the keychain nothing.
+    let running = launcher_with(&keychain, &path);
+    // A run the keychain missed kept A in the file.
+    FileStore::new(path.clone()).set("A", "old-a").unwrap();
+    let prompt = keychain.prompt.lock().unwrap();
+    let asked = keychain.asked();
+    let starting = {
+        let (keychain, path) = (keychain.clone(), path.clone());
+        std::thread::spawn(move || drop(launcher_with(&keychain, &path)))
+    };
+    while keychain.asked() == asked {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let racing = std::thread::spawn(move || meanwhile(&running));
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        keychain.asked(),
+        asked + 1,
+        "the running launcher reached the keychain during the hand-over"
+    );
+    drop(prompt);
+    starting.join().unwrap();
+    racing.join().unwrap();
+    (keychain, path)
+}
+
+#[test]
+fn a_hand_over_never_brings_back_an_account_signed_out_meanwhile() {
+    let (keychain, path) = hand_over_racing("race-sign-out", |running| {
+        running.delete("A").unwrap();
+    });
+    assert_eq!(keychain.kept.get("A").unwrap(), None);
+    assert_eq!(launcher_with(&keychain, &path).get("A").unwrap(), None);
+    assert!(!path.exists());
+    remove_secrets_dir(&path);
+}
+
+#[test]
+fn a_hand_over_never_writes_over_a_token_renewed_meanwhile() {
+    let (keychain, path) = hand_over_racing("race-renewal", |running| {
+        running.set("A", "renewed-a").unwrap();
+    });
+    assert_eq!(keychain.kept.get("A").unwrap(), Some("renewed-a".into()));
+    assert_eq!(
+        launcher_with(&keychain, &path).get("A").unwrap(),
+        Some("renewed-a".into())
+    );
+    assert!(!path.exists());
+    remove_secrets_dir(&path);
+}
+
+#[test]
+fn the_secrets_file_counts_only_sign_ins() {
+    let path = secrets_file("counts");
+    let file = FileStore::new(path.clone());
+    assert!(!file.holds_secrets());
+    file.put("A", SIGNED_OUT).unwrap();
+    assert!(!file.holds_secrets(), "a sign-out mark alone");
+    file.put("B", "secret-b").unwrap();
+    assert!(file.holds_secrets());
+    std::fs::write(&path, "{\"B\":\"secret-b").unwrap();
+    assert!(!file.holds_secrets(), "a file that can't be read");
+    remove_secrets_dir(&path);
+}
+
+#[test]
+fn a_dismissed_prompt_is_asked_once_a_run() {
+    let path = secrets_file("dismissed");
+    FileStore::new(path.clone()).set("A", "secret-a").unwrap();
+    let keychain = Arc::new(Keychain::default());
+    keychain.set_away(true);
+    // The start asks once to hand A over; nothing after asks again.
+    let run = launcher_with(&keychain, &path);
+    assert_eq!(keychain.asked(), 1);
+    run.set("B", "secret-b").unwrap();
+    run.set("A", "renewed-a").unwrap();
+    assert_eq!(run.get("A").unwrap(), Some("renewed-a".into()));
+    assert!(run.get("never-signed-in").is_err());
+    run.delete("B").unwrap();
+    assert_eq!(run.get("B").unwrap(), None);
+    assert_eq!(keychain.asked(), 1);
+    remove_secrets_dir(&path);
+}
+
+/// A keyring that never answers until the test lets it go: a stuck Secret Service daemon
+/// (#12179).
+struct Silent {
+    hung: Arc<Mutex<()>>,
+    asked: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Silent {
+    fn answer(&self) {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        drop(self.hung.lock().unwrap());
+    }
+}
+
+impl SecretStore for Silent {
+    fn get(&self, _: &str) -> Result<Option<String>, String> {
+        self.answer();
+        Ok(None)
+    }
+    fn set(&self, _: &str, _: &str) -> Result<(), String> {
+        self.answer();
+        Ok(())
+    }
+    fn delete(&self, _: &str) -> Result<(), String> {
+        self.answer();
+        Ok(())
+    }
+    fn persistent(&self) -> bool {
+        true
+    }
+}
+
+/// How long the tests' keyrings get: short, the behaviour is the same as with [`KEYCHAIN_WAIT`].
+const SILENT_WAIT: Duration = Duration::from_millis(300);
+
+#[test]
+fn a_keyring_that_never_answers_ends_play_with_what_is_wrong() {
+    let path = secrets_file("silent");
+    let hung = Arc::new(Mutex::new(()));
+    let held = hung.lock().unwrap();
+    let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let keyring = Silent {
+        hung: hung.clone(),
+        asked: asked.clone(),
+    };
+    let store = Arc::new(Layered::new(
+        Box::new(Bounded::new(keyring, SILENT_WAIT)),
+        FileStore::new(path.clone()),
+    ));
+    let mut accounts = signed_in(&MemoryStore::default(), &secrets("mc-token", true));
+    let started = Instant::now();
+    // The window's sign-in check at start-up asks first, and holds the account lock meanwhile.
+    let checking = {
+        let store = store.clone();
+        std::thread::spawn(move || session::status_with_progress(store.as_ref(), UUID, &|_| {}))
+    };
+    while asked.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    // Then Play, behind it.
+    let (done, played) = std::sync::mpsc::channel();
+    {
+        let store = store.clone();
+        std::thread::spawn(move || {
+            let _ = done.send(launch(
+                &offline(),
+                Some("test-client"),
+                store.as_ref(),
+                &mut accounts,
+            ));
+        });
+    }
+    let refused = played
+        .recv_timeout(Duration::from_secs(10))
+        .expect("Play waited on the keyring forever")
+        .unwrap_err();
+    assert!(started.elapsed() < Duration::from_secs(5));
+    let status = checking.join().unwrap();
+    assert_eq!(status.state, session::State::Retry);
+    // Not "sign in with an account that owns Minecraft": the player is signed in.
+    let said = format!("Can't read Notch's sign-in: {KEYCHAIN_AWAY}");
+    assert_eq!(refused.keyring.as_deref(), Some(said.as_str()));
+    assert_eq!(
+        (refused.to_string(), refused.in_window()),
+        (said.clone(), said)
+    );
+    // The next start asks the keyring again, and says it didn't answer.
+    let restarted = Layered::new(
+        Box::new(Bounded::new(
+            Silent {
+                hung: hung.clone(),
+                asked: asked.clone(),
+            },
+            SILENT_WAIT,
+        )),
+        FileStore::new(path.clone()),
+    );
+    let mut accounts = signed_in(&MemoryStore::default(), &secrets("mc-token", true));
+    let refused = launch(&offline(), Some("test-client"), &restarted, &mut accounts).unwrap_err();
+    assert_eq!(
+        refused.keyring,
+        Some(format!(
+            "Can't read Notch's sign-in: {}",
+            keyring_no_answer(SILENT_WAIT)
+        ))
+    );
+    drop(held);
+    remove_secrets_dir(&path);
+}
+
+#[test]
+fn a_keyring_given_up_on_is_not_asked_again_until_it_answers() {
+    let hung = Arc::new(Mutex::new(()));
+    let held = hung.lock().unwrap();
+    let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let keyring = Bounded::new(
+        Silent {
+            hung: hung.clone(),
+            asked: asked.clone(),
+        },
+        SILENT_WAIT,
+    );
+    let started = Instant::now();
+    assert_eq!(keyring.get("A"), Err(keyring_no_answer(SILENT_WAIT)));
+    assert!(started.elapsed() >= SILENT_WAIT);
+    // Still stuck: the next calls fail at once, without a second call piling up behind it.
+    let again = Instant::now();
+    assert_eq!(
+        keyring.set("A", "secret-a"),
+        Err(keyring_no_answer(SILENT_WAIT))
+    );
+    assert!(again.elapsed() < SILENT_WAIT);
+    assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // It answers at last: it is asked again, and its answers come back.
+    drop(held);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while keyring.delete("A").is_err() {
+        assert!(Instant::now() < deadline, "the late answer never counted");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(keyring.get("A"), Ok(None));
+}
+
+#[test]
+fn signing_out_while_the_keychain_is_away_forgets_its_copy() {
+    let path = secrets_file("sign-out");
+    let keychain = Arc::new(Keychain::default());
+    launcher_with(&keychain, &path)
+        .set("A", "secret-a")
+        .unwrap();
+    keychain.set_away(true);
+    let away = launcher_with(&keychain, &path);
+    away.delete("A").unwrap();
+    assert_eq!(away.get("A").unwrap(), None);
+    // The keychain's copy goes at the first start it answers, and the file with it.
+    keychain.set_away(false);
+    let back = launcher_with(&keychain, &path);
+    assert_eq!(
+        (back.get("A").unwrap(), keychain.kept.get("A").unwrap()),
+        (None, None)
+    );
+    assert!(!path.exists());
+    remove_secrets_dir(&path);
 }
 
 #[test]
@@ -1317,6 +2234,73 @@ fn a_connection_failure_is_retryable_and_keeps_the_saved_sign_in() {
     assert!(!kept(&store).sign_in_required);
 }
 
+struct Fixed(Vec<SocketAddr>);
+
+impl ureq::Resolver for Fixed {
+    fn resolve(&self, _: &str) -> std::io::Result<Vec<SocketAddr>> {
+        Ok(self.0.clone())
+    }
+}
+
+#[test]
+fn addresses_alternate_families_starting_with_the_first() {
+    let v6 = |n: u16| SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], n));
+    let v4 = |n: u16| SocketAddr::from(([127, 0, 0, 1], n));
+    assert_eq!(
+        interleave(vec![v6(1), v6(2), v6(3), v4(4), v4(5)]),
+        vec![v6(1), v4(4), v6(2), v4(5), v6(3)]
+    );
+    assert_eq!(interleave(vec![v4(1), v6(2)]), vec![v4(1), v6(2)]);
+    assert_eq!(
+        interleave(vec![v4(1), v4(2), v4(3), v6(4), v6(5)]),
+        vec![v4(1), v6(4), v4(2), v6(5), v4(3)]
+    );
+    assert_eq!(interleave(vec![v4(1), v4(2)]), vec![v4(1), v4(2)]);
+    assert_eq!(interleave(vec![v6(1), v6(2)]), vec![v6(1), v6(2)]);
+    assert!(interleave(Vec::new()).is_empty());
+}
+
+#[test]
+fn a_dead_ipv6_address_falls_back_to_ipv4() {
+    // Loopback only: a closed IPv6 port stands for the broken route, a local listener for the host's
+    // IPv4 address. Both IPv6 answers come first, as a resolver lists them.
+    let dead = |p: u16| SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], p));
+    let closed = TcpListener::bind("[::1]:0")
+        .map(|l| l.local_addr().unwrap().port())
+        .unwrap_or(9);
+    let live = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = live.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut conn, _) = live.accept().unwrap();
+        let mut line = String::new();
+        BufReader::new(conn.try_clone().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        conn.write_all(
+            b"HTTP/1.1 200 OK
+Content-Length: 2
+Connection: close
+
+ok",
+        )
+        .unwrap();
+    });
+    let addrs = vec![
+        dead(closed),
+        dead(closed),
+        SocketAddr::from(([127, 0, 0, 1], port)),
+    ];
+    let agent = builder().resolver(Interleaved(Fixed(addrs))).build();
+    let body = agent
+        .get("http://horizon.test/")
+        .call()
+        .unwrap()
+        .into_string()
+        .unwrap();
+    assert_eq!(body, "ok");
+    server.join().unwrap();
+}
+
 #[test]
 fn a_rotated_microsoft_credential_survives_a_later_service_failure() {
     let store = MemoryStore::default();
@@ -1347,10 +2331,12 @@ fn expiry_is_refreshable_and_a_missing_credential_needs_sign_in() {
         session::State::NeedsRefresh
     );
     let (_, ep) = mock(|_| {});
-    assert!(launch(&ep, Some("test-client"), &store, &mut accounts)
-        .unwrap()
-        .session
-        .is_some());
+    assert!(
+        launch(&ep, Some("test-client"), &store, &mut accounts)
+            .unwrap()
+            .session
+            .is_some()
+    );
     assert_eq!(session::status(&store, UUID).state, session::State::Ready);
 }
 
@@ -1390,9 +2376,11 @@ fn a_damaged_saved_sign_in_is_not_overwritten_or_exposed() {
         store.get(UUID).unwrap().as_deref(),
         Some("damaged-secret-contents")
     );
-    assert!(!serde_json::to_string(&status)
-        .unwrap()
-        .contains("damaged-secret-contents"));
+    assert!(
+        !serde_json::to_string(&status)
+            .unwrap()
+            .contains("damaged-secret-contents")
+    );
 }
 
 #[test]
@@ -1449,7 +2437,7 @@ fn targeted_sign_in_rejects_another_identity_without_writing_or_selecting_it() {
 }
 
 #[test]
-fn targeted_sign_in_preserves_the_selected_account_or_offline_name() {
+fn targeted_sign_in_preserves_the_selected_account() {
     let store = MemoryStore::default();
     let mut accounts = signed_in(&store, &secrets("old", true));
     let mut other = notch();
@@ -1469,20 +2457,6 @@ fn targeted_sign_in_preserves_the_selected_account_or_offline_name() {
     .unwrap();
     assert_eq!(accounts.selected.as_deref(), Some(other.uuid.as_str()));
     assert_eq!(kept(&store).minecraft_token, "renewed");
-    accounts.selected = None;
-    accounts.offline_selected = Some("Builder".into());
-    accept_sign_in(
-        &mut accounts,
-        &store,
-        Some(&notch()),
-        notch(),
-        &secrets("renewed-again", true),
-        &|| false,
-        &|_| {},
-    )
-    .unwrap();
-    assert!(accounts.selected.is_none());
-    assert_eq!(accounts.offline_selected.as_deref(), Some("Builder"));
 }
 
 #[test]
@@ -1490,28 +2464,32 @@ fn cancelled_or_removed_targeted_sign_in_keeps_credentials_unchanged() {
     let store = MemoryStore::default();
     let mut accounts = signed_in(&store, &secrets("original", true));
     let before = store.get(UUID).unwrap();
-    assert!(accept_sign_in(
-        &mut accounts,
-        &store,
-        Some(&notch()),
-        notch(),
-        &secrets("new", true),
-        &|| true,
-        &|_| {}
-    )
-    .is_err());
+    assert!(
+        accept_sign_in(
+            &mut accounts,
+            &store,
+            Some(&notch()),
+            notch(),
+            &secrets("new", true),
+            &|| true,
+            &|_| {}
+        )
+        .is_err()
+    );
     assert_eq!(store.get(UUID).unwrap(), before);
     accounts.accounts.clear();
-    assert!(accept_sign_in(
-        &mut accounts,
-        &store,
-        Some(&notch()),
-        notch(),
-        &secrets("new", true),
-        &|| false,
-        &|_| {}
-    )
-    .is_err());
+    assert!(
+        accept_sign_in(
+            &mut accounts,
+            &store,
+            Some(&notch()),
+            notch(),
+            &secrets("new", true),
+            &|| false,
+            &|_| {}
+        )
+        .is_err()
+    );
     assert_eq!(store.get(UUID).unwrap(), before);
 }
 
@@ -1533,7 +2511,9 @@ fn refresh_reports_real_service_steps_in_order() {
     assert_eq!(status.state, session::State::Ready);
     assert_eq!(
         *phases.borrow(),
-        [Queued, Keychain, Microsoft, Xbox, Minecraft, Ownership, Profile, Saving]
+        [
+            Queued, Keychain, Microsoft, Xbox, Minecraft, Ownership, Profile, Saving
+        ]
     );
     let mut accounts = signed_in(&store, &secrets("old", true));
     let (account, secrets) = finish_sign_in_with_progress(
@@ -1591,32 +2571,155 @@ fn a_launch_as_another_account_leaves_the_selected_one() {
         skin: None,
         cape: None,
     });
-    // This launch plays as Alex: Notch's ownership opens the gate, and it is Alex who is told
-    // to sign in again, so Alex played. Notch is still the one `account select` picked.
-    let pass = launch_as(
-        &offline(),
-        Some("test-client"),
-        &store,
-        &mut accounts,
-        &Player::Microsoft(alex.into()),
-    )
-    .unwrap();
-    assert!(pass.session.is_none());
-    assert!(pass
-        .offline
-        .unwrap()
-        .starts_with("Alex is no longer signed in"));
-    assert_eq!(accounts.player(), Player::Microsoft(UUID.into()));
+    // This launch plays as Alex: it is Alex who is told to sign in again (Notch owning the game
+    // doesn't let Alex play), and Notch is still the one `account select` picked.
+    let refused = launch_as(&offline(), Some("test-client"), &store, &mut accounts, alex);
+    assert!(
+        refused
+            .unwrap_err()
+            .starts_with("Alex is no longer signed in")
+    );
+    assert_eq!(accounts.selected.as_deref(), Some(UUID));
+    // Notch plays with the last answer while the services can't be reached.
+    let pass = launch_as(&offline(), Some("test-client"), &store, &mut accounts, UUID).unwrap();
+    assert!(pass.session.is_none() && pass.offline.is_some());
     // An account that isn't in the launcher is refused, and changes nothing either.
     let gone = launch_as(
         &offline(),
         Some("test-client"),
         &store,
         &mut accounts,
-        &Player::Microsoft("not-signed-in".into()),
+        "not-signed-in",
     );
     assert_eq!(gone.unwrap_err(), "That account isn't signed in.");
-    assert_eq!(accounts.player(), Player::Microsoft(UUID.into()));
+    assert_eq!(accounts.selected.as_deref(), Some(UUID));
+}
+
+#[test]
+fn splitscreen_stops_renewing_other_accounts_once_out_of_time() {
+    // A sign-in service that never answers: any request would hang the test.
+    let silent = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/x", silent.local_addr().unwrap());
+    let ep = Endpoints {
+        microsoft: url.clone(),
+        xbox_user: url.clone(),
+        xsts: url.clone(),
+        minecraft: url,
+    };
+    let store = MemoryStore::default();
+    let mut accounts = signed_in(&store, &secrets("mc-token", true));
+    let expired = Secrets {
+        minecraft_expires_at: 0,
+        ..secrets("old", true)
+    };
+    let cal = Account {
+        uuid: "c".into(),
+        name: "Cal".into(),
+        skin: None,
+        cape: None,
+    };
+    accounts.add(&store, cal, &expired).unwrap();
+    accounts.selected = Some(UUID.into());
+    let dir = std::env::temp_dir().join(format!("hz-split-late-{}", std::process::id()));
+    let start = std::time::Instant::now();
+    let env = account_sessions_until(
+        &ep,
+        Some("test-client"),
+        &store,
+        &dir,
+        &mut accounts,
+        std::time::Instant::now(),
+    );
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(2),
+        "no request started"
+    );
+    let list: Vec<Value> = serde_json::from_str(&env[0].1).unwrap();
+    assert!(
+        list[0]["skipped"]
+            .as_str()
+            .unwrap()
+            .contains("Sign in again")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A service's account check: the launcher renews the account, then tells Mojang's session server
+/// it joins the id the service gave.
+#[test]
+fn joining_a_service_id_tells_mojangs_session_server() {
+    let (m, ep) = mock(|_| {});
+    let session = ep.minecraft.replace("/mc", "/session");
+    let store = MemoryStore::default();
+    signed_in(&store, &secrets("mc-token", true));
+    session::join_server_with(
+        &ep,
+        &session,
+        Some("test-client"),
+        &store,
+        &notch(),
+        &nowhere(),
+        "svc-42",
+    )
+    .unwrap();
+    let log = m.lock().unwrap().log.clone();
+    let joins: Vec<_> = log.iter().filter(|(_, p, _)| p.contains("/join")).collect();
+    assert_eq!(joins.len(), 1);
+    // Mojang refuses: the error says to sign in again.
+    m.lock().unwrap().join_refused = true;
+    let refused = session::join_server_with(
+        &ep,
+        &session,
+        Some("test-client"),
+        &store,
+        &notch(),
+        &nowhere(),
+        "svc-42",
+    );
+    assert!(refused.unwrap_err().contains("Sign in again"));
+}
+
+/// A launch loads the accounts, asks the services for a while, then saves: a sign-in or sign-out
+/// made meanwhile stays, and only the names and skins it renewed are written.
+#[test]
+fn a_launch_saving_late_keeps_sign_ins_and_outs_made_meanwhile() {
+    let store = MemoryStore::default();
+    let dir = std::env::temp_dir().join(format!("horizon-launcher-late-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let file = dir.join("accounts.json");
+    let other = |uuid: &str, name: &str| Account {
+        uuid: uuid.into(),
+        name: name.into(),
+        skin: None,
+        cape: None,
+    };
+    let mut before = signed_in(&store, &secrets("mc-token", true));
+    before.accounts.push(other("gone", "Leaving"));
+    before.save_to(&file).unwrap();
+    // The launch's copy, with Notch's new skin.
+    let mut renewed = Accounts::load_from(&file);
+    renewed.accounts[0].skin = Some(("https://textures.example/notch".into(), "classic".into()));
+    // Meanwhile: one account signs out, another signs in.
+    let mut now = Accounts::load_from(&file);
+    now.accounts.retain(|a| a.uuid != "gone");
+    now.accounts.push(other("new", "Arriving"));
+    now.save_to(&file).unwrap();
+    renewed.save_renewed_to(&store, &file).unwrap();
+    let saved = Accounts::load_from(&file);
+    let uuids: Vec<&str> = saved.accounts.iter().map(|a| a.uuid.as_str()).collect();
+    assert_eq!(uuids, [UUID, "new"]);
+    assert!(
+        saved.find(UUID).unwrap().skin.is_some(),
+        "the renewed skin is kept"
+    );
+    assert_eq!(saved.selected.as_deref(), Some(UUID));
+    // Written whole through a new file: nothing else is left beside it.
+    let names: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, [std::ffi::OsString::from("accounts.json")]);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

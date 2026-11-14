@@ -74,9 +74,11 @@ fn reads_the_shown_servers_with_their_pictures() {
         }]
     );
     // No file, or one that isn't NBT: an empty list, as in the game.
-    assert!(List::load(&home.as_path().join("none"))
-        .servers()
-        .is_empty());
+    assert!(
+        List::load(&home.as_path().join("none"))
+            .servers()
+            .is_empty()
+    );
     fs::write(home.as_path().join(FILE), b"not nbt").unwrap();
     assert!(List::load(home.as_path()).servers().is_empty());
 }
@@ -137,16 +139,24 @@ fn editing_duplicating_and_reordering_keep_fields_and_hidden_servers() {
     let mut list = List::load(home.as_path());
 
     // A name-only edit keeps the picture and the fields the launcher doesn't use.
-    list.edit(0, "  Friends SMP  ", " friends.example:25570 ").unwrap();
+    list.edit(0, "  Friends SMP  ", " friends.example:25570 ")
+        .unwrap();
     assert_eq!(list.servers()[0].name, "Friends SMP");
-    assert_eq!(list.servers()[0].icon, Some(vec![0x89, b'P', b'N', b'G', 1, 2, 3]));
+    assert_eq!(
+        list.servers()[0].icon,
+        Some(vec![0x89, b'P', b'N', b'G', 1, 2, 3])
+    );
     list.save(home.as_path()).unwrap();
     let first = entries(home.as_path()).remove(0);
     assert!(matches!(first.get("acceptTextures"), Some(Tag::Byte(1))));
-    assert!(matches!(first.get("acceptedCodeOfConduct"), Some(Tag::Int(-12345))));
+    assert!(matches!(
+        first.get("acceptedCodeOfConduct"),
+        Some(Tag::Int(-12345))
+    ));
 
     // Moving the address makes the old picture stale; the other fields stay.
-    list.edit(0, "Friends SMP", "friends.example:25571").unwrap();
+    list.edit(0, "Friends SMP", "friends.example:25571")
+        .unwrap();
     assert_eq!(list.servers()[0].icon, None);
     list.save(home.as_path()).unwrap();
     let saved = entries(home.as_path());
@@ -162,7 +172,10 @@ fn editing_duplicating_and_reordering_keep_fields_and_hidden_servers() {
     assert_eq!(copy.icon, None);
     list.move_by(1, -1).unwrap();
     assert_eq!(
-        list.servers().iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+        list.servers()
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>(),
         ["Friends SMP (copy)", "Friends SMP"]
     );
     assert!(list.move_by(0, -1).is_err());
@@ -175,7 +188,10 @@ fn editing_duplicating_and_reordering_keep_fields_and_hidden_servers() {
     // Reopening keeps the order and both entries.
     let list = List::load(home.as_path());
     assert_eq!(
-        list.servers().iter().map(|s| (s.name.as_str(), s.ip.as_str())).collect::<Vec<_>>(),
+        list.servers()
+            .iter()
+            .map(|s| (s.name.as_str(), s.ip.as_str()))
+            .collect::<Vec<_>>(),
         [
             ("Friends SMP (copy)", "friends.example:25571"),
             ("Friends SMP", "friends.example:25571")

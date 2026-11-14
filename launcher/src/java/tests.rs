@@ -119,9 +119,11 @@ fn an_instances_own_java_wins_and_a_wrong_folder_says_so() {
     let own = fake_home(&dir.join("own"), "17.0.12");
     let picked = pick(&need(21), Some(&own), &[], &[]).unwrap().unwrap();
     assert_eq!((picked.home, picked.major), (own, 17));
-    assert!(pick(&need(21), Some(&dir.join("nothing")), &[], &[])
-        .unwrap_err()
-        .contains("is not a Java home"));
+    assert!(
+        pick(&need(21), Some(&dir.join("nothing")), &[], &[])
+            .unwrap_err()
+            .contains("is not a Java home")
+    );
     fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -129,7 +131,25 @@ fn an_instances_own_java_wins_and_a_wrong_folder_says_so() {
 fn a_typed_java_is_a_major_or_a_component() {
     assert_eq!(Need::named("21").unwrap().component, "java-runtime-delta");
     assert_eq!(Need::named(" jre-legacy ").unwrap().major, 8);
-    assert!(Need::named("11")
-        .unwrap_err()
-        .contains("Known: 8 (jre-legacy)"));
+    assert!(
+        Need::named("11")
+            .unwrap_err()
+            .contains("Known: 8 (jre-legacy)")
+    );
+}
+
+#[test]
+fn a_java_bin_on_the_path_names_the_home_above_it() {
+    let dir = scratch("path");
+    // A real home spells its program the way this OS starts one: java.exe on Windows.
+    let home = fake_home(&dir.join("jdk"), "21.0.5");
+    let path = std::env::join_paths([
+        // Not a `bin` folder at all, then a `bin` with no java in it.
+        dir.join("Programs").join("Java"),
+        dir.join("nobin").join("bin"),
+        home.join("bin"),
+    ])
+    .unwrap();
+    assert_eq!(homes_from_path(&path), [fs::canonicalize(&home).unwrap()]);
+    fs::remove_dir_all(&dir).unwrap();
 }

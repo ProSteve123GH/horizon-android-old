@@ -89,23 +89,66 @@ pub fn parse_date(s: &str) -> Option<i64> {
     }
     let (y, mo, da) = (num(d[0])?, num(d[1])?, num(d[2])?);
     let (h, mi, se) = (num(t[0])?, num(t[1])?, num(t[2])?);
-    let zone = zone.trim();
-    let sign = match zone.as_bytes().first()? {
-        b'+' => 1,
-        b'-' => -1,
-        _ => return None,
-    };
-    let digits = &zone[1..];
-    if digits.len() != 4 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+    let offset = zone_offset(zone.trim_start())?;
+    // Lenient month and day arithmetic, checked: the file is edited by hand, and a value past what
+    // milliseconds since 1970 hold is no date (None, as an unparsable one) rather than a wrapped one.
+    let months = y.checked_mul(12)?.checked_add(mo.checked_sub(1)?)?;
+    let (year, month) = (months.div_euclid(12), months.rem_euclid(12) + 1);
+    // Far beyond any i64 of milliseconds, and small enough for days_from_civil's own arithmetic.
+    if !(-300_000_000..=300_000_000).contains(&year) {
         return None;
     }
-    let offset =
-        sign * (digits[..2].parse::<i64>().ok()? * 60 + digits[2..].parse::<i64>().ok()?);
-    // Lenient month and day arithmetic.
-    let months = y * 12 + (mo - 1);
-    let (year, month) = (months.div_euclid(12), months.rem_euclid(12) + 1);
-    let days = days_from_civil(year, month as u32, 1) + da - 1;
-    Some(((days * 86_400 + h * 3600 + mi * 60 + se) - offset * 60) * 1000)
+    let days = days_from_civil(year, month as u32, 1)
+        .checked_add(da)?
+        .checked_sub(1)?;
+    let seconds = days
+        .checked_mul(86_400)?
+        .checked_add(h.checked_mul(3600)?)?
+        .checked_add(mi.checked_mul(60)?)?
+        .checked_add(se)?
+        .checked_sub(offset * 60)?;
+    seconds.checked_mul(1000)
+}
+
+/// The `Z` field of that lenient parse, in minutes east of UTC: `+hhmm` / `-hhmm` (exactly four digits,
+/// hours to 23, minutes to 59), `GMT` alone or `GMT+h:mm` / `GMT-hh:mm`, or `UTC`, the names in any case.
+/// What follows the zone is left unread, as `DateFormat.parse(String)` leaves it. Other zone names
+/// (`EST`...) are not read here.
+fn zone_offset(zone: &str) -> Option<i64> {
+    let digits = |text: &str| text.bytes().all(|b| b.is_ascii_digit());
+    let minutes_east = |sign: &str, hours: &str, minutes: &str| -> Option<i64> {
+        let (h, m) = (hours.parse::<i64>().ok()?, minutes.parse::<i64>().ok()?);
+        (h <= 23 && m <= 59).then_some(if sign == "-" {
+            -(h * 60 + m)
+        } else {
+            h * 60 + m
+        })
+    };
+    let name = zone.get(..3).unwrap_or_default();
+    if name.eq_ignore_ascii_case("utc") {
+        return Some(0);
+    }
+    if name.eq_ignore_ascii_case("gmt") {
+        let rest = &zone[3..];
+        let Some(sign @ ("+" | "-")) = rest.get(..1) else {
+            return Some(0);
+        };
+        // `h:mm` or `hh:mm`.
+        let (hours, after) = rest[1..].split_once(':')?;
+        let minutes = after.get(..2)?;
+        if !matches!(hours.len(), 1 | 2) || !digits(hours) || !digits(minutes) {
+            return None;
+        }
+        return minutes_east(sign, hours, minutes);
+    }
+    let sign @ ("+" | "-") = zone.get(..1)? else {
+        return None;
+    };
+    let hhmm = zone.get(1..5)?;
+    if !digits(hhmm) {
+        return None;
+    }
+    minutes_east(sign, &hhmm[..2], &hhmm[2..])
 }
 
 /// One list entry kind.
@@ -312,16 +355,39 @@ fn json_bool(v: &Json) -> bool {
     }
 }
 
+/// What happened to a list, for the one that watches it: what vanilla's `StoredUserList` tells its
+/// `NotificationService` (`playerOped`/`playerDeoped`, `playerAddedToAllowlist`/`playerRemovedFromAllowlist`,
+/// `playerBanned`/`playerUnbanned`, `ipBanned`/`ipUnbanned`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Change<E> {
+    /// An entry was added (or replaced by a different one).
+    Added(E),
+    /// An entry was removed; a `clear` says it once for each entry, in the map's order, before it empties.
+    Removed(E),
+}
+
 /// StoredUserList.
 pub struct UserList<E: Entry> {
     pub file: PathBuf,
     map: JavaHashMap<JKey, E>,
+    watcher: Option<Box<dyn Fn(Change<E>) + Send>>,
 }
 impl<E: Entry> UserList<E> {
     pub fn new(file: impl Into<PathBuf>) -> Self {
         Self {
             file: file.into(),
             map: JavaHashMap::default(),
+            watcher: None,
+        }
+    }
+    /// Has `watcher` told of every change from now on (`add`, `remove` and `clear`, not a `load`, and not the
+    /// expired entries `get` drops, as vanilla's don't).
+    pub fn watch(&mut self, watcher: impl Fn(Change<E>) + Send + 'static) {
+        self.watcher = Some(Box::new(watcher));
+    }
+    fn told(&self, change: Change<E>) {
+        if let Some(watcher) = &self.watcher {
+            watcher(change);
         }
     }
     /// The entries in the map's iteration order.
@@ -354,23 +420,29 @@ impl<E: Entry> UserList<E> {
         if self.map.get(&key).is_some_and(|old| entry.same(old)) {
             return false;
         }
-        self.map.put(key, entry);
+        self.map.put(key, entry.clone());
         if let Err(e) = self.save() {
             log::warn!("Could not save the list after adding a user. {e}");
         }
+        self.told(Change::Added(entry));
         true
     }
     pub fn remove(&mut self, user: &E::User) -> bool {
-        if self.map.remove(&JKey(E::key(user))).is_none() {
+        let Some(entry) = self.map.remove(&JKey(E::key(user))) else {
             return false;
-        }
+        };
         if let Err(e) = self.save() {
             log::warn!("Could not save the list after removing a user. {e}");
         }
+        self.told(Change::Removed(entry));
         true
     }
     /// StoredUserList.clear: no entry left; saves.
     pub fn clear(&mut self) {
+        let entries: Vec<E> = self.map.entries().map(|(_, e)| e.clone()).collect();
+        for entry in entries {
+            self.told(Change::Removed(entry));
+        }
         self.map.clear();
         if let Err(e) = self.save() {
             log::warn!("Could not save the list after removing a user. {e}");
@@ -393,7 +465,7 @@ impl<E: Entry> UserList<E> {
     }
     /// StoredUserList.load: a missing file leaves the list as it is.
     pub fn load(&mut self) -> Result<(), String> {
-        let Ok(text) = std::fs::read_to_string(&self.file) else {
+        let Ok(text) = read_utf8(&self.file) else {
             return Ok(());
         };
         self.load_str(&text)
@@ -423,6 +495,13 @@ pub type WhiteList = UserList<WhiteEntry>;
 pub type BanList = UserList<BanEntry<NameAndId>>;
 pub type IpBanList = UserList<BanEntry<String>>;
 
+/// A list or cache file as vanilla reads it, through Guava's `Files.newReader(file, UTF_8)`: a byte
+/// sequence that is not UTF-8 becomes U+FFFD, grouped as Java's decoder groups it (`java_utf8`), and the
+/// rest is kept. A file that cannot be read at all is an error, as before.
+pub(crate) fn read_utf8(file: &std::path::Path) -> std::io::Result<String> {
+    Ok(horizon_protocol::buf::java_utf8(&std::fs::read(file)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -446,6 +525,186 @@ mod tests {
             "2026-10-12 08:00:00 +0000"
         );
         assert_eq!(parse_date("forever"), None);
+    }
+
+    /// `SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.ROOT).parse`, as `BanListEntry` and
+    /// `CachedUserNameToIdResolver` read their dates. Every value is what vanilla's own format gave for
+    /// "2026-10-12 08:00:00 <zone>" (a Java run on OpenJDK 25), None where it threw `ParseException`.
+    #[test]
+    fn parse_date_matches_simple_date_format() {
+        for (zone, millis) in [
+            ("+0000", Some(1791792000000)),
+            ("-0000", Some(1791792000000)),
+            ("+0200", Some(1791784800000)),
+            ("-1230", Some(1791837000000)),
+            ("+2359", Some(1791705660000)),
+            ("-2359", Some(1791878340000)),
+            ("+0059", Some(1791788460000)),
+            ("+2400", None),
+            ("+0075", None),
+            ("+020", None),
+            ("+02:00", None),
+            ("+02 00", None),
+            ("+02000", Some(1791784800000)),
+            ("+0200 extra", Some(1791784800000)),
+            ("+0200abc", Some(1791784800000)),
+            ("UTC", Some(1791792000000)),
+            ("utc", Some(1791792000000)),
+            ("UTCabc", Some(1791792000000)),
+            ("UTC+02:00", Some(1791792000000)),
+            ("GMT", Some(1791792000000)),
+            ("gmt", Some(1791792000000)),
+            ("GMTx", Some(1791792000000)),
+            ("GMT +02:00", Some(1791792000000)),
+            ("GMT+02:00", Some(1791784800000)),
+            ("gmt+02:00", Some(1791784800000)),
+            ("GMT+2:30", Some(1791783000000)),
+            ("GMT-5:30", Some(1791811800000)),
+            ("GMT+23:59", Some(1791705660000)),
+            ("GMT-23:59", Some(1791878340000)),
+            ("GMT-00:00", Some(1791792000000)),
+            ("GMT+12:00x", Some(1791748800000)),
+            ("GMT+02:005", Some(1791784800000)),
+            ("GMT+24:00", None),
+            ("GMT+2:60", None),
+            ("GMT+2", None),
+            ("GMT+02", None),
+            ("GMT+0200", None),
+            ("GMT+2:3", None),
+            ("GMT+002:00", None),
+            ("GMT+", None),
+            ("GMT+x", None),
+            ("Z", None),
+            ("UT", None),
+            ("CET", None),
+        ] {
+            assert_eq!(
+                parse_date(&format!("2026-10-12 08:00:00 {zone}")),
+                millis,
+                "{zone:?}"
+            );
+        }
+        // The zone comes after any run of spaces, as the date and the time do.
+        assert_eq!(
+            parse_date("2026-10-12 08:00:00  +0200"),
+            Some(1791784800000)
+        );
+        assert_eq!(parse_date("2026-10-12 08:00:00"), None);
+    }
+
+    #[test]
+    fn dates_too_far_out_are_none_not_wrapped() {
+        // Lenient overflow still works within range: month 13 is January of the next year.
+        assert_eq!(
+            parse_date("2026-13-01 00:00:00 +0000"),
+            parse_date("2027-01-01 00:00:00 +0000")
+        );
+        for text in [
+            "9223372036854775807-01-01 00:00:00 +0000",
+            "2026-9223372036854775807-01 00:00:00 +0000",
+            "2026-01-9223372036854775807 00:00:00 +0000",
+            "2026-01-01 9223372036854775807:00:00 +0000",
+            "2026-01-01 00:00:9223372036854775807 +0000",
+            "-9223372036854775808-01-01 00:00:00 +0000",
+            "300000001-01-01 00:00:00 +0000",
+            "2026--9223372036854775808-01 00:00:00 +0000",
+        ] {
+            assert_eq!(parse_date(text), None, "{text}");
+        }
+        // The far end of what milliseconds hold still parses (year 292 million).
+        assert!(parse_date("292000000-01-01 00:00:00 +0000").is_some());
+    }
+
+    #[test]
+    fn a_watcher_hears_what_vanillas_notification_service_does() {
+        use std::sync::{Arc, Mutex};
+        let dir = std::env::temp_dir().join(format!("horizon-lists-watch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let heard = Arc::new(Mutex::new(Vec::new()));
+        let mut ops = OpList::new(dir.join("ops.json"));
+        let sink = heard.clone();
+        ops.watch(move |change| sink.lock().unwrap().push(change));
+        let op = |name: &str, level| OpEntry {
+            user: NameAndId::offline(name),
+            level,
+            bypasses_player_limit: false,
+        };
+        assert!(ops.add(op("Kim", 4)));
+        assert!(ops.add(op("Lee", 2)));
+        // A removal that finds nothing says nothing; one that finds an entry says which.
+        assert!(!ops.remove(&NameAndId::offline("Nobody")));
+        assert!(ops.remove(&NameAndId::offline("Kim")));
+        // A clear says it for each entry that is left, and the list is empty after.
+        ops.clear();
+        assert!(ops.is_empty());
+        assert_eq!(
+            *heard.lock().unwrap(),
+            [
+                Change::Added(op("Kim", 4)),
+                Change::Added(op("Lee", 2)),
+                Change::Removed(op("Kim", 4)),
+                Change::Removed(op("Lee", 2)),
+            ]
+        );
+        // A ban equal to the stored one is not added again, so nothing is said.
+        let mut bans = BanList::new(dir.join("banned-players.json"));
+        let said = Arc::new(Mutex::new(0));
+        let counter = said.clone();
+        bans.watch(move |_| *counter.lock().unwrap() += 1);
+        let ban = BanEntry::new(NameAndId::offline("Kim"), None, None, None);
+        assert!(bans.add(ban.clone()));
+        assert!(!bans.add(ban));
+        assert_eq!(*said.lock().unwrap(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `StoredUserList.load` reads through Guava's `Files.newReader(file, UTF_8)`: a byte that is not
+    /// UTF-8 becomes U+FFFD (vanilla's reader gave `0043 0061 0066 fffd` for `Caf\xE9`), so the entry is
+    /// kept, and the next save writes it back with the others instead of losing the file.
+    #[test]
+    fn a_byte_that_is_not_utf8_is_replaced_not_a_missing_file() {
+        let dir = std::env::temp_dir().join(format!("horizon-lists-latin1-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("whitelist.json");
+        let mut bytes = br#"[{"uuid":"069a79f4-44e9-4726-a5be-fca90e38aaf5","name":"Caf"#.to_vec();
+        bytes.extend(b"\xE9\"}]");
+        std::fs::write(&file, &bytes).unwrap();
+        let mut white = WhiteList::new(&file);
+        white.load().unwrap();
+        let names: Vec<String> = white
+            .entries()
+            .iter()
+            .map(|e| e.user.name.clone())
+            .collect();
+        assert_eq!(names, ["Caf\u{fffd}"]);
+        assert!(white.add(WhiteEntry {
+            user: NameAndId::offline("Kim")
+        }));
+        let saved = std::fs::read_to_string(&file).unwrap();
+        assert!(
+            saved.contains("Caf\u{fffd}") && saved.contains("Kim"),
+            "{saved}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Java's reader gives one U+FFFD for an encoded UTF-16 surrogate (`ED A0 80`, and its truncated
+    /// prefixes), where `String::from_utf8_lossy` gives two or three; both are read, not taken as missing.
+    #[test]
+    fn an_encoded_surrogate_is_one_replacement_as_java_reads_it() {
+        let dir = std::env::temp_dir().join(format!("horizon-lists-cesu-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("ops.json");
+        for (bytes, expected) in [
+            (&b"\xED\xA0\x80"[..], "\u{fffd}"),
+            (&b"\xED\xA0"[..], "\u{fffd}"),
+            (&b"\xED\xBFA"[..], "\u{fffd}A"),
+            (&b"Caf\xE9"[..], "Caf\u{fffd}"),
+        ] {
+            std::fs::write(&file, bytes).unwrap();
+            assert_eq!(read_utf8(&file).unwrap(), expected, "{bytes:x?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

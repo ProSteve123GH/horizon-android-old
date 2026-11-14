@@ -1,49 +1,21 @@
 {
-  "upstream": "https://github.com/ludovic111/horizon",
-  "fork": "https://github.com/Vasysik/horizon-android",
-  "android_fork": "https://github.com/ProSteve123GH/horizon-android",
-  "android_fork_branch": "dev/android-compose-import",
+  "upstream": "https://github.com/horizon-rust/horizon",
+  "fork": "https://github.com/ProSteve123GH/horizon-android-old",
+  "android_fork": "https://github.com/ProSteve123GH/horizon-android-old",
+  "android_fork_branch": "android",
   "android_fork_merge": {
-    "pr": 56,
-    "pr_repository": "Vasysik/horizon-android",
-    "merge_commit": "8667de85a",
-    "status": "Merged into the fork as a normal merge commit; the upstream PR was still open when reviewed.",
-    "notes": "Compose launcher, JNI bridge and :game process split merged on top of the Android 0.7.7 baseline. Later account, wardrobe and input fixes were preserved. The fork adds Minecraft installation import/repair and an artifact-only dev workflow."
+    "pr": null,
+    "status": "Merge commit pending CI",
+    "notes": "Deep sync of the fork with upstream horizon-rust/horizon:main as of 2026-11-15. The fork keeps: Compose/JNI launcher, ARM64 Rust build with the Android touch stack, .hmod/.hnmod native-mod pipeline, Android renderer preparation machinery (deferred background renderer build, recreate_surface on resume, GL-blocking guards), per-instance presets. Upstream's crate split (horizon-client-lib, horizon-hooks, horizon-official, horizon-optifine, etc.) and NATIVE_HOOKS_API 645 are ADOPTED; fork's native_hooks.rs continues to assert the fork's base set on top; AppleSkin's 139 hooks should now build. Deployment workflows remain disabled under .github/upstream-workflows/."
   },
-  "base_commit": "d65282fb0f0fd7ba57876aef87dc4c6c2b5fa04b",
-  "base_selection": "Best matching first-parent revision; 309 revisions compared",
-  "matching_source_files": 3106,
-  "compared_source_files": 3147,
-  "modified_existing_files": 41,
+  "base_commit": "8c02c0b8534e11b7bb8be14238b140a8534280a0",
+  "base_selection": "Merge base from git merge upstream/main (17,923 upstream commits since 2026-11-01 nightly)",
   "branch": "android",
-  "merged_upstream_commit": "8c02c0b8534e11b7bb8be14238b140a8534280a0",
-  "merged_upstream_commits": 8887,
-  "last_reviewed_date": "2026-11-02",
-  "last_update_commits": 1846,
-  "latest_fetched_commit": "549d6b9cd53e4ea0c9eb388f4e99fad8175deda1",
-  "review": "Integrated the published 2026-11-01 nightly, not the moving main branch. Reconciled 26 conflict files across rendering, EventLoopCtl/splitscreen wrappers, keyboard focus, native content hooks, sandboxed hmod runtime and account session recovery. Preserved Android system DNS, IME/SAF/DocumentsProvider, launcher-selected graphics, lifecycle return, optional worker/cache limits and fixed opt-in mod bundle. GLES terrain packs all current varying fields and lowers colored-light nested arrays without changing uniform bytes; Vulkan now additionally adapts the reviewed opaque/cutout terrain optimization, with ordering guards and shader/LOD/culling fallbacks; the merged upstream baseline is unchanged. Kept deployment workflows disabled. ARM64 Clippy, optimized ARM64/ARMv7 builds and targeted input/content/account/GPU tests passed. Tablet Vulkan Compatibility world, inventory, Home/resume, launcher return and provider root were exercised. Final F-03L GLES retest is recorded in docs/android-0.7.7-testing.md; other ABIs and final release APKs still need validation. No blanket resolution of low-end crashes or performance reports is claimed.",
-  "pending_review_commits": 3680,
-  "selected_upstream_release": "nightly-2026-11-01",
-  "reviewed_render_optimizations": [
-    "aa4622805",
-    "de59ab97c568168d14718a1b27880cead8134997"
-  ],
-  "render_review_document": "docs/android-upstream-render-review.md",
-  "candidate_upstream_release": {
-    "source_tag": "nightly-source/2026-11-01-c9d474d",
-    "commit": "c9d474dd9116e84c243f8992d75c11314df56f06",
-    "commits_beyond_merged_baseline": 482,
-    "merge_preview_conflicting_files": 12,
-    "status": "Reviewed candidate only; not merged or Android-validated"
-  },
-  "accounts_appearance_review": {
-    "date": "2026-11-02",
-    "fetched_main": "f696adc8996d7d4b11e7d50a863f2735a21c8000",
-    "reviewed_account_commits": [
-      "ba579191f",
-      "0de577b50"
-    ],
-    "moving_main_merged": false,
-    "notes": "Reviewed newer account-save reporting and desktop encrypted-file storage changes. Android retains its Keystore AES/GCM store and reports sign-in save failures through the existing shared task. The selected stable nightly baseline is unchanged; no experimental UI branches were merged."
-  }
+  "merged_upstream_commit": "b396fcfe01d94887c4c57898c64fdd81b83379f9",
+  "merged_upstream_commits": 17923,
+  "last_reviewed_date": "2026-11-15",
+  "review": "Deep-sync merge performed 2026-11-15 on sync/horizon-main-2026-11-14 (158 files changed, 13,492 insertions / 23,767 deletions, two-parent merge commit). Conflict resolution done without a local compiler (tablet cannot run cargo); every merged .rs file was passed through rustfmt (edition 2024) to catch delimiter drift, and the tree contains zero conflict markers; .githooks/pre-commit hooks pass (check_public_tree). Fork-only ARM64 APK compile and source checks are delegated to GitHub Actions (.github/workflows/android-dev.yml and android-source.yml); the focused PR is against `android`. Behaviour claimed only after CI: Compose launcher keeps connection state, menu/button layout, Android logcat output, long-press/scroll gestures, swipe-to-quit, IME handling, DS-controller/Android KeyMapper/press-to-toggle, .hmod content + .hnmod native-mod loading paths unchanged. No behavioural claims beyond what CI verifies.",
+  "pending_review": "Android-dev CI, pre-H story",
+  "selected_upstream_release": "2026-11-15 main",
+  "selected_upstream_commit": "b396fcfe01d94887c4c57898c64fdd81b83379f9"
 }

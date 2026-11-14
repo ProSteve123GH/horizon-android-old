@@ -188,3 +188,40 @@ Categorized for the integration; each item → action:
 - Phases 6–9 results (after merge) appended below.
 - Conflict list and every manual resolution recorded in the conflict log section.
 - CI links appended.
+
+
+## Phase 3 — merge conflict resolution (2026-11-15)
+
+Branch `sync/horizon-main-2026-11-14`: `git merge upstream/main` (b396fcfe01) brings ~4.9k PRs into the fork in one step. Resolution work completed locally, no compiler available; every file was checked with `rustfmt --edition 2024 --check`, which catches delimiter drift before it reaches CI.
+
+### Conflicts resolved (~60 files, both sides kept where compatible)
+
+- `Cargo.toml` / `Cargo.lock`: minimized by hand to the union of the fork's pin set and upstream's (kept the fork's `.local/horizon-client/26.3` pinning for `horizon-core`; kept upstream's `wgpu`/`naga` etc).
+- `crates/horizon-client/src/game.rs`: fully restored to a balanced state after the merge corrupted it (whole regions reconstructed: `handle_window_event_inner` header, `load_clouds` junction, merged `let phases = [...]` with Android `performance_sample`/`record_block_entities`/`exit_app` handling).
+- `crates/horizon-client/src/game/loading_screen.rs`: fork's renderer-preparation machinery (`renderer_job`, `prepared_renderer` fields, `prepare_renderer()` — worker thread, never owns a surface, activated in `finish()`), Android `suspended`/`resumed`/`device_event`/`exiting` arms, `defer_gles_world` GLES entry gate and `ControlFlow::Wait` while the renderer is suspended; `crate::game::exit_app` replaces bare `event_loop.exit()` in startup-failure paths.
+- `crates/horizon-client/src/game/loading_screen.rs` & `resource_loader.rs`: new `pub(crate) use resource_loader::android_game` etc.; `android_game(vec![...])` JNI entry handles Android arguments.
+- `crates/horizon-client-render/src/gfx.rs` (was 37 conflict markers, 16k+ lines): unioned with upstream's `surface_setup.rs` (adapter opening, HDR10/scRGB output, reuse/type reform). android `OPEN_COMPATIBILITY = true` paths kept: culling/oit/mappable-primary-buffers skipped in `compatibility()` mode; `configure_atlas_limit` kept (Compose layouts require it); Android late-sky path kept alongside upstream `CustomSky`.
+- `crates/horizon-client-render/src/gfx/panorama.rs`: fork's GLES-reduce (`reduced()`) ported to upstream-style signatures; one extra `}` removed.
+- `crates/horizon-client-render/src/gfx/timing.rs`: android-reported missing-timestamp fallback folded into upstream's existing device-loss path (`self.failed = true` + `slot.state.store(FAILED)`); upstream `let … else { slot.state.store(FAILED, …); continue; }` kept.
+- `crates/horizon-client-render/src/android_runtime.rs`: fork's `cache_budget_tests` module retained at the end of the file alongside upstream `mod tests;`.
+- `crates/horizon-client-render/src/hud.rs`: missing `}` inserted before `fn shelves` (atlas `loop`/`match` closed early). rustfmt clean.
+- `crates/horizon-client-render/src/options_ui.rs`: missing `}` inserted before `fn page`. rustfmt clean.
+- `launcher/src/browser/horizon.rs`: only formatting/field reorder; the `pub mod auto;` files upstream added (`browser/horizon/auto.rs`, `browser/horizon/auto/tests.rs`) are kept.
+- `crates/horizon-client/src/game/chat.rs`: android keyboard-height clamp union with upstream chat search; screenshot flow merged to `saved.path/is_ok()` + gallery entry; two tests merged (fork clamp + upstream screenshot name).
+- `crates/horizon-client/src/game/control.rs`: `section-layout` upstream arm added alongside fork's `section-indirect`/`sky-order`/`settled-terrain` command arms; `play_mouse` replaced with upstream `mouse_mapping(..., Source::Agent)` calls (cross-source hold tracking); `hello` help entry from upstream kept; android `"section-indirect"` policy unchanged.
+- `crates/horizon-client/src/game/mods.rs`: union of fork's advanced Mods screen (list rows, `draw_list_rows`, `MOD_UI_*`, `mod_ui_layout`, `mod_screen_scroll/click`) and upstream's content-mod machinery (`build_lists_mods`, `built_with_native_mods`, `native_mods_detail`, `STOPPED`/`NOTICE_SEEN`, `not_built` helper); Android native-hook-only path guarded by `cfg!(target_os = "android")`.
+- `crates/horizon-client/src/game/pad.rs`: `pad_focus_mode` replaced by upstream's `pad_navigation_mode`/`pad_pointer_screen` while keeping Compose keyboard focus fallback; `Action::Sneak`/`sprint_toggle` retain Android behaviour; `Route::Sneak` guard gains `!self.android_touch_descending()`; Sneak latch uses upstream `keys.held(Action::Sneak)` pattern.
+- `crates/horizon-client/src/game/pad_menu.rs`: union — fork's `virtual_mouse` draw path vs upstream `pad_cursor` crosshair; Android keyboard focus switch kept in `pad_navigation_mode`.
+- `crates/horizon-client/src/game/remote.rs`: `touch_mining_progress` added alongside upstream `online_server` etc.; `poll_stationary_client` kept (fork-only oracle); `self.input_player_replaced()` used in respawn; android `last_input` reset retained with `cfg`.
+- `crates/horizon-client/src/game/resource_loader.rs`: `loading_app` now initializes `renderer_job`/`prepared_renderer`; `pub(crate) fn android_game` (JNI entry) wraps loading_app with Android options.
+- `crates/horizon-client/src/game/window_handler.rs`: fork's Android lifecycle (resumed early-recreate path, `suspended`, `exit_app`), android-gamepad input routing kept; `ControlFlow::Wait` while renderer suspended on Android.
+
+### Local validation
+
+- `rustfmt --edition 2024 --check` run on every `.rs` file in the workspace (outside `third_party/`). Third-party fails remain (upstream files, untouched).
+- Zero conflict markers (`<<<<<<</=======/>>>>>>>`) in the tree.
+- `cargo` itself cannot compile this tablet (low RAM, repeated OOM/killed). **All heavy validation is expected to run on GitHub Actions** (`android-dev.yml` builds the Rust/Kotlin arm64 APK, `android-source.yml` runs source checks).
+
+### Status of the merge commit
+
+Amended into `sync/horizon-main-2026-11-14` with Android-specific messages preserved; history preserved, no force-push. The branch will open a PR against `android`.

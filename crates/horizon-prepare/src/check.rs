@@ -4,7 +4,7 @@
 //! stamp out of the output's digest, so it never asks for a new `OUTPUT_VERSION`.
 
 use crate::pyjson::Value;
-use crate::{artifacts::Lock, read_json, write_json, OUTPUT_VERSION, SCHEMA};
+use crate::{OUTPUT_VERSION, SCHEMA, artifacts::Lock, read_json, write_json};
 use std::path::Path;
 
 /// The file beside `horizon-resources.json` naming the preparer's `OUTPUT_VERSION`.
@@ -252,6 +252,32 @@ mod tests {
         assert!(!out.join(STAMP).exists());
         // Nothing to remove is not an error.
         remove_stamp(&out).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn preparation_releases_its_lock_with_a_retained_descriptor() {
+        let root = folder("retained-lock");
+        let first = crate::hold_lock(&root, &|_| {}).unwrap();
+        // A duplicate retains the same lock reference as a descriptor inherited
+        // by a forked child, without depending on subprocess scheduling.
+        let retained = first.0.try_clone().unwrap();
+        let second = fs::OpenOptions::new()
+            .write(true)
+            .open(root.join(crate::LOCK))
+            .unwrap();
+        assert!(matches!(
+            second.try_lock(),
+            Err(fs::TryLockError::WouldBlock)
+        ));
+        drop(first);
+        second
+            .try_lock()
+            .expect("the completed preparation kept its lock");
+        second.unlock().unwrap();
+        drop(retained);
+        drop(second);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

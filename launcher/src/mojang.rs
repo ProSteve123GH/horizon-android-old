@@ -8,12 +8,12 @@
 //! stopped half way (cancelled, no network) keeps the files it finished: the next one fetches
 //! only the rest.
 
-use crate::sources::{fetch_checked, fetch_manifest, sha1_file, sha1_hex, write_file, Fetch, Pins};
+use crate::sources::{Fetch, Pins, fetch_checked, fetch_manifest, sha1_file, sha1_hex, write_file};
 use serde_json::Value;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 use std::time::Duration;
 
 const OBJECTS: &str = "https://resources.download.minecraft.net";

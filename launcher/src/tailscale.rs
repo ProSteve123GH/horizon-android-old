@@ -6,7 +6,7 @@
 //! or page, and the access token is one the player makes in the admin console and pastes here (it is
 //! kept in the system keychain). `HORIZON_LAUNCHER_TAILSCALE` (the CLI) and `HORIZON_TAILSCALE_API` (the
 //! API's address) point the tests at stand-ins.
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
@@ -303,8 +303,10 @@ impl Api {
                             format!(" ({said})")
                         }
                     ),
-                    412 => "The access controls changed meanwhile: look again before changing them."
-                        .to_string(),
+                    412 => {
+                        "The access controls changed meanwhile: look again before changing them."
+                            .to_string()
+                    }
                     _ if !said.is_empty() => format!("Tailscale says: {said}"),
                     _ => format!("Tailscale answered {code}."),
                 })
