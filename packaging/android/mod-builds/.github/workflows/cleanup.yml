@@ -1,0 +1,27 @@
+name: cleanup
+# The releases of finished builds. A build's release is what the phone downloads, and the gateway
+# keeps the job for three days, so a release older than that is only disk. (docs/android-native-mods.md)
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  old:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Delete the builds older than four days
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cutoff=$(( $(date -u +%s) - 4 * 24 * 3600 ))
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq '.[] | select(.tagName | startswith("build-")) | "\(.createdAt) \(.tagName)"' |
+          while read -r at tag; do
+            when=$(date -u -d "$at" +%s)
+            if [ "$when" -lt "$cutoff" ]; then
+              gh release delete "$tag" --yes --cleanup-tag || true
+            fi
+          done

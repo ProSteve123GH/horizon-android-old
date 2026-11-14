@@ -55,6 +55,8 @@ jobs:
       - run: python3 tools/test_android_launcher_appearance.py
       - run: python3 tools/test_android_screenshots.py
       - run: python3 tools/test_android_touch_layouts.py
+      - name: The mod build gateway's protocol
+        run: node --test packaging/android/mod-build-worker/test.mjs
       - name: Check workflow export matches the active workflow
         run: |
           cmp .github/workflows/android-source.yml packaging/android/source-checks.yml

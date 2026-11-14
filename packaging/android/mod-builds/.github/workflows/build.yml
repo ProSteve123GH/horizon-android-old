@@ -1,9 +1,10 @@
 name: build
 run-name: build ${{ inputs.ask }}
-# One player's native mods, asked for through Horizon Android's gateway (mod_build_gateway.py): the
-# mods come from the gateway under a random name, compile in the sandbox with no network, and the
-# result goes back as this run's artifact. A mod's code runs while it compiles, so its token can only
-# read this public repository, and it writes no cache.
+# One player's native mods, asked for through Horizon Android's gateway (mod_build_gateway.py on a
+# machine of your own, or mod-build-worker/ on Cloudflare): the mods come from the gateway under a
+# random name, compile in the sandbox with no network, and the library goes back as a release asset
+# the phone downloads. A mod's code runs while it compiles, so its token can only read this public
+# repository, and it writes no cache.
 on:
   workflow_dispatch:
     inputs:
@@ -55,7 +56,16 @@ jobs:
             ~/horizon-android-build/cargo
             ~/horizon-android-build/base
       - name: The mods
-        run: curl -fsS --retry 5 --retry-all-errors -o mods.bin "$GATEWAY/v1/github/$ASK"
+        run: |
+          # A gateway on Cloudflare keeps them in KV, which may answer from another region a moment
+          # behind the write: ask until it has them.
+          for try in $(seq 1 18); do
+            if curl -fsS --retry 3 --retry-all-errors -o mods.bin "$GATEWAY/v1/github/$ASK"; then
+              break
+            fi
+            if [ "$try" = 18 ]; then echo "The gateway did not give the mods"; exit 1; fi
+            sleep 10
+          done
       - name: Build
         env:
           MOD_BUILD_SECONDS: '3200'
@@ -67,3 +77,39 @@ jobs:
           retention-days: 1
           compression-level: 1
           if-no-files-found: error
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: result
+          path: result
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASK: ${{ inputs.ask }}
+          GATEWAY: ${{ inputs.gateway }}
+        run: bash scripts/publish.sh
+  failed:
+    needs: build
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Tell the gateway
+        env:
+          ASK: ${{ inputs.ask }}
+          GATEWAY: ${{ inputs.gateway }}
+        run: |
+          curl -fsS --retry 10 --retry-all-errors --retry-delay 5 \
+            -X POST "$GATEWAY/v1/github/$ASK/state" \
+            -H 'Content-Type: application/json' \
+            -d '{"state":"failed","error":"The build on GitHub did not finish. Try again."}' ||
+            echo "the gateway did not take the report"

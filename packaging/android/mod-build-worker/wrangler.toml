@@ -1,0 +1,22 @@
+# Horizon Android's native mod builds on GitHub's machines (docs/android-native-mods.md).
+# Deploy: `npx wrangler kv namespace create STORE`, put its id below, `npx wrangler secret put
+# GITHUB_TOKEN`, `npx wrangler deploy`. Then set the launcher's Build server to the URL it prints.
+name = "horizon-mod-builds"
+main = "src/index.js"
+compatibility_date = "2025-10-01"
+workers_dev = true
+
+[[kv_namespaces]]
+binding = "STORE"
+id = "paste-the-id-of-wrangler-kv-namespace-create-STORE"
+
+[vars]
+# The repository made from packaging/android/mod-builds/ (owner/name).
+GITHUB_REPO = "you/horizon-mod-builds"
+# Its workflow, and the branch that holds it.
+GITHUB_WORKFLOW = "build.yml"
+GITHUB_REF = "main"
+# Builds a day, everyone's together and each player's. GitHub's machines are free, but a repository
+# that keeps them busy all day may be asked to stop.
+PER_DAY = "40"
+PER_ADDRESS = "16"

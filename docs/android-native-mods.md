@@ -6,8 +6,10 @@ mods that are turned on to a **build service**, downloads the library it makes, 
 library instead of the APK's own on the next start.
 
 The launcher part lives in `crates/horizon-client/src/android/native_builds.rs`; the build service is
-`packaging/android/mod_build_server.py` and `packaging/android/native_build.sh`; `mod_build_gateway.py`
-puts a public door and GitHub's runners in front of it.
+`packaging/android/mod_build_server.py` and `packaging/android/native_build.sh`. A gateway puts a
+public door in front of it — `mod_build_gateway.py` on a machine of your own, or
+`packaging/android/mod-build-worker/` on Cloudflare, which needs no machine at all — and either can
+send every build to GitHub's runners instead of compiling it itself.
 
 ## In the launcher
 
@@ -104,6 +106,33 @@ from the same commit its `versions.json` names.
 
 ## The gateway
 
+Something has to hold the token that runs the builds repository's workflows, and a phone can't. Two
+gateways speak the same protocol, so the launcher can't tell them apart: `mod_build_gateway.py` on a
+machine of your own, or `mod-build-worker/` on Cloudflare (below). Neither is a build machine when
+every build goes to GitHub.
+
+### On Cloudflare, without a machine of your own
+
+`packaging/android/mod-build-worker/` is a Cloudflare Worker: free, no card, nothing to keep running.
+It keeps the requests in KV, dispatches the builds repository's `build.yml`, and points the phone's
+download at the release the run published. A release asset of a public repository needs no token,
+where a run's artifact does, so the phone downloads through the Worker, which keeps the `Range` across
+GitHub's redirect. A finished job stays known for three days: the same mods on the same game are then
+no build at all.
+
+Its bindings are `STORE` (KV), its secret `GITHUB_TOKEN` (fine-grained: **Actions: write** on the
+builds repository), and its vars `GITHUB_REPO`, `GITHUB_WORKFLOW` (default `build.yml`), `GITHUB_REF`
+(default `main`), `PER_DAY` and `PER_ADDRESS`. `npx wrangler kv namespace create STORE`,
+`npx wrangler secret put GITHUB_TOKEN`, `npx wrangler deploy`, then set the launcher's **Build server**
+to the printed `https://….workers.dev` URL. **Compile on GitHub** only steers a gateway that can also
+run builds itself (`mod_build_gateway.py`): the Worker always uses GitHub's machines, and the launcher
+waits the same 90 minutes for either.
+
+The Worker's protocol has its own test
+(`node --test packaging/android/mod-build-worker/test.mjs`), which the Android source checks run.
+
+### `mod_build_gateway.py`
+
 `mod_build_gateway.py` is the public address in front of a machine that may sleep, and the door to
 GitHub's runners. It keeps the same protocol as the direct service and adds:
 
@@ -141,9 +170,11 @@ maintainer can make GitHub the only builder for a release.
 into one (for example `<you>/horizon-mod-builds`), set `HORIZON_REPO`/`HORIZON_REPO_PATH` in the two
 workflows to this fork, run **base** once for the release commit, and point the gateway's
 `GITHUB_BUILDS_REPO` at it. The runner checks out the commit, fetches the build scripts from that
-commit, compiles one player's mods in the sandbox, and uploads `status.json` and the library as the
-run's artifact. A mod's code runs while it compiles, so the token only reads that repository, and the
-player's build never writes the base cache.
+commit, compiles one player's mods in the sandbox, and leaves `status.json` and the library as the
+run's artifact; a `publish` job then puts them in a `build-<ask>` release, which is what the phone
+downloads, and tells the gateway. A `failed` job tells the gateway when the run dies instead, and
+`cleanup` deletes releases older than four days. A mod's code runs while it compiles, so the token
+only reads that repository, and the player's build never writes the base cache.
 
 ## Safety
 
@@ -163,6 +194,11 @@ refused with the numbers, not built into a game that lacks the hooks.
   `tools/android_build.py`, which sends its commit.
 - **"The build server can't be reached"** — check the address and that the server is listening; a
   phone on the same network needs the PC's LAN address, not `localhost`.
+- **"GitHub refused the build"** — the gateway's token may not run the builds repository's workflows
+  (fine-grained: **Actions: write**), or `GITHUB_REPO`/`GITHUB_BUILDS_REPO` names the wrong repository.
+- **"GitHub did not start the build"** — the run was asked for and no machine took it within 25
+  minutes; ask again. If it always says so, the builds repository's `build.yml` is not on the branch
+  the gateway dispatches (`GITHUB_REF`, `main` by default).
 - **The build is not used after an update** — the APK install changed; build again.
 - **The game closed twice and the build is gone** — the build did not reach a first frame and was set
   aside. Remove the mod that caused it, or build again after fixing it. The launcher shows the notice
@@ -182,4 +218,6 @@ refused with the numbers, not built into a game that lacks the hooks.
   `tools/android_build.py --rust-only`.
 - `packaging/android/mod_build_server.py`, `mod_build_sandbox.sh`, `mod_build_once.py`,
   `mod_build_gateway.py` — the service, its sandbox, the one-shot GitHub build, and the gateway.
+- `packaging/android/mod-build-worker/` — the same gateway on Cloudflare: the Worker, its
+  `wrangler.toml`, and its protocol test.
 - `packaging/android/mod-builds/` — the builds repository template.
