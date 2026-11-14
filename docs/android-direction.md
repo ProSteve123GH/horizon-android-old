@@ -19,14 +19,18 @@ components. [Integration records](android-upstream.json) identify reviewed merge
 | Custom modded server protocols | Require explicit protocol and gameplay implementations |
 
 See [the feature matrix](android-features.md), [mod SDK](mods.md),
-[account integration](microsoft-account.md) and [Android build guide](android.md).
+[account integration](microsoft-account.md), [Android build guide](android.md),
+[Minecraft installation import](android-minecraft-import.md) and
+[the fork notes](android-fork.md).
 
 ## Platform boundaries
 
-Player-facing game and launcher code is Rust. Android APIs use JNI/NDK calls.
-A single stock NativeActivity supplies the native input queue. Rust/JNI uses the
-system text editor and IME on Android's UI thread; no project Java/Kotlin host or
-second engine library is packaged.
+Gameplay, simulation and rendering are Rust. The first screen is a Kotlin/Jetpack
+Compose launcher in the main process; it talks to the Rust controller over JNI.
+The game runs in a separate `:game` process as a stock `NativeActivity`, so the
+launcher survives the game lifecycle and there is no second winit event loop.
+Rust/JNI uses the system text editor and IME on Android's UI thread. The APK
+contains one engine library, not a second copy for the launcher.
 
 Android graphics choices select system-driver Vulkan or GLES paths. Game
 resolution, draw distance, quality and FPS controls remain game options.
@@ -35,7 +39,8 @@ same device, settings, world and camera path.
 
 ## Remaining platform work
 
-- Android Storage Access Framework world import/export and log sharing.
+- Storage Access Framework world import/export and log sharing (Minecraft
+  installation import is implemented; player-data import/export is separate).
 - Production account registration and broader authenticated-server validation.
 - Hardware gamepad axes, controller rumble and complete TV navigation.
 - Low-memory and legacy GPU testing, lifecycle recovery and thermal profiling.

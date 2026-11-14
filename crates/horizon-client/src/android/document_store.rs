@@ -9,6 +9,18 @@ use std::{
 pub const ROOT: &str = "horizon";
 const DIRECTORY: &str = "vnd.android.document/directory";
 const MAX_CHILDREN: usize = 32768;
+// DocumentsContract.Document flags. Advertising the operations the provider
+// really implements is what lets Files offer edit, rename, move and delete.
+// Copy is not advertised: copyDocument is not implemented, so a same-provider
+// copy would fail. Files can still copy a document out through openDocument.
+const FLAG_SUPPORTS_WRITE: i32 = 1 << 1;
+const FLAG_SUPPORTS_DELETE: i32 = 1 << 2;
+const FLAG_DIR_SUPPORTS_CREATE: i32 = 1 << 3;
+const FLAG_SUPPORTS_RENAME: i32 = 1 << 6;
+const FLAG_SUPPORTS_MOVE: i32 = 1 << 8;
+// DocumentsContract.Root flags are a separate namespace from Document flags.
+const ROOT_FLAG_LOCAL_ONLY: i32 = 1 << 1;
+const ROOT_FLAG_SUPPORTS_IS_CHILD: i32 = 1 << 4;
 const CONFIG_FILES: &[&str] = &[
     "options.txt",
     "horizon-graphics.txt",
@@ -16,12 +28,109 @@ const CONFIG_FILES: &[&str] = &[
     "horizon-keypad.json",
 ];
 static GAME_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-pub fn set_game_active(active: bool) {
+static GAME_LOCK: std::sync::Mutex<Option<File>> = std::sync::Mutex::new(None);
+const GAME_LOCK_FILE: &str = "game.lock";
+/// The game holds `game.lock` for its whole lifetime, so the provider in the
+/// launcher process can tell that worlds and configuration are in use.
+pub fn set_game_active(home: &Path, active: bool) {
     GAME_ACTIVE.store(active, std::sync::atomic::Ordering::Release);
+    let mut held = GAME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if !active {
+        held.take();
+    } else if held.is_none() {
+        if let Ok(file) = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(home.join(GAME_LOCK_FILE))
+        {
+            if try_hold(&file) {
+                *held = Some(file);
+            }
+        }
+    }
 }
-fn world_access(id: &str) -> io::Result<()> {
-    if matches!(id.split('/').nth(1), Some("worlds" | "configuration"))
-        && GAME_ACTIVE.load(std::sync::atomic::Ordering::Acquire)
+fn try_hold(file: &File) -> bool {
+    #[cfg(target_os = "android")]
+    {
+        rustix::fs::flock(file, rustix::fs::FlockOperation::NonBlockingLockExclusive).is_ok()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        file.try_lock().is_ok()
+    }
+}
+/// `None` means the probe could not take a lock; `Some(true)` means someone
+/// else holds it.
+fn lock_probe(file: &File) -> Option<bool> {
+    #[cfg(target_os = "android")]
+    {
+        match rustix::fs::flock(file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+            Ok(()) => {
+                let _ = rustix::fs::flock(file, rustix::fs::FlockOperation::Unlock);
+                Some(false)
+            }
+            Err(rustix::io::Errno::WOULDBLOCK) => Some(true),
+            Err(_) => None,
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        match file.try_lock() {
+            Ok(()) => {
+                let _ = file.unlock();
+                Some(false)
+            }
+            Err(std::fs::TryLockError::WouldBlock) => Some(true),
+            Err(_) => None,
+        }
+    }
+}
+/// The same probe as `save::SessionLock::is_locked`. This module is also built
+/// by the host harness, so it cannot depend on the game's crate for the check.
+fn world_locked(world: &Path) -> bool {
+    match OpenOptions::new()
+        .write(true)
+        .open(world.join("session.lock"))
+    {
+        Ok(file) => lock_probe(&file) != Some(false),
+        Err(e) => e.kind() == ErrorKind::PermissionDenied,
+    }
+}
+fn game_locked(home: &Path) -> bool {
+    match OpenOptions::new()
+        .write(true)
+        .open(home.join(GAME_LOCK_FILE))
+    {
+        Ok(file) => lock_probe(&file) == Some(true),
+        Err(e) => e.kind() == ErrorKind::PermissionDenied,
+    }
+}
+
+fn world_access(home: &Path, id: &str) -> io::Result<()> {
+    let mut parts = id.split('/');
+    let first = parts.next();
+    let second = parts.next();
+    let folder = parts.next();
+    if second == Some("worlds") {
+        if let Some(folder) = folder {
+            let root = match first
+                .and_then(|p| p.strip_prefix('p'))
+                .and_then(|n| n.parse::<u32>().ok())
+            {
+                Some(0) => Some(home.to_owned()),
+                Some(profile) => Some(home.join("profiles").join(format!("profile-{profile}"))),
+                None => None,
+            };
+            if root.is_some_and(|root| world_locked(&root.join("saves").join(folder))) {
+                return Err(io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    "Close the world in the game before accessing it",
+                ));
+            }
+        }
+    }
+    if matches!(second, Some("worlds" | "configuration"))
+        && (GAME_ACTIVE.load(std::sync::atomic::Ordering::Acquire) || game_locked(home))
     {
         return Err(io::Error::new(
             ErrorKind::PermissionDenied,
@@ -169,22 +278,31 @@ fn row(home: &Path, id: &str) -> io::Result<Value> {
             _ => "application/octet-stream",
         }
     };
-    // Android DocumentsContract.Document flags. Fixed roots cannot be removed.
-    let flags = if doc.configuration {
-        if meta.is_file() { 2 } else { 0 }
-    } else if doc.reports {
-        0
-    } else if meta.is_dir() {
-        8
-    } else {
-        2
-    };
-    let flags = flags
-        | if doc.label.is_none() && !doc.reports && !doc.configuration {
-            4 | if meta.is_file() { 64 } else { 0 }
-        } else {
-            0
-        };
+    // Fixed roots (Mods, Worlds, Configuration...) stay in place, but children
+    // can be changed. Reports are always read-only. Configuration files are the
+    // four allowlisted files, so replacing or deleting them cannot reach the
+    // game's account data or other private files.
+    let writable = !doc.reports && meta.is_file();
+    let deletable = !doc.reports && doc.label.is_none();
+    let renamable = deletable && meta.is_file();
+    let movable = deletable;
+    let dir_create = !doc.reports && meta.is_dir();
+    let mut flags = 0;
+    if writable {
+        flags |= FLAG_SUPPORTS_WRITE;
+    }
+    if deletable {
+        flags |= FLAG_SUPPORTS_DELETE;
+    }
+    if renamable {
+        flags |= FLAG_SUPPORTS_RENAME;
+    }
+    if movable {
+        flags |= FLAG_SUPPORTS_MOVE;
+    }
+    if dir_create {
+        flags |= FLAG_DIR_SUPPORTS_CREATE;
+    }
     Ok(
         json!({"document_id": id, "_display_name": name, "mime_type": mime,
         "flags": flags, "_size": meta.len(), "last_modified": meta.modified().ok()
@@ -206,7 +324,7 @@ pub fn children(home: &Path, id: &str) -> io::Result<Vec<Value>> {
         .map(|folder| row(home, &folder_id(profile(home), folder)))
         .collect();
     }
-    world_access(id)?;
+    world_access(home, id)?;
     let doc = resolve(home, id)?;
     let mut result = Vec::new();
     for (index, entry) in fs::read_dir(doc.path)?.enumerate() {
@@ -248,7 +366,7 @@ pub fn is_child(home: &Path, parent: &str, child: &str) -> bool {
                     .is_some_and(|rest| rest.starts_with('/'))))
 }
 pub fn open(home: &Path, id: &str, mode: &str) -> io::Result<File> {
-    world_access(id)?;
+    world_access(home, id)?;
     let doc = resolve(home, id)?;
     if !fs::metadata(&doc.path)?.is_file() || (doc.reports && mode != "r") {
         return Err(invalid());
@@ -276,11 +394,16 @@ pub fn open(home: &Path, id: &str, mode: &str) -> io::Result<File> {
 }
 pub fn call(home: &Path, op: &str, id: &str, arg: &str) -> io::Result<Value> {
     if !matches!(op, "document" | "path" | "child") {
-        world_access(id)?;
+        world_access(home, id)?;
+        if op == "move" {
+            world_access(home, arg)?;
+        }
     }
     match op {
         "roots" => Ok(json!([{"root_id": ROOT, "document_id": ROOT,
-            "title": "Horizon Android", "flags": 18, "mime_types": "*/*"}])),
+            "title": "Horizon Android",
+            "flags": ROOT_FLAG_LOCAL_ONLY | ROOT_FLAG_SUPPORTS_IS_CHILD,
+            "mime_types": "*/*"}])),
         "document" => Ok(json!([row(home, id)?])),
         "children" => Ok(json!(children(home, id)?)),
         "child" => Ok(json!(is_child(home, id, arg))),
@@ -329,13 +452,15 @@ pub fn call(home: &Path, op: &str, id: &str, arg: &str) -> io::Result<Value> {
         }
         "rename" | "delete" => {
             let doc = resolve(home, id)?;
-            if doc.label.is_some() || doc.reports || doc.configuration {
+            if doc.label.is_some() || doc.reports {
                 return Err(invalid());
             }
             if op == "delete" {
-                // Nonempty directories must be emptied by the client explicitly.
+                // The Files app has already asked the user to confirm. Removing
+                // a world or mod folder means removing its contents too; the
+                // resolver still refuses every fixed root and symlink.
                 if doc.path.is_dir() {
-                    fs::remove_dir(doc.path)?;
+                    fs::remove_dir_all(doc.path)?;
                 } else {
                     fs::remove_file(doc.path)?;
                 }
@@ -354,6 +479,30 @@ pub fn call(home: &Path, op: &str, id: &str, arg: &str) -> io::Result<Value> {
                 rename_new(&doc.path, &target.path)?;
                 Ok(json!(child))
             }
+        }
+        "move" => {
+            let source = resolve(home, id)?;
+            if source.label.is_some() || source.reports {
+                return Err(invalid());
+            }
+            let parent = resolve(home, arg)?;
+            if parent.reports
+                || !parent.path.is_dir()
+                || (parent.configuration && !source.path.is_file())
+            {
+                return Err(invalid());
+            }
+            let name = source.path.file_name().ok_or_else(invalid)?;
+            let child = format!("{}/{}", arg.trim_end_matches('/'), name.to_string_lossy());
+            let target = resolve(home, &child)?;
+            if target.path.starts_with(&source.path) {
+                return Err(invalid());
+            }
+            if target.path.try_exists()? {
+                return Err(io::Error::from(ErrorKind::AlreadyExists));
+            }
+            fs::rename(&source.path, &target.path)?;
+            Ok(json!(child))
         }
         _ => Err(invalid()),
     }
@@ -478,12 +627,66 @@ mod world_tests {
         let config = children(&home, "p0/configuration").unwrap();
         assert_eq!(config.len(), 1);
         assert_eq!(config[0]["_display_name"], "options.txt");
-        assert_eq!(config[0]["flags"], 2);
+        // Write, delete, rename and move are advertised for a file. Copy is not,
+        // because copyDocument is not implemented; Files can still copy out.
+        assert_eq!(config[0]["flags"], 326);
+        assert_eq!(
+            call(&home, "document", "p0/configuration", "").unwrap()[0]["flags"],
+            8
+        );
+        assert_eq!(
+            call(&home, "roots", "", "").unwrap()[0]["flags"],
+            ROOT_FLAG_LOCAL_ONLY | ROOT_FLAG_SUPPORTS_IS_CHILD
+        );
         assert!(open(&home, "p0/configuration/account.json", "r").is_err());
         assert!(open(&home, "p0/configuration/android-launcher.json", "r").is_err());
         assert!(open(&home, "p0/configuration/../account.json", "r").is_err());
         assert!(call(&home, "mkdir", "p0/configuration", "options.txt").is_err());
-        assert!(call(&home, "delete", "p0/configuration/options.txt", "").is_err());
+        // The four allowlisted files can be replaced or deleted; names outside
+        // the allowlist still cannot be created.
+        assert!(call(&home, "create", "p0/configuration", "horizon-touch.json").is_ok());
+        assert!(call(&home, "delete", "p0/configuration/horizon-touch.json", "").is_ok());
+        assert!(!home.join("horizon-touch.json").exists());
+        assert!(call(&home, "create", "p0/configuration", "account.json").is_err());
+        assert_eq!(
+            call(&home, "document", "p0/worlds", "").unwrap()[0]["flags"],
+            8
+        );
+        assert_eq!(
+            call(&home, "document", "p0/worlds/Example", "").unwrap()[0]["flags"],
+            268
+        );
+        assert_eq!(
+            call(&home, "document", "p0/worlds/Example/level.dat", "").unwrap()[0]["flags"],
+            326
+        );
+        // Move is implemented for children, but a fixed root or a name outside
+        // the configuration allowlist is still refused.
+        call(&home, "mkdir", "p0/mods", "sub").unwrap();
+        call(&home, "create", "p0/mods", "move.hmod").unwrap();
+        assert_eq!(
+            call(&home, "move", "p0/mods/move.hmod", "p0/mods/sub").unwrap(),
+            json!("p0/mods/sub/move.hmod")
+        );
+        assert!(home.join("horizon-mods/sub/move.hmod").is_file());
+        assert!(!home.join("horizon-mods/move.hmod").exists());
+        assert!(call(&home, "move", "p0/mods/sub/move.hmod", "p0/configuration").is_err());
+        // A directory cannot enter Configuration even when it uses an
+        // allowlisted file name.
+        fs::create_dir_all(home.join("horizon-mods/horizon-touch.json")).unwrap();
+        assert!(
+            call(
+                &home,
+                "move",
+                "p0/mods/horizon-touch.json",
+                "p0/configuration"
+            )
+            .is_err()
+        );
+        assert!(home.join("horizon-mods/horizon-touch.json").is_dir());
+        fs::remove_dir_all(home.join("horizon-mods/horizon-touch.json")).unwrap();
+        assert!(call(&home, "move", "p0/mods", "p0/worlds").is_err());
+        call(&home, "delete", "p0/mods/sub", "").unwrap();
         open(&home, "p0/configuration/options.txt", "wt")
             .unwrap()
             .write_all(b"renderDistance:12\n")
@@ -499,16 +702,60 @@ mod world_tests {
         )
         .unwrap();
         assert_eq!(children(&home, "p7/configuration").unwrap().len(), 1);
-        set_game_active(true);
+        set_game_active(&home, true);
         let blocked = open(&home, "p0/worlds/Example/level.dat", "r").is_err()
             && call(&home, "delete", "p0/worlds/Example/level.dat", "").is_err()
             && children(&home, "p0/worlds").is_err();
         let config_blocked = open(&home, "p0/configuration/options.txt", "r").is_err()
-            && children(&home, "p0/configuration").is_err();
-        set_game_active(false);
+            && children(&home, "p0/configuration").is_err()
+            && call(&home, "move", "p0/configuration/options.txt", "p0/mods").is_err();
+        set_game_active(&home, false);
         assert!(blocked);
         assert!(config_blocked);
         assert!(open(&home, "p0/worlds/Example/level.dat", "r").is_ok());
+        // Reports stay read-only even though normal files advertise writes.
+        fs::create_dir_all(home.join("performance")).unwrap();
+        fs::write(home.join("performance/report.jsonl"), b"{}").unwrap();
+        assert_eq!(
+            call(&home, "document", "reports/report.jsonl", "").unwrap()[0]["flags"],
+            0
+        );
+        // Deleting a child directory after the Files confirmation removes the
+        // whole world, including region files.
+        fs::create_dir_all(home.join("saves/Example/region")).unwrap();
+        fs::write(home.join("saves/Example/region/r.0.0.mca"), b"region").unwrap();
+        assert!(call(&home, "delete", "p0/worlds/Example", "").is_ok());
+        assert!(!home.join("saves/Example").exists());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_running_world_cannot_be_changed_through_saf() {
+        let home = std::env::temp_dir().join(format!(
+            "horizon-locked-documents-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(home.join("saves/Locked")).unwrap();
+        fs::write(home.join("saves/Locked/level.dat"), b"fixture").unwrap();
+        let lock = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(home.join("saves/Locked/session.lock"))
+            .unwrap();
+        #[cfg(target_os = "android")]
+        rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive).unwrap();
+        #[cfg(not(target_os = "android"))]
+        lock.try_lock().unwrap();
+        assert!(call(&home, "delete", "p0/worlds/Locked", "").is_err());
+        assert!(call(&home, "delete", "p0/worlds/Locked/level.dat", "").is_err());
+        assert!(open(&home, "p0/worlds/Locked/level.dat", "r").is_err());
+        drop(lock);
+        assert!(open(&home, "p0/worlds/Locked/level.dat", "r").is_ok());
+        assert!(call(&home, "delete", "p0/worlds/Locked", "").is_ok());
         fs::remove_dir_all(home).unwrap();
     }
 }

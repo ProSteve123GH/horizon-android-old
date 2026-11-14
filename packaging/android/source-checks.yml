@@ -19,18 +19,42 @@ concurrency:
 jobs:
   source:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Cache the Android test harness targets
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .local/android/world-tests/target
+            .local/android/document-store-tests/target
+            .local/android/server-manager-tests/target
+            .local/android/launcher-appearance-tests/target
+            .local/android/screenshot-tests/target
+            .local/android/touch-layout-tests/target
+          key: android-harness-tests-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'tools/test_android_worlds.py', 'launcher/src/worlds.rs', 'launcher/src/worlds/tests.rs', 'tools/test_android_document_store.py', 'crates/horizon-client/src/android/document_store.rs', 'tools/test_android_servers.py', 'launcher/src/server_list.rs', 'crates/horizon-client/src/android/servers.rs', 'tools/test_android_launcher_appearance.py', 'crates/horizon-client/src/android/appearance.rs', 'tools/test_android_screenshots.py', 'crates/horizon-client/src/android/screenshots.rs', 'tools/test_android_touch_layouts.py', 'crates/horizon-client/src/android/touch_layouts.rs') }}
+          restore-keys: |
+            android-harness-tests-${{ runner.os }}-
       - run: git diff --check
       - run: python3 tools/check_public_tree.py --history
       - run: python3 -m unittest discover -s tests -p 'test_android*.py'
       - run: python3 tools/test_android_diagnostics.py
       - run: python3 tools/test_android_performance.py
       - run: python3 tools/test_android_content.py
+      - run: python3 tools/test_android_appearance.py
+      - run: python3 tools/test_android_instances.py
+      - run: python3 tools/test_android_worlds.py
+      - run: python3 tools/test_android_document_store.py
+      - run: python3 tools/test_android_performance_presets.py
+      - run: python3 tools/test_android_servers.py
+      - run: python3 tools/test_android_launcher_appearance.py
+      - run: python3 tools/test_android_screenshots.py
+      - run: python3 tools/test_android_touch_layouts.py
       - name: Check workflow export matches the active workflow
         run: |
           cmp .github/workflows/android-source.yml packaging/android/source-checks.yml

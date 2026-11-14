@@ -34,6 +34,17 @@ fn download_cache(home: &Path) -> PathBuf {
         .join(horizon_core::VANILLA_VERSION)
 }
 
+/// The directory `install_with_progress` caches verified Mojang downloads in.
+/// Importers fill this cache so the installer only downloads what is missing.
+pub fn download_directory(home: &Path) -> PathBuf {
+    download_cache(home)
+}
+
+/// Free bytes on the volume holding `home`, for the launcher's storage checks.
+pub fn available_space(home: &Path) -> Option<u64> {
+    fs4::available_space(home).ok()
+}
+
 /// Earlier Android packages installed textures only. An audio-capable APK must
 /// upgrade those resources before entering the game, not silently stay mute.
 pub fn ready(home: &Path) -> bool {
@@ -207,12 +218,15 @@ impl Download {
         }
         Ok(file)
     }
-    fn get(&self) -> Result<()> {
+    /// Returns true when the file had to be downloaded, false when a verified
+    /// cache entry was reused. The launcher uses this to distinguish a real
+    /// download from re-verifying files supplied by an import.
+    fn get(&self) -> Result<bool> {
         // Keep the opened inode while checking it: Android may unlink cache
         // entries between metadata, checksum validation and preparation.
         match fs::File::open(&self.path) {
             Ok(file) if file.metadata()?.len() == self.size && hash(&file)? == self.sha1 => {
-                return Ok(());
+                return Ok(false);
             }
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -245,11 +259,11 @@ impl Download {
                 Ok(())
             })();
             if result.is_ok() {
-                return result;
+                return result.map(|()| true);
             }
             let _ = fs::remove_file(&partial);
             if attempt == 2 {
-                return result.map_err(|error| {
+                return result.map(|()| true).map_err(|error| {
                     format!(
                         "Could not download Minecraft file {}: {error}",
                         self.path.display()
@@ -263,7 +277,7 @@ impl Download {
     }
 
     fn open(&self) -> Result<fs::File> {
-        cache_input::open(&self.path, || self.get())
+        cache_input::open(&self.path, || self.get().map(|_| ()))
     }
 }
 
@@ -301,7 +315,7 @@ impl InstallStage {
     pub fn label(self) -> &'static str {
         match self {
             Self::Metadata => "Checking Minecraft version",
-            Self::Download => "Downloading game resources and sound",
+            Self::Download => "Checking and downloading game resources",
             Self::Extract => "Unpacking verified files",
             Self::WorldData => "Preparing worlds and registries",
             Self::Controls => "Downloading touch controls",
@@ -314,6 +328,30 @@ pub struct InstallProgress {
     pub stage: InstallStage,
     pub done: u64,
     pub total: u64,
+    /// Bytes fetched from Mojang in this installation attempt.
+    pub downloaded: u64,
+    /// Bytes reused from verified installer-cache entries.
+    pub cached: u64,
+}
+
+/// True when `bytes` is an asset index published for this Minecraft version.
+/// Imported installations keep the index their source launcher used, so the
+/// installer does not replace a complete imported asset set with Mojang's
+/// current translations.
+pub fn accepted_asset_index(bytes: &[u8]) -> bool {
+    let digest = format!("{:x}", Sha1::digest(bytes));
+    let Ok(lock) = serde_json::from_str::<Value>(LOCK) else {
+        return false;
+    };
+    let minecraft = &lock["minecraft"];
+    minecraft["accepted_asset_index_sha1"]
+        .as_array()
+        .is_some_and(|indexes| {
+            indexes
+                .iter()
+                .any(|index| index.as_str() == Some(digest.as_str()))
+        })
+        || minecraft["asset_index_sha1"].as_str() == Some(digest.as_str())
 }
 
 pub fn install(home: &Path, progress: impl Fn(u64, u64) + Sync) -> Result<()> {
@@ -341,8 +379,27 @@ fn validate_manifest(bytes: &[u8], checksum: &str, version: &str, pins: &Value) 
 }
 
 pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + Sync) -> Result<()> {
+    install_with_progress_and_index(home, None, progress)
+}
+
+/// Installs while keeping an accepted asset index supplied by an import.
+/// Minecraft republished 26.3's asset index for translations only; replacing a
+/// complete imported index would download files the source already contained.
+pub fn install_with_progress_and_index(
+    home: &Path,
+    imported_index: Option<Vec<u8>>,
+    progress: impl Fn(InstallProgress) + Sync,
+) -> Result<()> {
     let _guard = INSTALLATION.lock().unwrap_or_else(|e| e.into_inner());
-    let report = |stage, done, total| progress(InstallProgress { stage, done, total });
+    let report = |stage, done, total| {
+        progress(InstallProgress {
+            stage,
+            done,
+            total,
+            downloaded: 0,
+            cached: 0,
+        })
+    };
     report(InstallStage::Metadata, 0, 0);
     let version = horizon_core::VANILLA_VERSION;
     let cache = download_cache(home);
@@ -375,7 +432,31 @@ pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + S
     official_url(manifest_url)?;
     let bytes = metadata_bytes(manifest_url)?;
     let manifest = validate_manifest(&bytes, checksum, version, pins)?;
-    let index = Download::from(&manifest["assetIndex"], cache.join("asset-index.json"))?;
+    let index_path = cache.join("asset-index.json");
+    let index = match imported_index {
+        Some(bytes) if accepted_asset_index(&bytes) => {
+            let checksum = format!("{:x}", Sha1::digest(&bytes));
+            let size = bytes.len() as u64;
+            let cached = match fs::File::open(&index_path) {
+                Ok(file) => file.metadata()?.len() == size && hash(file)? == checksum,
+                Err(_) => false,
+            };
+            if !cached {
+                let partial = index_path.with_extension("partial");
+                fs::write(&partial, &bytes)?;
+                fs::rename(&partial, &index_path)?;
+            }
+            Download::from(
+                &serde_json::json!({
+                    "url": format!("https://piston-meta.mojang.com/v1/packages/{checksum}/34.json"),
+                    "sha1": checksum,
+                    "size": size,
+                }),
+                index_path,
+            )?
+        }
+        _ => Download::from(&manifest["assetIndex"], index_path)?,
+    };
     index.get()?;
     let index: Value = serde_json::from_reader(index.open()?)?;
     let objects = index["objects"]
@@ -404,13 +485,15 @@ pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + S
     }
     let total: u64 = files.iter().map(|f| f.size).sum();
     log::info!(
-        "Minecraft {version}: downloading {} files directly from Mojang ({} MiB)",
+        "Minecraft {version}: checking {} files from Mojang and the local cache ({} MiB)",
         files.len(),
         total / 1048576
     );
     report(InstallStage::Download, 0, total);
     let next = AtomicUsize::new(0);
     let done = AtomicU64::new(0);
+    let downloaded = AtomicU64::new(0);
+    let cached = AtomicU64::new(0);
     let error = Mutex::new(None);
     std::thread::scope(|scope| {
         for _ in 0..8 {
@@ -421,15 +504,25 @@ pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + S
                     }
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some(file) = files.get(i) else { break };
-                    if let Err(e) = file.get() {
-                        *error.lock().unwrap() = Some(e.to_string());
-                        break;
+                    match file.get() {
+                        Ok(true) => {
+                            downloaded.fetch_add(file.size, Ordering::Relaxed);
+                        }
+                        Ok(false) => {
+                            cached.fetch_add(file.size, Ordering::Relaxed);
+                        }
+                        Err(e) => {
+                            *error.lock().unwrap() = Some(e.to_string());
+                            break;
+                        }
                     }
-                    report(
-                        InstallStage::Download,
-                        done.fetch_add(file.size, Ordering::Relaxed) + file.size,
+                    progress(InstallProgress {
+                        stage: InstallStage::Download,
+                        done: done.fetch_add(file.size, Ordering::Relaxed) + file.size,
                         total,
-                    );
+                        downloaded: downloaded.load(Ordering::Relaxed),
+                        cached: cached.load(Ordering::Relaxed),
+                    });
                 }
             });
         }
@@ -638,6 +731,26 @@ mod tests {
                 .is_file()
         );
         cleanup_download_cache(home.path()).unwrap();
+    }
+
+    #[test]
+    fn a_verified_download_cache_entry_is_not_fetched_again() {
+        let home = cache_home();
+        let path = home.path().join("cached-object");
+        let bytes = b"verified imported object";
+        fs::write(&path, bytes).unwrap();
+        let file = Download {
+            url: "https://piston-data.mojang.com/never-fetched".into(),
+            sha1: format!("{:x}", Sha1::digest(bytes)),
+            size: bytes.len() as u64,
+            path,
+        };
+        assert!(!file.get().unwrap());
+    }
+
+    #[test]
+    fn an_unknown_asset_index_is_not_used_for_an_import() {
+        assert!(!accepted_asset_index(b"{\"objects\":{}}"));
     }
 
     #[test]

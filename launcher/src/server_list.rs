@@ -2,8 +2,8 @@
 //! screen reads and writes the same file. Its format is vanilla's (`ServerList.load`/`save`,
 //! `ServerData.read`/`write`): uncompressed NBT, `servers` a list of compounds with `name`, `ip`,
 //! an optional `icon` (a PNG in base64), `acceptTextures`, `acceptedCodeOfConduct` and `hidden`.
-//! The launcher only adds and removes entries: every other field of every entry is written back
-//! as it was read.
+//! The launcher adds, edits, duplicates, reorders and removes entries; every other field of
+//! every entry is written back as it was read.
 use base64::Engine;
 use horizon_world::nbt::{self, Compound, JavaString, Limits, NamedTag, Tag};
 use std::fs;
@@ -58,6 +58,19 @@ fn entry(name: &str, ip: &str) -> Compound {
     ]
     .into_iter()
     .collect()
+}
+
+/// A copied server's name, distinct from the original and still at most 64 characters.
+fn copy_name(name: &str) -> String {
+    let base = match name.trim() {
+        "" => "Minecraft Server",
+        name => name,
+    };
+    const SUFFIX: &str = " (copy)";
+    let room = 64 - SUFFIX.chars().count();
+    let mut copy: String = base.chars().take(room).collect();
+    copy.push_str(SUFFIX);
+    copy
 }
 
 /// An address as the game connects to it: any case, 25565 when no port is given.
@@ -138,6 +151,75 @@ impl List {
             .map_or(0, |i| i + 1);
         self.entries.insert(at, entry(name, ip));
         Ok(())
+    }
+
+    /// Edits the `index`th shown server, keeping its picture when the address is unchanged and
+    /// every field the launcher does not understand. A blank name gets the game's default.
+    pub fn edit(&mut self, index: usize, name: &str, ip: &str) -> Result<Server, String> {
+        let (name, ip) = (name.trim(), ip.trim());
+        if ip.is_empty() {
+            return Err("A server needs an address.".into());
+        }
+        let name = if name.is_empty() {
+            "Minecraft Server"
+        } else {
+            name
+        };
+        let at = self
+            .positions()
+            .get(index)
+            .copied()
+            .ok_or_else(|| format!("There is no server {}.", index + 1))?;
+        if !same_address(&text(&self.entries[at], "ip"), ip) {
+            self.entries[at].remove(&key("icon"));
+        }
+        self.entries[at].insert(key("name"), Tag::String(name.into()));
+        self.entries[at].insert(key("ip"), Tag::String(ip.into()));
+        Ok(self.servers()[index].clone())
+    }
+
+    /// Copies the `index`th shown server directly after it, keeping every field and giving the
+    /// copy a distinct name. A server list may contain two entries for one address.
+    pub fn duplicate(&mut self, index: usize) -> Result<Server, String> {
+        let at = self
+            .positions()
+            .get(index)
+            .copied()
+            .ok_or_else(|| format!("There is no server {}.", index + 1))?;
+        let mut copy = self.entries[at].clone();
+        let name = copy_name(&text(&copy, "name"));
+        copy.insert(key("name"), Tag::String(name.as_str().into()));
+        self.entries.insert(at + 1, copy);
+        Ok(self.servers()[index + 1].clone())
+    }
+
+    /// Moves the `index`th shown server by `delta` places among the shown servers. Hidden
+    /// entries stay where they are. Moving past either end is an error, not a clamp.
+    pub fn move_by(&mut self, index: usize, delta: i64) -> Result<(), String> {
+        let positions = self.positions();
+        if index >= positions.len() {
+            return Err(format!("There is no server {}.", index + 1));
+        }
+        let target = index as i64 + delta;
+        if target < 0 || target as usize >= positions.len() {
+            return Err("That server is already at the edge of the list.".into());
+        }
+        let target = target as usize;
+        if target == index {
+            return Ok(());
+        }
+        let (from, to) = (positions[index], positions[target]);
+        let entry = self.entries.remove(from);
+        // Removing an earlier entry shifts a later target one place left.
+        self.entries.insert(if from < to { to - 1 } else { to }, entry);
+        Ok(())
+    }
+
+    /// The actual positions of the shown entries, in their shown order.
+    fn positions(&self) -> Vec<usize> {
+        (0..self.entries.len())
+            .filter(|&i| !hidden(&self.entries[i]))
+            .collect()
     }
 
     /// Removes the `index`th shown server.

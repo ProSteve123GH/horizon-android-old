@@ -21,6 +21,10 @@ mod account;
 mod browser;
 #[path = "android/dns.rs"]
 mod android_dns;
+#[path = "android/appearance.rs"]
+mod appearance;
+#[path = "android/bridge.rs"]
+mod bridge;
 #[path = "android/catalog.rs"]
 mod catalog;
 #[path = "android/device_preferences.rs"]
@@ -43,22 +47,46 @@ mod documents;
 mod exit_reports;
 #[path = "android/gallery.rs"]
 mod gallery;
+#[path = "android/instances.rs"]
+mod instances;
+// The desktop launcher's world model: discovery, metadata, copying, renaming
+// and deletion. The Android world manager adds only its UI and launch request.
+#[rustfmt::skip]
+#[allow(dead_code)]
+#[path = "../../../launcher/src/worlds.rs"]
+mod worlds;
+#[path = "android/minecraft_import.rs"]
+mod minecraft_import;
 #[path = "android/native_ime.rs"]
 mod native_ime;
 #[path = "android/performance.rs"]
 mod performance;
+#[path = "android/performance_presets.rs"]
+mod performance_presets;
 #[path = "android/platform.rs"]
 mod platform;
 #[rustfmt::skip]
 #[allow(dead_code)]
 #[path = "../../../launcher/src/proxy.rs"]
 mod proxy;
+// The desktop launcher's servers.dat model: vanilla NBT, pictures and the fields the launcher
+// does not use. The Android Server Manager adds its UI, favorites and groups.
+#[rustfmt::skip]
+#[allow(dead_code)]
+#[path = "../../../launcher/src/server_list.rs"]
+mod server_list;
+#[path = "android/screenshots.rs"]
+mod screenshots;
 #[path = "android/search_queue.rs"]
 mod search_queue;
 #[path = "android/secure_store.rs"]
 mod secure_store;
+#[path = "android/servers.rs"]
+mod servers;
 #[path = "android/shader_catalog.rs"]
 mod shader_catalog;
+#[path = "android/touch_layouts.rs"]
+mod touch_layouts;
 #[rustfmt::skip]
 #[allow(dead_code)]
 #[path = "../../../launcher/src/skins.rs"]
@@ -82,6 +110,9 @@ mod backend {
     }
     pub fn data_dir() -> std::path::PathBuf {
         HOME.get().expect("android_main sets account home").clone()
+    }
+    pub fn try_data_dir() -> Option<std::path::PathBuf> {
+        HOME.get().cloned()
     }
 }
 
@@ -153,7 +184,7 @@ pub(crate) fn android_event_loop() -> Result<EventLoop<()>, winit::error::EventL
     })
 }
 
-fn init_logging() {
+pub(crate) fn init_logging() {
     let trace_gles = !PUBLIC_BUILD && std::env::var_os("HORIZON_GLES_TRACE").is_some();
     let mut logger = android_logger::Config::default()
         .with_max_level(if trace_gles {
@@ -261,6 +292,15 @@ fn android_main(app: AndroidApp) {
         }
     }
     let mut launcher = launcher::Launcher::new(home.clone());
+    // The Compose launcher (main process) starts this `:game` process to play,
+    // optionally into the world it selected (`{"play":true,"world":"<folder>"}`).
+    if let Ok(bytes) = std::fs::read(home.join(bridge::LAUNCH_REQUEST)) {
+        let _ = std::fs::remove_file(home.join(bridge::LAUNCH_REQUEST));
+        let world = serde_json::from_slice::<serde_json::Value>(&bytes)
+            .ok()
+            .and_then(|request| request.get("world")?.as_str().map(str::to_owned));
+        launcher.play_directly(world);
+    }
     let result = android_event_loop()
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })
         .and_then(|events| events.run_app(&mut launcher).map_err(Into::into));

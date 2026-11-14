@@ -198,27 +198,104 @@ fn vibrate_gamepad(pulse: horizon_client::gamepad::Pulse, amplitude: i32) -> boo
     .unwrap_or(false)
 }
 
+/// The Compose launcher's process has no NativeActivity: its bridge registers the
+/// Java VM and the launcher Activity here (`bridge.rs`).
+static BRIDGE: std::sync::OnceLock<(JavaVM, std::sync::Mutex<Option<GlobalRef>>)> =
+    std::sync::OnceLock::new();
+pub(crate) fn set_bridge_context(vm: JavaVM, activity: GlobalRef) {
+    let (_, slot) = BRIDGE.get_or_init(|| (vm, std::sync::Mutex::new(None)));
+    *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(activity);
+}
+
+/// Runs `f` with the Compose launcher Activity, returning its own error text.
+/// The importers use this because they need the provider's message, not just
+/// the `None` that [`with_context`] logs.
+pub(crate) fn with_activity<R>(
+    f: impl FnOnce(&mut JNIEnv<'_>, &JObject<'_>) -> std::result::Result<R, String>,
+) -> std::result::Result<R, String> {
+    let (vm, slot) = BRIDGE.get().ok_or("The launcher Activity is not ready")?;
+    let activity = slot
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .ok_or("The launcher Activity is not ready")?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|e| format!("Could not attach to Android: {e}"))?;
+    let result = env.with_local_frame(16, |env| {
+        Ok::<_, jni::errors::Error>(f(env, activity.as_obj()))
+    });
+    // A provider or resolver call can leave a Java exception pending even when
+    // the closure converted its JNI error to text. Clear it before returning to
+    // the worker thread, and surface the provider's own message when possible.
+    let provider_error = take_exception(&mut env);
+    match result {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(error)) => Err(provider_error.unwrap_or(error)),
+        Err(error) => {
+            let _ = env.exception_clear();
+            Err(provider_error.unwrap_or_else(|| error.to_string()))
+        }
+    }
+}
+
+/// Reads and clears a pending Java exception, returning its `toString()` text.
+fn take_exception(env: &mut JNIEnv<'_>) -> Option<String> {
+    if !env.exception_check().ok()? {
+        return None;
+    }
+    let throwable = env.exception_occurred().ok()?;
+    env.exception_clear().ok()?;
+    let text = env
+        .call_method(&throwable, "toString", "()Ljava/lang/String;", &[])
+        .ok()?
+        .l()
+        .ok()?;
+    if text.is_null() {
+        return None;
+    }
+    env.get_string((&text).into()).ok().map(Into::into)
+}
+
 pub(crate) fn with_context<R>(
     f: impl FnOnce(&mut JNIEnv<'_>, &JObject<'_>) -> jni::errors::Result<R>,
 ) -> Option<R> {
-    crate::APP.with(|slot| {
+    let mut f = Some(f);
+    let native = crate::APP.with(|slot| {
         let app = slot.borrow();
         let app = app.as_ref()?;
+        let f = f.take()?;
         let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }.ok()?;
         let mut env = vm.attach_current_thread().ok()?;
         let result = env.with_local_frame(16, |env| {
             let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
             f(env, &activity)
         });
-        match result {
+        Some(match result {
             Ok(value) => Some(value),
             Err(error) => {
                 let _ = env.exception_clear();
                 log::warn!("Android platform: {error}");
                 None
             }
+        })
+    });
+    if let Some(result) = native {
+        return result;
+    }
+    let f = f.take()?;
+    let (vm, slot) = BRIDGE.get()?;
+    let activity = slot.lock().unwrap_or_else(|e| e.into_inner()).clone()?;
+    let mut env = vm.attach_current_thread().ok()?;
+    let result = env.with_local_frame(16, |env| f(env, activity.as_obj()));
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            let _ = env.exception_clear();
+            log::warn!("Android platform: {error}");
+            None
         }
-    })
+    }
 }
 pub fn clipboard_get() -> Option<String> {
     with_context(|env, activity| {
@@ -274,6 +351,14 @@ pub fn set_orientation(orientation: crate::catalog::Orientation) {
             "(I)V",
             &[JValue::Int(orientation.android_value())],
         )?;
+        Ok(())
+    });
+}
+
+/// Closes this process's Activity (the `:game` process returning to the Compose launcher).
+pub fn finish_activity() {
+    with_context(|env, activity| {
+        env.call_method(activity, "finish", "()V", &[])?;
         Ok(())
     });
 }
@@ -503,6 +588,12 @@ pub fn capture_mouse(capture: bool) -> bool {
 pub fn show(text: &str) {
     show_editor(text, false);
 }
+pub fn show_secret(text: &str) {
+    MULTILINE.with(|mode| mode.set(false));
+    if crate::native_ime::show_secret(text) {
+        EDIT.with(|e| *e.borrow_mut() = Some(text.into()));
+    }
+}
 pub fn show_multiline(text: &str) {
     show_editor(text, true);
 }
@@ -587,67 +678,56 @@ pub fn open_login_url(url: &str) -> Result<(), String> {
     if !fixed && !authorize && !verification {
         return Err("Unexpected Microsoft sign-in URL.".into());
     }
-    crate::APP.with(|slot| {
-        let app = slot.borrow();
-        let app = app.as_ref().ok_or("Android activity unavailable")?;
-        let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }.map_err(|e| e.to_string())?;
-        let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
-        env.with_local_frame(16, |env| -> jni::errors::Result<()> {
-            let url = JObject::from(env.new_string(url)?);
-            let uri = env
-                .call_static_method(
-                    "android/net/Uri",
-                    "parse",
-                    "(Ljava/lang/String;)Landroid/net/Uri;",
-                    &[JValue::Object(&url)],
-                )?
-                .l()?;
-            let action = JObject::from(env.new_string("android.intent.action.VIEW")?);
-            let intent = env.new_object(
-                "android/content/Intent",
-                "(Ljava/lang/String;Landroid/net/Uri;)V",
-                &[JValue::Object(&action), JValue::Object(&uri)],
-            )?;
-            // The documented Custom Tabs intent protocol uses a nullable session
-            // binder. Unsupported browsers fall back to ordinary ACTION_VIEW.
-            let extras = env.new_object("android/os/Bundle", "()V", &[])?;
-            let session =
-                JObject::from(env.new_string("android.support.customtabs.extra.SESSION")?);
-            let null = JObject::null();
-            env.call_method(
-                &extras,
-                "putBinder",
-                "(Ljava/lang/String;Landroid/os/IBinder;)V",
-                &[JValue::Object(&session), JValue::Object(&null)],
-            )?;
-            env.call_method(
-                &intent,
-                "putExtras",
-                "(Landroid/os/Bundle;)Landroid/content/Intent;",
-                &[JValue::Object(&extras)],
-            )?;
-            let title =
-                JObject::from(env.new_string("android.support.customtabs.extra.TITLE_VISIBILITY")?);
-            env.call_method(
-                &intent,
-                "putExtra",
-                "(Ljava/lang/String;I)Landroid/content/Intent;",
-                &[JValue::Object(&title), JValue::Int(1)],
-            )?;
-            let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-            env.call_method(
-                &activity,
-                "startActivity",
-                "(Landroid/content/Intent;)V",
-                &[JValue::Object(&intent)],
-            )?;
-            Ok(())
-        })
-        .map_err(|e| {
-            let _ = env.exception_clear();
-            e.to_string()
-        })
+    with_context(|env, activity| {
+        let url = JObject::from(env.new_string(url)?);
+        let uri = env
+            .call_static_method(
+                "android/net/Uri",
+                "parse",
+                "(Ljava/lang/String;)Landroid/net/Uri;",
+                &[JValue::Object(&url)],
+            )?
+            .l()?;
+        let action = JObject::from(env.new_string("android.intent.action.VIEW")?);
+        let intent = env.new_object(
+            "android/content/Intent",
+            "(Ljava/lang/String;Landroid/net/Uri;)V",
+            &[JValue::Object(&action), JValue::Object(&uri)],
+        )?;
+        // The documented Custom Tabs intent protocol uses a nullable session
+        // binder. Unsupported browsers fall back to ordinary ACTION_VIEW.
+        let extras = env.new_object("android/os/Bundle", "()V", &[])?;
+        let session = JObject::from(env.new_string("android.support.customtabs.extra.SESSION")?);
+        let null = JObject::null();
+        env.call_method(
+            &extras,
+            "putBinder",
+            "(Ljava/lang/String;Landroid/os/IBinder;)V",
+            &[JValue::Object(&session), JValue::Object(&null)],
+        )?;
+        env.call_method(
+            &intent,
+            "putExtras",
+            "(Landroid/os/Bundle;)Landroid/content/Intent;",
+            &[JValue::Object(&extras)],
+        )?;
+        let title =
+            JObject::from(env.new_string("android.support.customtabs.extra.TITLE_VISIBILITY")?);
+        env.call_method(
+            &intent,
+            "putExtra",
+            "(Ljava/lang/String;I)Landroid/content/Intent;",
+            &[JValue::Object(&title), JValue::Int(1)],
+        )?;
+        env.call_method(
+            activity,
+            "startActivity",
+            "(Landroid/content/Intent;)V",
+            &[JValue::Object(&intent)],
+        )?;
+        Ok(())
     })
+    .ok_or_else(|| "Could not open the Microsoft sign-in page.".to_owned())
 }
 
 /// Poll only at a low rate; Android sends no NativeActivity disconnect callback.

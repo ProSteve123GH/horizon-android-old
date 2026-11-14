@@ -6,8 +6,11 @@ and Java multiplayer. It does not run arbitrary Minecraft JAR versions.
 
 ## Install and play
 
-1. Install the APK matching the device architecture from [Releases](https://github.com/Vasysik/horizon-android/releases).
-2. Open Horizon and choose **Download Minecraft 26.3**.
+1. Install an APK matching the device architecture. Fork dev builds are in
+   [development APKs](android-dev-builds.md); upstream release APKs are on
+   [Vasysik/horizon-android Releases](https://github.com/Vasysik/horizon-android/releases).
+2. Open Horizon and choose **Download Minecraft 26.3**, or reuse an existing
+   installation with **Import folder** / **Import ZIP**.
 3. Wait for resource verification and installation, then choose **Play**.
 
 The first installation downloads approximately 500 MiB, including sounds.
@@ -15,6 +18,13 @@ Downloads use official Mojang HTTPS endpoints and pinned hashes. Verified cache
 entries are reused after an interrupted download. Subsequent launches can use
 the installed resources offline. No PC preparation or Java runtime is required
 on the phone. Use a licensed Minecraft account for authenticated servers.
+
+Reusing another launcher's 26.3 files is local and optional. Horizon ignores
+Java libraries, LWJGL and Java runtimes, copies only the pinned client JAR,
+asset index and asset objects, and downloads anything missing. See
+[Minecraft installation import](android-minecraft-import.md). Android 11+ may
+block access to another app's private `Android/data` directory; export a ZIP or
+use **Download** in that case.
 
 Worlds, profiles, resource caches and account data use app-private storage.
 Updating with the same signing certificate preserves them; uninstalling the app
@@ -32,24 +42,61 @@ compatibility. Legacy GPU testing remains in progress. When a shared atlas canno
 fit the adapter, Android reduces static atlas sprites while retaining font pixels,
 dynamic slots and the separate terrain texture arrays.
 
+## Skins, capes and Ely.by
+
+The Compose launcher's **Skins** tab and the classic Rust launcher use the same
+shared wardrobe APIs. Import PNG skins/capes, keep a local gallery and preview
+them on a Classic/Slim model. Local choices affect your own view; explicit cloud
+actions change a supported provider's profile. The account chip opens **Saved
+accounts** for switching between saved Microsoft/Ely.by accounts or Offline, and
+**Sign in with Ely.by** is available beside Microsoft sign-in. The classic
+launcher remains under **Settings → Open classic launcher** as a fallback. See
+[appearance and account capabilities](android-appearance.md) for cloud
+restrictions and the frontend-independent game contract.
+
 ## Launcher
 
-- **Play:** install resources and launch a world or server.
+The first screen is a Jetpack Compose launcher over the Rust controller bridge.
+The game runs in a separate `:game` process as an Android `NativeActivity`. The
+The classic Rust launcher remains available through **Settings → Open classic
+launcher** as a fallback.
+
+- **Play:** download or import Minecraft 26.3, repair missing resources, and
+  launch a world or server.
+- **Skins:** import and apply local skin/cape PNGs, preview Classic/Slim, and
+  perform explicit cloud actions.
 - **Mods:** import native Horizon packages using a direct HTTPS `.hmod` URL
   on 64-bit builds. New packages are disabled until enabled in Installed.
 - **Packs:** find and install resource packs with checksum verification.
+- **Shaders:** find and install shader packs.
 - **Installed:** enable, disable or remove installed additions.
-- **Settings:** rendering mode, input mode, profile, server and orientation.
-  Profiles keep separate saves and settings. Offline player names are edited
-  alongside Microsoft sign-in in **Accounts**.
+- **Settings:** rendering mode, resolution, refresh rate, chunk-worker ceiling,
+  reusable RAM cache, orientation, aspect, immersive/cutout, instances,
+  performance presets, saved servers, launcher appearance, input, offline name,
+  server, Game files, World files and diagnostics. Accounts are opened from the
+  chip in the header.
 
 Java mod search and modpack import are not available on Android. Fabric, Forge,
 NeoForge and Mixin code require native ports; installing their JARs does not make
 them executable by this engine. See [Android feature support](android-features.md).
 
-The installer displays the current stage: metadata checks, resource download,
-unpacking, world-data preparation, touch textures and finalization. Progress shows
-MiB or file counts where available. Retry retains previously verified downloads.
+The installer and importer display the current stage: metadata checks, resource
+download, unpacking, world-data preparation, touch textures and finalization.
+Progress shows MiB or file counts where available. Retry retains previously
+verified downloads. **Repair missing files** verifies the prepared copy and
+redownloads only what is absent or damaged; it does not install LWJGL.
+
+### Instances
+
+**Settings → Instances** lists the default instance and every instance you
+create. Each one is a folder with its own worlds, settings, mods, packs and
+shader packs, so changing or deleting one does not touch the others. The list
+shows the Minecraft version, storage use, last launch and what each instance
+holds. Create, rename, duplicate, launch, or delete an instance; duplication
+copies worlds and settings but leaves out logs, caches and account sessions.
+The default instance and the one in use cannot be deleted, and duplicate names
+are refused. An instance whose folder disappeared is marked and cannot be
+launched or duplicated.
 
 ### Accounts
 
@@ -108,6 +155,28 @@ The top row includes F3, chat, pause, Options and F5 perspective. The auxiliary
 allow combinations. Menus support taps, list swipes and slider/inventory dragging.
 Android Back closes the keyboard first, then the current screen.
 
+### Layout profiles
+
+The launcher stores named snapshots of a touch layout per instance: **Play >
+Touch layouts** or **Settings > Game > Touch layout profiles** opens the sheet.
+**New** snapshots the controls exactly as the game has them right now (control
+mode, every placement, button visibility and custom-key positions); applying a
+profile switches the instance back to its arrangement, and **Save the current
+layout here** overwrites a profile with the game's current arrangement. Rename,
+duplicate and delete work on the snapshots only — deleting a profile never
+changes the layout itself. **Reset to the default layout** restores the factory
+placements and visibility, keeps custom keys with their actions at the factory
+grid and clears the active profile.
+
+Profiles are kept in `android-touch-layouts.json` beside the instance's other
+settings and apply instantly to the touch file; a running game reloads them when
+its touch controls are next (re)created. Sensitivity, handedness, the dynamic
+joystick and the gyroscope are never part of a snapshot. A profile never removes
+or rebinds a custom key: a key you added after saving keeps its own placement
+when the profile applies, and keys the game no longer has stay removed. Each
+card previews the snapshot's controls at their stored positions (outlines are
+hidden controls, squares are custom keys).
+
 ### HUD margins and orientation
 
 **Options > Accessibility** has horizontal and vertical HUD margins. These inset
@@ -123,10 +192,14 @@ In launcher Settings, **Automatic** selects keyboard/mouse input when Android re
 both a QWERTY keyboard and a mouse. **Keyboard & mouse** selects it explicitly;
 **Touch & Android keyboard** restores touch input. The preference is applied at Play.
 
-One stock `android.app.NativeActivity` runs the Rust client for all input modes.
-The system keyboard uses Android's stock text editor and input-method service
-through Rust/JNI on the UI thread. There are no project Java/Kotlin classes and
-no second copy of the engine in the APK.
+The Compose launcher is Kotlin in the main process. The Rust game is an
+`android.app.NativeActivity` in the `:game` process, so closing the game does not
+destroy the launcher and the two cannot share a winit event loop. Kotlin starts
+the Android document pickers and owns the documents provider; Rust/JNI provides
+the controller bridge, persisted document reads, storage checks and the system
+keyboard. The system keyboard uses Android's stock text editor and input-method
+service through Rust/JNI on the UI thread. There is one engine library in the
+APK, not a second copy for the launcher.
 
 Mouse cursor, buttons, wheel and modifiers use the normal desktop input path.
 Pointer capture provides relative camera movement and releases in menus or on
@@ -160,9 +233,20 @@ launcher entry; TV support is experimental and analog gamepad axes are not conne
 
 F2 keeps the original PNG in the profile and publishes a copy to
 **Pictures/HorizonAndroid** through Android MediaStore. Android 10+ needs no
-storage permission. Android 8.1�9 asks for storage permission when first saving;
+storage permission. Android 8.1–9 asks for storage permission when first saving;
 if access is denied, the profile copy remains available. Gallery publication runs
 outside the render thread and reports success or failure in game chat.
+
+Open **Play → Screenshots** or **Settings → Storage → Screenshots** to browse the
+originals kept in every instance. The grid samples thumbnails, so opening a large
+gallery does not decode every full-size image. Tap a screenshot for a full-screen
+preview with pinch zoom, pan, filename, resolution, file size and date. Sharing
+uses an app-private, read-only content provider with a temporary URI grant; raw
+private paths never reach the share sheet. Deletion asks for confirmation and
+keeps working if the file was already removed outside the app. The list can be
+sorted newest first, oldest first or by name, and grouped by instance when more
+than one instance has screenshots. Removing the original does not remove a copy
+already published to Pictures.
 
 ## Rendering, sound and vibration
 
@@ -183,9 +267,13 @@ triggers need a separate backend. Leaving the game returns to the launcher.
 
 ## Build (developers only)
 
-Install Rust 1.95 (pinned in `rust-toolchain.toml`), Python 3.11+, Android SDK platform 35, build tools, NDK, a JDK and
-Gradle 8.14. Android Studio's bundled JDK is supported. Prepare the pinned engine
-tables privately, then build the required ABI:
+Install Rust 1.95 (pinned in `rust-toolchain.toml`), Python 3.11+, Android SDK
+platform 36, build tools 35, NDK 28.2.13676358, JDK 17 for Gradle and Gradle 8.14.
+Vanilla Minecraft 26.3 requires Java SE 25, but Horizon is native Rust and does
+not run the Java client. JDK 25 is only for Mojang's Java data exporters;
+Gradle 8.14 runs on JDK 17 because Java 25 requires Gradle 9.1 or newer. Android
+Studio's bundled JDK 17 is supported for the Gradle side. Prepare the pinned
+engine tables privately, then build the required ABI:
 
 ```sh
 rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
@@ -198,7 +286,8 @@ python tools/android_build.py --abi x86_64 --public
 
 Windows discovers `%LOCALAPPDATA%/Android/Sdk` and Android Studio's JDK. Otherwise
 set `ANDROID_HOME`/`JAVA_HOME` or pass `--sdk`/`--java-home`. `--gradle` selects a
-Gradle executable. Public APKs are written to
+Gradle executable. The CI dev workflow and its signing setup are described in
+[development APKs](android-dev-builds.md). Public APKs are written to
 `.local/android/apk/<abi>/horizon-android-public.apk`; signing material stays in
 `.local/android/`. Keep the signing key to allow updates over an existing install.
 
@@ -227,6 +316,8 @@ are not source-controlled. Chat/F3/F5 use regions of `gui.png`; other states use
 python tools/android_build.py --abi x86_64 --clippy
 python -m unittest discover -s tests -p 'test_android*.py'
 python tools/check_public_tree.py --history
+cargo check -p horizon-android
+cargo test -p horizon-client --lib --no-default-features --features android-test minecraft_import
 cargo test -p horizon-client --lib --no-default-features touch
 ```
 
@@ -243,3 +334,5 @@ Actual USB/Bluetooth gameplay, vendor GPU compatibility and thermal performance
 still need physical-device testing; emulator frame rates are not phone results.
 
 Reviewed upstream revisions are recorded in [android-upstream.json](android-upstream.json).
+Fork-specific changes and the PR #56 merge are in [the fork notes](android-fork.md);
+the update procedure is in [upstream sync](android-upstream-sync.md).

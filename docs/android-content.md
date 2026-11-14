@@ -75,10 +75,19 @@ filesystem paths. Invalid imports and interrupted temporary files do not replace
 existing content. Original URI grants are not retained after copying.
 
 The allowlisted DocumentsProvider supports browsing, copying files in and out,
-editing, renaming files and deleting add-ons. Fixed directories cannot be removed;
-nonempty subdirectories must be emptied explicitly. Hidden paths, traversal and
-symlinks are rejected. It does not require MANAGE_EXTERNAL_STORAGE. World import/
-ZIP-world import/export and moving the game to an external folder remain separate tasks.
+editing, renaming, moving and deleting files and child folders. Fixed directories
+(Mods, Resource Packs, Shader Packs, Worlds, Configuration and Reports) cannot be
+removed or moved. The Configuration root exposes only `options.txt`,
+`horizon-graphics.txt`, `horizon-touch.json` and `horizon-keypad.json`; those
+files can be written, renamed, moved or deleted, while account data and other
+private files stay outside the provider. Deleting a child folder (a world or
+add-on folder) after the system confirmation removes its contents. The provider
+does not implement same-provider `copyDocument`; system Files can still copy
+documents in and out through create, read and write. Hidden paths, traversal and
+symlinks are rejected. World and configuration content operations are refused
+while the game is running: the provider probes the game lock and each world's
+`session.lock`. It does not require MANAGE_EXTERNAL_STORAGE. ZIP-world
+import/export and moving the game to an external folder remain separate tasks.
 
 Copying directly with a file manager bypasses the Import file validator; wait for
 the copy to finish before starting the game, and use the game's pack selection to

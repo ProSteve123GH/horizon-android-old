@@ -1,6 +1,15 @@
 {
   "upstream": "https://github.com/ludovic111/horizon",
   "fork": "https://github.com/Vasysik/horizon-android",
+  "android_fork": "https://github.com/ProSteve123GH/horizon-android",
+  "android_fork_branch": "dev/android-compose-import",
+  "android_fork_merge": {
+    "pr": 56,
+    "pr_repository": "Vasysik/horizon-android",
+    "merge_commit": "8667de85a",
+    "status": "Merged into the fork as a normal merge commit; the upstream PR was still open when reviewed.",
+    "notes": "Compose launcher, JNI bridge and :game process split merged on top of the Android 0.7.7 baseline. Later account, wardrobe and input fixes were preserved. The fork adds Minecraft installation import/repair and an artifact-only dev workflow."
+  },
   "base_commit": "d65282fb0f0fd7ba57876aef87dc4c6c2b5fa04b",
   "base_selection": "Best matching first-parent revision; 309 revisions compared",
   "matching_source_files": 3106,
@@ -26,5 +35,15 @@
     "commits_beyond_merged_baseline": 482,
     "merge_preview_conflicting_files": 12,
     "status": "Reviewed candidate only; not merged or Android-validated"
+  },
+  "accounts_appearance_review": {
+    "date": "2026-11-02",
+    "fetched_main": "f696adc8996d7d4b11e7d50a863f2735a21c8000",
+    "reviewed_account_commits": [
+      "ba579191f",
+      "0de577b50"
+    ],
+    "moving_main_merged": false,
+    "notes": "Reviewed newer account-save reporting and desktop encrypted-file storage changes. Android retains its Keystore AES/GCM store and reports sign-in save failures through the existing shared task. The selected stable nightly baseline is unchanged; no experimental UI branches were merged."
   }
 }

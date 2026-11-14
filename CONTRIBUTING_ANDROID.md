@@ -10,7 +10,7 @@ on real phones. For rendering or performance reports, include the phone, Android
 version, renderer, resolution scale, render distance and APK/source version.
 Emulator FPS does not establish phone performance.
 
-[Report an Android bug](https://github.com/Vasysik/horizon-android/issues/new?template=android-bug.yml)
+[Report an Android bug](https://github.com/ProSteve123GH/horizon-android/issues/new?template=android-bug.yml)
 or send a focused pull request against `android`. Reproduction steps and a short
 video often help more than a large log dump. Do not post account/session files,
 tokens, private server details, signing keys or complete app data.
@@ -28,12 +28,18 @@ python tools/check_public_tree.py
 
 Touch preferences and the HUD editor live in `crates/horizon-client/src/touch*`;
 standard options widgets in `options_ui.rs`; the Android entry point and launcher
-in `android_main.rs` and `android/`; game bindings in `game/pad.rs` and
+in `android_main.rs` and `android/`; the Compose launcher and JNI declarations in
+`packaging/android/kotlin/`; game bindings in `game/pad.rs` and
 `game/android_input.rs`. Add focused regression tests for input/state changes.
+Minecraft installation import tests live in
+`crates/horizon-client/src/minecraft_import.rs`.
 
-For upstream fixes, review and merge `upstream/main` rather than copying files.
-Keep deployment workflows inactive and update `docs/android-upstream.json`.
-Never merge experimental branches automatically.
+For upstream fixes, review and merge the relevant upstream branch rather than
+copying files: `upstream/android` for the Android fork and `upstream/main` for
+the engine. Keep upstream deployment workflows inactive; only the fork dev
+workflow uploads APK artifacts. Update `docs/android-upstream.json` and
+[the fork notes](docs/android-fork.md). Never merge experimental branches
+automatically.
 
 `--release-candidate` produces a non-debuggable local APK, remaps personal build
 paths and checks known credential patterns and packaged data paths. This checks

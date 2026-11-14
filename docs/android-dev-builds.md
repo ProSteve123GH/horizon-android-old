@@ -1,50 +1,108 @@
 # Development APKs
 
-The **Android dev APKs** Actions workflow builds ARM64 on code pushes to `android`.
-Documentation-only pushes are skipped. Older in-progress builds are cancelled
-when a newer commit arrives. **Run workflow → all_abis** builds all four ABIs.
-Pull requests never receive the signing key or trigger this workflow.
+The **Horizon Android — Signed Dev APK Build, Audit & Artifact** workflow builds
+installable APKs without publishing a GitHub Release. It runs on pushes to
+`android`, `android-dev*` and `dev/android-*` when build inputs change.
+**Run workflow** can build all four ABIs and choose the `release` or `fast` Rust
+profile. Pull requests never receive
+the signing secret and do not trigger this workflow.
 
-These APKs use the optimized Rust `release` profile (including ThinLTO), public
-payload checks and official resource downloads. The package is
-`dev.horizon.android.dev`, separate from the normal release, and the visible
-version contains the run number and source commit. Test data is separate;
-worlds and accounts are not automatically copied from the release app.
-The workflow does not publish GitHub Releases or send Discord messages.
+The default push build is `arm64-v8a`. A dispatch with **all_abis** builds
+`arm64-v8a`, `armeabi-v7a`, `x86` and `x86_64`. The APK uses the optimized Rust
+`release` profile by default (ThinLTO), public payload checks and on-device
+Mojang downloads.
 
-## One-time maintainer setup
+The CI package is `dev.horizon.android.dev`, labelled **Horizon Android Dev**, so
+it installs beside a release app. The version name contains the workflow run and
+source commit; the version code is `1000 + run_number`. Test data is separate:
+worlds and accounts are not copied from the release app.
 
-Create a **new, dedicated dev key**, not the release signing key. In PowerShell:
+The workflow never publishes GitHub Releases, sends Discord messages or attaches
+raw Minecraft inputs, prepared resources, player data or signing keys to an
+artifact. It uses GitHub's private Actions cache for the prepared Minecraft
+inputs so a rebuild does not download them again; the cache is not a
+downloadable artifact and is not part of the APK. The cache never contains a
+key supplied through the secret.
+
+## Getting an APK
+
+1. Open **Actions → Horizon Android — Signed Dev APK Build, Audit & Artifact**
+   in the fork.
+2. Open the successful run for the branch and commit you want.
+3. Download the artifact for the ABI, for example
+   `horizon-dev-123-arm64-v8a`.
+4. Unpack the artifact ZIP and install the APK. Android may require allowing
+   installs from the browser or file manager used to open it.
+
+Each artifact contains the APK, `SHA256SUMS.txt`, `LICENSE.txt`,
+`THIRD_PARTY_NOTICES.md` and `BUILD.json`. `BUILD.json` records the exact commit,
+branch, ABI, Rust profile, package, version code, signing source and workflow run.
+Artifacts expire after 14 days. GitHub requires sign-in to download them.
+
+These are experimental builds. They have not automatically passed gameplay,
+graphics-driver or performance testing. Emulator frame rates are not phone
+results.
+
+## Checking a build
+
+- Open the run under **Actions → Horizon Android — Signed Dev APK Build, Audit
+  & Artifact**, then the **Signed dev APK · …** job.
+  Each workflow step is named after the stage that failed; open it for the
+  command and compiler output.
+- The artifact name ends in the ABI, for example
+  `horizon-dev-123-arm64-v8a`; `BUILD.json` repeats `abi`, `commit`, `package`,
+  `version_code`, `profile` and the signing source.
+- On a machine with Android build tools, `aapt2 dump badging file.apk` shows the
+  package, version code and native ABI. On any machine, `unzip -l file.apk` shows
+  `lib/<abi>/libhorizon_android.so`.
+- Verify the download with `sha256sum -c SHA256SUMS.txt` in the unpacked
+  artifact directory, or compare `sha256sum file.apk` with the checksum file.
+
+## Signing
+
+The workflow prefers the repository secret `ANDROID_DEV_KEYSTORE_BASE64`. If it
+is absent, the workflow restores a cached fallback dev key. If neither exists, it
+generates a new fallback key and caches only that generated key. A key supplied
+through the secret is never written to the Actions cache.
+
+The key must use:
+
+- alias `androiddebugkey`;
+- store password `android`;
+- key password `android`.
+
+The same key allows in-place updates between CI dev builds. Replacing it requires
+uninstalling the dev app first, which deletes its app-private test data. Normal
+release installations are unaffected. Back up test worlds before changing keys.
+
+Create a dedicated dev key, never the release key:
 
 ```powershell
-keytool -genkeypair -keystore "$env:TEMP/horizon-ci-dev.keystore" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -validity 10000 -dname "CN=Horizon Android Dev CI"
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:TEMP/horizon-ci-dev.keystore")) | Set-Clipboard
+keytool -genkeypair -keystore "$env:TEMP/horizon-ci-dev.keystore" `
+  -storepass android -keypass android -alias androiddebugkey `
+  -keyalg RSA -validity 10000 -dname "CN=Horizon Android Dev CI"
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:TEMP/horizon-ci-dev.keystore")) |
+  Set-Clipboard
 ```
 
-In repository Settings → Secrets and variables → Actions, add
-`ANDROID_DEV_KEYSTORE_BASE64` with the clipboard contents. Keep a private backup
-of this key outside the repository. The password/alias above match the existing
-build configuration. Clear the clipboard afterwards. Never attach the key to an
-issue, artifact, release or message.
+Add the clipboard contents as `ANDROID_DEV_KEYSTORE_BASE64` in repository
+Settings → Secrets and variables → Actions. Keep a private backup outside the
+repository. Clear the clipboard afterwards. Never attach the key to an issue,
+artifact, release, commit or message.
 
-The workflow fails early if the secret is absent. Keeping the same key permits
-in-place updates between CI dev builds; replacing it requires reinstalling the
-dev app. Existing locally signed debug APKs may use a different key as well.
-Back up their test data before uninstalling. Normal release installations are
-unaffected. Do not reset this workflow's run counter: its increasing value is
-used as Android's dev-channel version code.
+## Build environment
 
-## Sharing with testers
+The workflow uses Ubuntu 24.04, JDK 25 for the Mojang exporters, JDK 17 for
+Gradle/Android, Gradle 8.14, Android platform 36, build tools 35.0.0 and NDK
+28.2.13676358. The split is deliberate: vanilla Minecraft 26.3 requires Java SE
+25, but Horizon does not run the Java client, and Gradle 8.14 only runs on Java
+24 or older. It caches Cargo dependencies, the prepared engine inputs and a
+generated fallback signing key (never a key supplied through the secret). Cold
+builds prepare the generated engine tables from official downloads and can take
+substantially longer than incremental builds. Preparation downloads the
+content-addressed 26.3 manifest named by `research-lock.json`, not the mutable
+launcher-meta entry, so a Mojang republish does not silently change the inputs.
 
-Open Actions → Android dev APKs → the successful run → Artifacts. Share the run
-URL in Discord and specify its commit and architecture. Download and unpack the
-artifact ZIP, then install its APK. GitHub requires sign-in to download workflow
-artifacts; artifacts expire after 14 days. Each contains the APK, checksums,
-license notices and `BUILD.json` identifying the exact source and build profile.
-Experimental builds have not automatically passed gameplay or performance tests.
-
-Private signing keys, raw Minecraft inputs, prepared resource directories,
-player data and local diagnostics are not uploaded as downloadable artifacts.
-Only Cargo/Gradle build caches are retained separately for subsequent CI builds.
-Cold builds also prepare the generated engine tables, so they may take
-substantially longer than an incremental local build.
+The source copy of the workflow is `packaging/android/dev-builds.yml`; the active
+copy is `.github/workflows/android-dev.yml`. Keep them identical. Local builds
+and the SDK/NDK setup are described in [the Android guide](android.md#build-developers-only).

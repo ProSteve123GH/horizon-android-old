@@ -59,7 +59,7 @@ Fujitsu F-03L · Portrait mode
 
 ## Help build it
 
-Try a developer build, send a reproducible bug report, or contribute a focused
+Try a [developer build](docs/android-dev-builds.md), send a reproducible bug report, or contribute a focused
 pull request against `android`. Touch input, accessibility, hardware controllers,
 Android lifecycle and real-phone profiling are useful areas to help.
 [Start here](CONTRIBUTING_ANDROID.md).
@@ -74,10 +74,12 @@ setup and preparation for building the engine. The Android distribution APK
 contains generated Horizon tables; it downloads original Minecraft resources and
 sound from Mojang and the touch textures from Mojang's official sample repository.
 No PC resource preparation is needed to install and play on the phone.
-[Publication notes](docs/android-publication.md).
+[Publication notes](docs/android-publication.md). Reusing an existing Minecraft
+installation is described in [Minecraft installation import](docs/android-minecraft-import.md).
 
 This branch preserves upstream authorship and history. [Upstream integration](docs/android-upstream.json)
-records reviewed merges. Original deployment workflows remain disabled in this fork.
+records reviewed merges. Upstream deployment workflows remain disabled in this fork;
+the Android dev workflow only uploads CI artifacts and never publishes a release.
 
 Original copyright and third-party notices are retained in [LICENSE](LICENSE)
 and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Mojang textures are not
