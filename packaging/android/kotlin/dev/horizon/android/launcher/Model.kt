@@ -105,6 +105,7 @@ data class Project(
     val state: String?,
     val note: String?,
     val button: String,
+    val native: Boolean = false,
 )
 
 data class CatalogState(
@@ -307,6 +308,7 @@ data class Snapshot(
                             state = it.text("state"),
                             note = it.text("note"),
                             button = it.optString("button"),
+                            native = it.optBoolean("native"),
                         )
                     },
                     offset = catalog.optInt("offset"),

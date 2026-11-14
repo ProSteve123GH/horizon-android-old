@@ -45,6 +45,7 @@ import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Folder
@@ -123,6 +124,9 @@ private fun settingIcon(id: String): ImageVector = when (id) {
     "name" -> Icons.Rounded.Badge
     "server" -> Icons.Rounded.Dns
     "servers" -> Icons.Rounded.Dns
+    "native_server" -> Icons.Rounded.Cloud
+    "native_github" -> Icons.Rounded.Cloud
+    "native_guide" -> Icons.Rounded.Cloud
     "gpu_profile" -> Icons.Rounded.BugReport
     "record_performance" -> Icons.Rounded.Timer
     "export_diagnostics" -> Icons.Rounded.Archive
@@ -207,6 +211,7 @@ private fun SettingGroup(group: SettingGroup, state: Snapshot, actions: Launcher
                             "touch_layouts" -> actions.openTouchLayouts()
                             "servers" -> actions.openServers()
                             "screenshots" -> actions.openScreenshots()
+                            "native_guide" -> actions.openBuildServer()
                             "appearance" -> actions.openAppearance()
                             else -> act(row.id)
                         }

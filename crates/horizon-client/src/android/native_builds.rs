@@ -38,10 +38,10 @@ const CURRENT: &str = "current";
 const APK: &str = "apk";
 /// A build's folder starts with this; a new build takes the place of the last.
 const COMPILED: &str = "compiled-";
-/// How often a job is looked at, and how long it may take at all.
+/// How often a job is looked at, and how long it may take at all: a machine of the player's own
+/// reports its own failures long before this, and GitHub's runs are the slow ones.
 const POLL: Duration = Duration::from_secs(2);
-const LONGEST: Duration = Duration::from_secs(40 * 60);
-const LONGEST_ON_GITHUB: Duration = Duration::from_secs(90 * 60);
+const LONGEST: Duration = Duration::from_secs(90 * 60);
 /// How long a sleeping gateway may take to wake.
 const WAKING: Duration = Duration::from_secs(5 * 60);
 /// Tries in a row that brought nothing before a look or a download gives up.
@@ -550,7 +550,7 @@ fn build_job(
     if github {
         query.push_str("&via=github");
     }
-    let longest = if github { LONGEST_ON_GITHUB } else { LONGEST };
+    let longest = LONGEST;
     let started = Instant::now();
     let key = loop {
         stopped(cancel)?;

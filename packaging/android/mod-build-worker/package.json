@@ -1,0 +1,5 @@
+{
+  "name": "horizon-mod-build-worker",
+  "private": true,
+  "type": "module"
+}
