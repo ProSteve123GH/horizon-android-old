@@ -187,7 +187,7 @@ fun CatalogScreen(page: Destination, state: Snapshot, wide: Boolean, actions: La
                                     chosen.clear()
                                     selecting = false
                                 },
-                                enabled = !state.native.job.running,
+                                enabled = !catalog.busy && !state.native.job.running,
                                 modifier = Modifier.weight(1f),
                             ) { Text("Build ${chosen.size}", maxLines = 1) }
                         }
@@ -215,7 +215,7 @@ fun CatalogScreen(page: Destination, state: Snapshot, wide: Boolean, actions: La
                         project = project,
                         selecting = selecting,
                         selected = chosen.contains(project.index),
-                        building = state.native.job.running,
+                        building = catalog.busy || state.native.job.running,
                         onSelect = { on ->
                             if (on) {
                                 if (!chosen.contains(project.index)) chosen.add(project.index)
