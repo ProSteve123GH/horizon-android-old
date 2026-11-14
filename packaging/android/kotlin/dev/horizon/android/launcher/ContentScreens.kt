@@ -452,13 +452,15 @@ private fun ProjectCard(
                         onCheckedChange = onSelect,
                     )
                     project.native -> Column(horizontalAlignment = Alignment.End) {
-                        project.state?.let {
-                            Text(
-                                it,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        }
+                        Text(
+                            project.state ?: "Native mod",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (project.state != null) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
                         FilledTonalButton(
                             onClick = { act("build_native", project.index.toString()) },
                             enabled = !building,
