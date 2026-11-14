@@ -196,21 +196,25 @@ fn deserialize_visibility<'de, D: serde::Deserializer<'de>>(d: D) -> Result<[u8;
 }
 impl Default for Settings {
     fn default() -> Self {
+        // Zalith-style mobile layout: analog movement on the lower-left,
+        // separate attack/use controls on the lower-right, and jump/sneak
+        // stacked above the action cluster. Coordinates are normalized so the
+        // arrangement survives portrait and landscape surfaces.
         let base = [
-            Placement::new(0.13, 0.76, 0.32),
-            Placement::new(0.72, 0.78, 0.105),
-            Placement::new(0.92, 0.78, 0.16),
-            Placement::new(0.81, 0.86, 0.115),
-            Placement::new(0.80, 0.64, 0.16),
-            Placement::new(0.92, 0.52, 0.16),
-            Placement::new(0.46, 0.055, 0.075),
-            Placement::new(0.50, 0.055, 0.075),
-            Placement::new(0.54, 0.055, 0.075),
-            Placement::new(0.73, 0.95, 0.075),
-            Placement::new(0.42, 0.055, 0.075),
-            Placement::new(0.58, 0.055, 0.075),
-            Placement::new(0.80, 0.96, 0.075),
-            Placement::new(0.92, 0.36, 0.12),
+            Placement::new(0.112, 0.795, 0.30),
+            Placement::new(0.50, 0.87, 0.105),
+            Placement::new(0.932, 0.816, 0.135),
+            Placement::new(0.869, 0.816, 0.135),
+            Placement::new(0.869, 0.656, 0.215),
+            Placement::new(0.932, 0.656, 0.215),
+            Placement::new(0.126, 0.055, 0.075),
+            Placement::new(0.011, 0.055, 0.075),
+            Placement::new(0.241, 0.055, 0.075),
+            Placement::new(0.793, 0.955, 0.075),
+            Placement::new(0.126, 0.175, 0.075),
+            Placement::new(0.241, 0.175, 0.075),
+            Placement::new(0.70, 0.955, 0.075),
+            Placement::new(0.70, 0.44, 0.105),
         ];
         let mut layouts = [base; 3];
         layouts[2][Control::Sneak as usize] = Placement::new(0.13, 0.76, 0.10);
@@ -230,7 +234,7 @@ impl Default for Settings {
             circle_size: 32.0,
             button_scale: 1.0,
             custom_buttons: Vec::new(),
-            analog_movement: false,
+            analog_movement: true,
             sprint_button: true,
             sprint_toggle: false,
             inventory_controls: false,
@@ -493,15 +497,39 @@ mod tests {
         }
         let settings: Settings = serde_json::from_value(json).unwrap();
         assert_eq!(settings.circle_size, 48.0);
-        for row in settings.layouts {
+        for (row, factory) in settings.layouts.iter().zip(Settings::default().layouts) {
             assert_eq!(row[6].center, [0.25, 0.2]);
             assert_eq!(row[6].opacity, 0.35);
-            assert_eq!(row[Control::Debug as usize].center, [0.42, 0.055]);
-            assert_eq!(row[Control::Perspective as usize].center, [0.58, 0.055]);
+            assert_eq!(
+                row[Control::Debug as usize].center,
+                factory[Control::Debug as usize].center
+            );
+            assert_eq!(
+                row[Control::Perspective as usize].center,
+                factory[Control::Perspective as usize].center
+            );
         }
         let roundtrip: Settings =
             serde_json::from_slice(&serde_json::to_vec(&settings).unwrap()).unwrap();
         assert_eq!(roundtrip.layouts[0][6].center, [0.25, 0.2]);
+    }
+
+    #[test]
+    fn factory_layout_matches_zalith_action_cluster() {
+        let settings = Settings::default();
+        let move_button = settings.layouts[0][Control::Move as usize];
+        let attack = settings.layouts[0][Control::Attack as usize];
+        let use_button = settings.layouts[0][Control::Use as usize];
+        let jump = settings.layouts[0][Control::Jump as usize];
+        let sneak = settings.layouts[0][Control::Sneak as usize];
+
+        assert_eq!(move_button.center, [0.112, 0.795]);
+        assert_eq!(attack.center, [0.869, 0.656]);
+        assert_eq!(use_button.center, [0.932, 0.656]);
+        assert_eq!(jump.center, [0.932, 0.816]);
+        assert_eq!(sneak.center, [0.869, 0.816]);
+        assert!(settings.analog_movement);
+        assert!(settings.sprint_button);
     }
     #[test]
     fn swap_factory_migration_keeps_custom_positions() {
