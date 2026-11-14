@@ -45,6 +45,7 @@
 .env
 .env.*
 !.env.example
+**/.wrangler/
 /android-launch.json
 /control.json
 

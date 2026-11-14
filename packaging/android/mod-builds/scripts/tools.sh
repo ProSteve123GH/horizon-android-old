@@ -5,8 +5,16 @@ set -euo pipefail
 root=$HOME/horizon-android-build
 
 rm -rf "$HOME/.rustup" "$HOME/.cargo"
+# The sandbox mounts .rustup read-only, so the toolchain the game pins (rust-toolchain.toml) and the
+# target it builds for must be present here or the sandbox tries to download them and fails on the
+# read-only tree. Install exactly what the game asks for, down to its components.
+channel=$(sed -n 's/^channel = "\([^"]*\)"/\1/p' "$root/source/rust-toolchain.toml" | head -1)
+[ -n "$channel" ] || channel=stable
+mapfile -t components < <(sed -n 's/^components = \["\(.*\)"\]/\1/p' "$root/source/rust-toolchain.toml" | head -1 | tr -d '"' | tr ',' '\n' | sed 's/^ //')
+# shellcheck disable=SC2086
 curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal \
-  --default-toolchain stable --target aarch64-linux-android
+  --default-toolchain "$channel" --target aarch64-linux-android \
+  $(for c in "${components[@]}"; do printf -- "--component %s " "$c"; done)
 # shellcheck disable=SC1091
 . "$HOME/.cargo/env"
 
