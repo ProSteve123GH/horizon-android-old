@@ -20,6 +20,9 @@ send every build to GitHub's runners instead of compiling it itself.
 - **Build** sends the mods that are on to the server named in **Settings → Native mods → Build server**.
   The build card shows the line, the compile, and the download. **Cancel** stops waiting; the server
   keeps compiling and the result is not downloaded.
+- The mod catalog (Mods, source Horizon) marks native mods **Native mod**; each one has **Build**, which
+  downloads it, turns it on and builds in one press. **Select native** ticks several and **Build N**
+  compiles them together, since one build carries every native mod that is on.
 - A finished build is chosen automatically. **Use** chooses it again after it was set aside (see below),
   resetting that count; **Stop using** makes the next start run the APK's own library; **Delete** removes
   the build from the phone.
@@ -32,6 +35,10 @@ send every build to GitHub's runners instead of compiling it itself.
 The build server address is a launcher setting, not a game setting: `https://host` or `http://host:port`,
 no path. Cleartext `http://` is accepted for a server on the same network; the app's manifest still
 refuses cleartext for everything else.
+
+**Settings → Native mods → Host a build server** is the same setup as the gateway and builds repository
+sections below, in the launcher: the free Cloudflare Worker, the GitHub builder repository, and where to
+paste the URL.
 
 ## The build service
 

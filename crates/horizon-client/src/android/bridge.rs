@@ -256,6 +256,7 @@ impl Controller {
             {"group": "Native mods", "rows": [
                 row("native_server", "Build server", if c.native_server.is_empty() { "Not set".into() } else { c.native_server.clone() }, "text"),
                 switch("native_github", "Compile on GitHub", if c.native_github { "Through the gateway" } else { "Off" }, c.native_github),
+                row("native_guide", "Host a build server", "Free gateway and GitHub builder, step by step".into(), "action"),
             ]},
             {"group": "Storage", "rows": [
                 row("screenshots", "Screenshots", "Browse, preview, share or delete".into(), "action"),
@@ -591,6 +592,7 @@ impl Controller {
                     "state": state,
                     "note": note,
                     "button": self.catalog.install_button(p),
+                    "native": crate::catalog::source_only_mod(p),
                 })
             })
             .collect();
@@ -1448,6 +1450,21 @@ impl Controller {
                 )?;
                 self.catalog.status =
                     "Building the game with the native mods that are on. Keep Horizon open.".into();
+            }
+            "build_native" => {
+                // The catalog's native mods, by result index ("2,5"): install them, turn them on,
+                // and build one game that carries every native mod that is on.
+                let indices: Vec<usize> = arg
+                    .split(',')
+                    .filter_map(|index| index.trim().parse().ok())
+                    .collect();
+                self.catalog.build_native(
+                    &home,
+                    &indices,
+                    &self.version_name,
+                    crate::native_builds::build_commit(),
+                    self.stamp.clone(),
+                );
             }
             "native_cancel" => {
                 crate::native_builds::cancel();

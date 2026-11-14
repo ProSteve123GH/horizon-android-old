@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Face
 import androidx.compose.material.icons.rounded.Inventory2
@@ -98,6 +99,8 @@ enum class Destination(val id: String, val label: String, val icon: ImageVector,
     Screenshots("screenshots", "Screenshots", Icons.Rounded.PhotoLibrary, inNavigation = false),
     // Opened from the gear beside the account chip on every page, not from the navigation.
     Settings("settings", "Settings", Icons.Rounded.Settings, inNavigation = false),
+    // The how-to for a build server, opened from Settings > Native mods.
+    BuildServer("build-server", "Build server", Icons.Rounded.Cloud, inNavigation = false),
 }
 
 /** Runs a launcher action; failures also reach the status line through the bridge. */
@@ -159,8 +162,10 @@ private fun LauncherContent(
     // Settings is a layer over the current page, not a destination: closing it reveals that page as it was.
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(destination, settingsOpen) {
-        // The gallery is a launcher view, not one of the catalog pages.
-        if (!settingsOpen && destination == Destination.Screenshots) return@LaunchedEffect
+        // The gallery and the build-server guide are launcher views, not catalog pages.
+        if (!settingsOpen && (destination == Destination.Screenshots || destination == Destination.BuildServer)) {
+            return@LaunchedEffect
+        }
         act("page", if (settingsOpen) Destination.Settings.id else destination.id)
     }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
@@ -248,7 +253,15 @@ private fun LauncherContent(
         }
     }
     BackHandler(enabled = settingsOpen || destination != Destination.Play) {
-        if (settingsOpen) settingsOpen = false else destination = Destination.Play
+        when {
+            settingsOpen -> settingsOpen = false
+            // The guide was opened from Settings, so closing it returns there.
+            destination == Destination.BuildServer -> {
+                destination = Destination.Play
+                settingsOpen = true
+            }
+            else -> destination = Destination.Play
+        }
     }
 
     val actions = LauncherActions(
@@ -264,6 +277,10 @@ private fun LauncherContent(
         openScreenshots = {
             settingsOpen = false
             destination = Destination.Screenshots
+        },
+        openBuildServer = {
+            settingsOpen = false
+            destination = Destination.BuildServer
         },
         openAppearance = {
             backgroundError = null
@@ -435,6 +452,7 @@ class LauncherActions(
     val openTouchLayouts: () -> Unit,
     val openServers: () -> Unit,
     val openScreenshots: () -> Unit,
+    val openBuildServer: () -> Unit,
     val openAppearance: () -> Unit,
     val choose: (String) -> Unit,
     val edit: (id: String, title: String, value: String, hint: String) -> Unit,
@@ -495,6 +513,7 @@ private fun Page(
                         CatalogScreen(page, state, wide, actions)
                     Destination.Installed -> InstalledScreen(state, actions)
                     Destination.Screenshots -> ScreenshotGallery(state.config.profileName)
+                    Destination.BuildServer -> BuildServerGuide(state)
                     Destination.Settings -> {} // drawn as a layer by LauncherScaffold
                 }
             }
@@ -519,6 +538,7 @@ private fun Header(page: Destination, state: Snapshot, short: Boolean, actions: 
                 Destination.Shaders -> "Shader Packs"
                 Destination.Installed -> "Installed"
                 Destination.Screenshots -> "Screenshots"
+                Destination.BuildServer -> "Build server"
                 Destination.Settings -> "Settings"
             },
             style = if (short) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,

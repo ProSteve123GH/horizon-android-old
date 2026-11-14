@@ -203,6 +203,8 @@ impl Page {
 }
 enum Reply {
     Done(String, horizon_client::content_files::Kind),
+    /// The catalog stays where it is: the job handed over to something else (a native mod build).
+    Status(String),
 }
 pub struct Catalog {
     pub local: Vec<LocalItem>,
@@ -210,6 +212,9 @@ pub struct Catalog {
     pub sections: [bool; 3],
     pub pending_delete: Option<LocalItem>,
     downloaded: Vec<(browser::SourceId, String)>,
+    /// The native mods (`.hnmod`) this instance has, by id: they are compiled into the game, so
+    /// they live in `horizon-native-mods/`, not in a content folder (`refresh`).
+    native_ids: std::collections::BTreeSet<String>,
     downloading: Option<(browser::SourceId, String)>,
     progress: Arc<Mutex<f32>>,
     failed: Option<(browser::SourceId, String)>,
@@ -242,6 +247,7 @@ impl Catalog {
             sections: [false, false, false],
             pending_delete: None,
             downloaded: vec![],
+            native_ids: Default::default(),
             downloading: None,
             progress: Arc::new(Mutex::new(0.0)),
             failed: None,
@@ -285,6 +291,16 @@ impl Catalog {
             .collect();
         let on = horizon_client::mod_list::ModList::load(&game);
         self.bundled_enabled = on.enabled.difference(&on.disabled).cloned().collect();
+        self.native_ids = std::fs::read_dir(game.join(horizon_client::mod_list::NATIVE_DIR))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|entry| entry.file_type().is_ok_and(|t| t.is_file()))
+            .filter_map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                name.strip_suffix(".hnmod").map(str::to_owned)
+            })
+            .collect();
         let settings = horizon_client::settings::Settings::load(&game.join("options.txt"));
         self.local.clear();
         for kind in horizon_client::content_files::Kind::ALL {
@@ -339,6 +355,7 @@ impl Catalog {
             .downloaded
             .iter()
             .any(|(source, id)| *source == project.source && *id == project.id)
+            || (source_only_mod(project) && self.native_ids.contains(&project.id))
             || (project.kind == Kind::Mod
                 && self.local.iter().any(|item| {
                     item.kind == horizon_client::content_files::Kind::Mods
@@ -388,6 +405,7 @@ impl Catalog {
                     self.status = s;
                     self.show_installed(Some(kind));
                 }
+                Ok(Reply::Status(s)) => self.status = s,
                 Err(e) => self.status = e,
             }
             self.refresh(home);
@@ -468,7 +486,7 @@ impl Catalog {
         } else if self.page == Page::Mods {
             let native = items.iter().filter(|p| source_only_mod(p)).count();
             format!(
-                "{} .hmod / {} native .hnmod (compiled by the build service)",
+                "{} .hmod / {} native .hnmod - Build compiles the native ones into the game",
                 items.len() - native,
                 native
             )
@@ -589,6 +607,86 @@ impl Catalog {
                     _ => horizon_client::content_files::Kind::Packs,
                 },
             ))
+        });
+    }
+    /// Installs the catalog's native mods (`.hnmod`) at `indices` into the instance, turns them on,
+    /// and asks the build service for one game that carries every native mod that is on: a build
+    /// compiles them all together, so selecting several is one build, not one each.
+    pub fn build_native(
+        &mut self,
+        home: &Path,
+        indices: &[usize],
+        version: &str,
+        commit: Option<&str>,
+        stamp: Option<String>,
+    ) {
+        if self.busy() {
+            return;
+        }
+        let projects: Vec<Project> = indices
+            .iter()
+            .filter_map(|index| self.results.get(*index))
+            .filter(|project| source_only_mod(project))
+            .cloned()
+            .collect();
+        if projects.is_empty() {
+            self.status = "Only Horizon native mods (.hnmod) are compiled into the game.".into();
+            return;
+        }
+        if self.config.native_server.trim().is_empty() {
+            self.status =
+                "Set the build server first: Settings > Native mods > Build server.".into();
+            return;
+        }
+        let game = self.config.game_home(home);
+        let home = home.to_path_buf();
+        let version = version.to_owned();
+        let commit = commit.map(str::to_owned);
+        let stamp = stamp.filter(|stamp| !stamp.is_empty());
+        let server = self.config.native_server.clone();
+        let github = self.config.native_github;
+        let status = match projects.len() {
+            1 => format!(
+                "Downloading {} to build it into the game...",
+                projects[0].title
+            ),
+            count => format!("Downloading {count} native mods to build them into the game..."),
+        };
+        self.downloading = None;
+        self.failed = None;
+        *self.progress.lock().unwrap_or_else(|e| e.into_inner()) = 0.0;
+        let progress = self.progress.clone();
+        self.job(&status, move || {
+            std::fs::create_dir_all(&game).map_err(|e| e.to_string())?;
+            let source =
+                browser::source(browser::SourceId::Horizon).ok_or("Unsupported download source")?;
+            for project in &projects {
+                browser::installed::install(source.as_ref(), project, true, &game, &|_name, p| {
+                    if p.is_finite() {
+                        *progress.lock().unwrap_or_else(|e| e.into_inner()) = p.clamp(0.0, 1.0);
+                    }
+                })?;
+            }
+            // An installed mod can have been turned off since; building it means turning it on.
+            let mut list = horizon_client::mod_list::ModList::load(&game);
+            for project in &projects {
+                list.disabled.remove(&project.id);
+                list.enabled.insert(project.id.clone());
+            }
+            list.save(&game);
+            crate::native_builds::start(
+                &home,
+                &game,
+                &version,
+                commit.as_deref(),
+                &server,
+                github,
+                stamp.as_deref(),
+            )?;
+            Ok(Reply::Status(format!(
+                "Building the game with {} native mod(s) on. Keep Horizon open.",
+                projects.len()
+            )))
         });
     }
     pub fn toggle_local(&mut self, home: &Path, index: usize) {

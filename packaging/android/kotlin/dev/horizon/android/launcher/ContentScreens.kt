@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.NavigateBefore
 import androidx.compose.material.icons.automirrored.rounded.NavigateNext
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
@@ -32,6 +33,7 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -50,7 +52,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,6 +80,15 @@ private fun kindOf(page: Destination) = when (page) {
 fun CatalogScreen(page: Destination, state: Snapshot, wide: Boolean, actions: LauncherActions) {
     val catalog = state.catalog
     var query by rememberSaveable(page) { mutableStateOf(catalog.query) }
+    // Native mods (`.hnmod`) are compiled into the game, so several of them are one build.
+    val native = catalog.results.filter { it.native }
+    var selecting by rememberSaveable(page) { mutableStateOf(false) }
+    val chosen = remember(page) { mutableStateListOf<Int>() }
+    LaunchedEffect(catalog.results) {
+        val buildable = catalog.results.filter { it.native }.map { it.index }.toSet()
+        chosen.removeAll { it !in buildable }
+        if (buildable.isEmpty()) selecting = false
+    }
     val keyboard = LocalSoftwareKeyboardController.current
     val search = {
         keyboard?.hide()
@@ -153,6 +166,33 @@ fun CatalogScreen(page: Destination, state: Snapshot, wide: Boolean, actions: La
                         }
                     }
                 }
+                if (native.isNotEmpty()) {
+                    // One build carries every native mod that is on, so several are one press.
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                selecting = !selecting
+                                chosen.clear()
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) { Text(if (selecting) "Stop selecting" else "Select native", maxLines = 1) }
+                        if (chosen.isNotEmpty()) {
+                            FilledTonalButton(
+                                onClick = {
+                                    act("build_native", chosen.sorted().joinToString(","))
+                                    chosen.clear()
+                                    selecting = false
+                                },
+                                enabled = !state.native.job.running,
+                                modifier = Modifier.weight(1f),
+                            ) { Text("Build ${chosen.size}", maxLines = 1) }
+                        }
+                    }
+                }
                 Text(hint, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -169,7 +209,22 @@ fun CatalogScreen(page: Destination, state: Snapshot, wide: Boolean, actions: La
                 )
             }
             else -> {
-                items(catalog.results, key = { it.index }) { ProjectCard(page, it) }
+                items(catalog.results, key = { it.index }) { project ->
+                    ProjectCard(
+                        page = page,
+                        project = project,
+                        selecting = selecting,
+                        selected = chosen.contains(project.index),
+                        building = state.native.job.running,
+                        onSelect = { on ->
+                            if (on) {
+                                if (!chosen.contains(project.index)) chosen.add(project.index)
+                            } else {
+                                chosen.remove(project.index)
+                            }
+                        },
+                    )
+                }
                 item(key = "pager") {
                     Row(
                         Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -348,7 +403,14 @@ private fun NativeModsCard(state: Snapshot, actions: LauncherActions) {
 }
 
 @Composable
-private fun ProjectCard(page: Destination, project: Project) {
+private fun ProjectCard(
+    page: Destination,
+    project: Project,
+    selecting: Boolean = false,
+    selected: Boolean = false,
+    building: Boolean = false,
+    onSelect: (Boolean) -> Unit = {},
+) {
     Card(
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
@@ -383,6 +445,29 @@ private fun ProjectCard(page: Destination, project: Project) {
             },
             trailingContent = {
                 when {
+                    // A native mod (`.hnmod`) is compiled into the game, so it is built, not installed;
+                    // while selecting, several of them are checked and built together.
+                    project.native && selecting -> Checkbox(
+                        checked = selected,
+                        onCheckedChange = onSelect,
+                    )
+                    project.native -> Column(horizontalAlignment = Alignment.End) {
+                        project.state?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        FilledTonalButton(
+                            onClick = { act("build_native", project.index.toString()) },
+                            enabled = !building,
+                        ) {
+                            Icon(Icons.Rounded.Build, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Build")
+                        }
+                    }
                     project.state != null -> Text(
                         project.state,
                         style = MaterialTheme.typography.labelLarge,
