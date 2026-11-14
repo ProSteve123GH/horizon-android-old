@@ -20,7 +20,9 @@ while it compiles, can read only that repository's contents, never the game's.
 - `scripts/prepare.sh` fetches the commit, its build scripts and the mod sandbox.
 - `scripts/tools.sh` installs Rust, the Android SDK and NDK, the crates and `horizon-mixins`.
 - `scripts/room.sh` adds swap and frees the runner's unused toolchains.
-- `scripts/publish.sh` puts the library in a release and tells the gateway the job is done.
+- `scripts/publish.sh` puts the library in a release and tells the gateway the job is done. It
+  posts with an explicit `User-Agent`: Cloudflare's edge refuses the default Python urllib one
+  (error 1010), so without it a job's answer never arrives.
 
 ## The gateway
 
