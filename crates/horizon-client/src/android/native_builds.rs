@@ -404,6 +404,7 @@ pub fn request_body(game: &Path) -> Result<Vec<u8>, String> {
         .unwrap_or_default();
     paths.retain(|p| p.extension().is_some_and(|e| e == "hnmod"));
     let mut mods = Vec::new();
+    let mut too_new: Vec<String> = Vec::new();
     for path in paths {
         let Ok(bundle) = horizon_mods::index::native::Bundle::read(&path) else {
             continue;
@@ -414,17 +415,22 @@ pub fn request_body(game: &Path) -> Result<Vec<u8>, String> {
         if let Some(hooks) = bundle.manifest.hooks
             && hooks > crate::game::NATIVE_HOOKS_API
         {
-            return Err(format!(
-                "{} needs native hooks API {hooks}; this Horizon has {}.",
-                bundle.manifest.id,
-                crate::game::NATIVE_HOOKS_API
-            ));
+            too_new.push(format!("{} needs native hooks API {}", bundle.manifest.id, hooks));
+            continue;
         }
         mods.push(
             bundle
                 .for_build()
                 .map_err(|e| format!("{}: {e}", path.display()))?,
         );
+    }
+    if !too_new.is_empty() {
+        too_new.sort();
+        return Err(format!(
+            "{}; this Horizon has {} — turn them off to build.",
+            too_new.join(", "),
+            crate::game::NATIVE_HOOKS_API
+        ));
     }
     if mods.is_empty() {
         return Err("There is no native mod turned on to build.".into());
@@ -756,4 +762,59 @@ fn fetch_library(
         return Err("The download came out damaged. Try again.".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_bundle(game: &Path, id: &str, hooks: Option<u32>) {
+        use std::io::Write as _;
+        let dir = game.join(mod_list::NATIVE_DIR);
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = serde_json::json!({
+            "schema": 1,
+            "id": id,
+            "version": "0.1.0",
+            "game": "26.3",
+            "horizon": "a".repeat(40),
+            "mixins": "b".repeat(40),
+            "hooks": hooks,
+        });
+        let mixin = format!(
+            "[mod]\nid = \"{id}\"\nversion = \"0.1.0\"\n[compatibility]\nhorizon_revision = \"{}\"\n",
+            "a".repeat(40)
+        );
+        let tmp = std::env::temp_dir().join(format!(
+            "native-{id}-{}-{}.hnmod",
+            std::process::id(),
+            hooks.map_or("none".into(), |h: u32| h.to_string())
+        ));
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&tmp).unwrap());
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file(horizon_mods::index::native::MANIFEST, options).unwrap();
+        zip.write_all(&serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let path = format!("mixins/{id}/horizon-mixin.toml");
+        zip.start_file(&path, options).unwrap();
+        zip.write_all(mixin.as_bytes()).unwrap();
+        zip.finish().unwrap();
+        std::fs::rename(&tmp, dir.join(format!("{id}.hnmod"))).unwrap();
+    }
+
+    #[test]
+    fn every_too_new_mod_is_named_in_the_refusal() {
+        let game = std::env::temp_dir().join(format!("native-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&game);
+        std::fs::create_dir_all(&game).unwrap();
+        write_bundle(&game, "appleskin", Some(139));
+        write_bundle(&game, "veinminer", Some(1));
+        // Old release that nobody can build yet: needs hooks beyond this Horizon's 80 too.
+        write_bundle(&game, "freecam", Some(400));
+        let error = request_body(&game).unwrap_err();
+        assert!(error.contains("appleskin"), "{error}");
+        assert!(error.contains("freecam"), "{error}");
+        // A compatible one must not be blamed.
+        assert!(!error.contains("veinminer"), "{error}");
+        let _ = std::fs::remove_dir_all(&game);
+    }
 }
