@@ -14,6 +14,9 @@
 # MOD_BUILD_UNSANDBOXED=1 runs the build as this user, with no sandbox: only for a machine that
 # builds nobody else's mods.
 set -uo pipefail
+# An empty mods folder is a base build, not a mod named "*": an unmatched glob would otherwise
+# pass the literal pattern on as a bundle.
+shopt -s nullglob
 
 root=$1
 commit=$2
