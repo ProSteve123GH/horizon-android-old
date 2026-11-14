@@ -190,8 +190,17 @@ private fun SettingGroup(group: SettingGroup, state: Snapshot, actions: Launcher
                         "text" -> actions.edit(
                             row.id,
                             row.title,
-                            if (row.id == "name") state.config.name else state.config.server,
-                            if (row.id == "server") "Leave empty for singleplayer" else "Up to 16 characters",
+                            when (row.id) {
+                                "name" -> state.config.name
+                                "server" -> state.config.server
+                                "native_server" -> state.native.server
+                                else -> row.value
+                            },
+                            when (row.id) {
+                                "server" -> "Leave empty for singleplayer"
+                                "native_server" -> "https://host or http://host:port"
+                                else -> "Up to 16 characters"
+                            },
                         )
                         else -> when (row.id) {
                             "performance_presets" -> actions.openPerformance()

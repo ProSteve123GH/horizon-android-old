@@ -85,7 +85,7 @@ fun CatalogScreen(page: Destination, state: Snapshot, wide: Boolean, actions: La
     val hint = when {
         page == Destination.Mods && state.config.modSource == "modrinth" ->
             "Modrinth Java mods are browse-only: Fabric, Forge and NeoForge cannot run here."
-        page == Destination.Mods -> "Horizon content mods (.hmod). Paste an HTTPS .hmod link to import it."
+        page == Destination.Mods -> "Horizon content mods (.hmod) and native mods (.hnmod). Paste an HTTPS link to import one."
         page == Destination.Shaders && state.config.shaderSource == "modrinth" ->
             "Modrinth shader ZIPs are experimental; some packs may not work."
         page == Destination.Shaders -> "Horizon native .hshader packs."
@@ -98,6 +98,9 @@ fun CatalogScreen(page: Destination, state: Snapshot, wide: Boolean, actions: La
         verticalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = PaddingValues(bottom = 8.dp),
     ) {
+        if (page == Destination.Mods) {
+            item(key = "native") { NativeModsCard(state, actions) }
+        }
         item(key = "controls") {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(bottom = 4.dp)) {
                 TextField(
@@ -187,6 +190,156 @@ fun CatalogScreen(page: Destination, state: Snapshot, wide: Boolean, actions: La
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The native mods an instance has and the build that carries them. A native mod is compiled
+ * into the game, so it runs only in a build made for this version and install; the build is
+ * made by a service the player names in Settings > Native mods.
+ */
+@Composable
+private fun NativeModsCard(state: Snapshot, actions: LauncherActions) {
+    val native = state.native
+    var open by rememberSaveable { mutableStateOf(false) }
+    Card(
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        Column(
+            Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Native mods", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        when {
+                            native.mods.isEmpty() -> "Compiled into the game. Not sandboxed."
+                            native.job.running -> native.job.text
+                            native.upToDate -> "${native.enabled} on, built into the chosen game."
+                            else -> "${native.enabled} of ${native.mods.size} on, not built."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (native.mods.isNotEmpty()) {
+                    Badge(containerColor = MaterialTheme.colorScheme.primaryContainer) {
+                        Text(native.mods.size.toString(), color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                }
+                IconButton(onClick = { open = !open }) {
+                    Icon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (open) "Less" else "More")
+                }
+            }
+            if (!open) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(onClick = { actions.import("mods") }, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Rounded.Add, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(".hnmod", maxLines = 1)
+                    }
+                    FilledTonalButton(
+                        onClick = { act("native_build") },
+                        enabled = native.enabled > 0 && native.server.isNotBlank() && !native.job.running && !native.upToDate,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(if (native.upToDate) "Built" else "Build", maxLines = 1)
+                    }
+                }
+                return@Column
+            }
+            Text(native.warning, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            native.mods.forEach { mod ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(mod.id, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            listOfNotNull(mod.version.takeIf { it.isNotBlank() }, mod.file).joinToString(" · "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        mod.error?.let {
+                            Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    HorizonSwitch(checked = mod.enabled, onCheckedChange = { act("native_toggle", mod.id) })
+                    IconButton(onClick = { act("native_remove", mod.id) }) {
+                        Icon(Icons.Rounded.DeleteOutline, "Remove", tint = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = { actions.import("mods") }, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Rounded.Add, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Import .hnmod", maxLines = 1)
+                }
+                if (native.job.running) {
+                    OutlinedButton(onClick = { act("native_cancel") }, modifier = Modifier.weight(1f)) {
+                        Text("Cancel", maxLines = 1)
+                    }
+                } else {
+                    FilledTonalButton(
+                        onClick = { act("native_build") },
+                        enabled = native.enabled > 0 && native.server.isNotBlank() && !native.upToDate,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(if (native.upToDate) "Built" else "Build", maxLines = 1)
+                    }
+                }
+            }
+            if (native.job.error != null) {
+                Text(native.job.error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            } else if (native.job.text.isNotBlank()) {
+                Text(native.job.text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (native.server.isBlank()) {
+                Text(
+                    "Set the build server in Settings > Native mods. Building is only offered once it is set.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (native.builds.isNotEmpty()) {
+                Text("Builds", style = MaterialTheme.typography.titleSmall)
+                native.builds.forEach { build ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                build.name,
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                build.mods.joinToString { it.id } + if (build.loads) "" else " · made for another game",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.outline,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (build.chosen) {
+                            OutlinedButton(onClick = { act("native_stop") }) { Text("Stop using") }
+                        } else {
+                            FilledTonalButton(
+                                onClick = { act("native_choose", build.name) },
+                                enabled = build.loads,
+                            ) { Text("Use") }
+                        }
+                        IconButton(onClick = { act("native_forget", build.name) }) {
+                            Icon(Icons.Rounded.DeleteOutline, "Delete", tint = MaterialTheme.colorScheme.error)
+                        }
                     }
                 }
             }

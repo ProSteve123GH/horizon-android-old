@@ -57,6 +57,8 @@ mod instances;
 mod worlds;
 #[path = "android/minecraft_import.rs"]
 mod minecraft_import;
+#[path = "android/native_builds.rs"]
+mod native_builds;
 #[path = "android/native_ime.rs"]
 mod native_ime;
 #[path = "android/performance.rs"]
@@ -318,4 +320,61 @@ fn android_main(app: AndroidApp) {
     platform::finish();
     APP.with(|slot| *slot.borrow_mut() = None);
     std::process::exit(0);
+}
+
+unsafe extern "C" {
+    fn dlopen(filename: *const std::ffi::c_char, flags: std::ffi::c_int) -> *mut std::ffi::c_void;
+    fn dlsym(
+        handle: *mut std::ffi::c_void,
+        symbol: *const std::ffi::c_char,
+    ) -> *mut std::ffi::c_void;
+}
+
+/// NativeActivity's entry point (the manifest's `android.app.func_name`): the game of this
+/// library, or of the build with native mods `HorizonActivity` loaded in its place
+/// (`HORIZON_GAME_LIBRARY`, `NativeMods.kt`). The activity loads that build first, for its
+/// Java native methods; `dlopen` finds it already loaded, so the activity and the game share
+/// one library.
+///
+/// # Safety
+///
+/// NativeActivity's call: an `ANativeActivity` and its saved state.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn horizon_on_create(
+    activity: *mut std::ffi::c_void,
+    saved: *mut std::ffi::c_void,
+    saved_size: usize,
+) {
+    unsafe extern "C" {
+        /// android-activity's entry point, which runs `android_main`.
+        fn ANativeActivity_onCreate(
+            activity: *mut std::ffi::c_void,
+            saved: *mut std::ffi::c_void,
+            saved_size: usize,
+        );
+    }
+    type OnCreate = unsafe extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void, usize);
+    let own: OnCreate = ANativeActivity_onCreate;
+    if let Some(path) = std::env::var_os("HORIZON_GAME_LIBRARY") {
+        use std::os::unix::ffi::OsStrExt;
+        let path = std::ffi::CString::new(path.as_bytes()).unwrap_or_default();
+        // SAFETY: NUL-terminated names; RTLD_NOW (2). The symbol is android-activity's entry
+        // point in a build of this same source, so it has the signature declared above.
+        let entry = unsafe {
+            let build = dlopen(path.as_ptr(), 2);
+            if build.is_null() {
+                std::ptr::null_mut()
+            } else {
+                dlsym(build, c"ANativeActivity_onCreate".as_ptr())
+            }
+        };
+        if !entry.is_null() && entry != own as *mut std::ffi::c_void {
+            // SAFETY: see above.
+            let entry = unsafe { std::mem::transmute::<*mut std::ffi::c_void, OnCreate>(entry) };
+            return unsafe { entry(activity, saved, saved_size) };
+        }
+        log::error!("The native mod build has no entry point: playing the APK's own game");
+    }
+    // SAFETY: NativeActivity's own arguments, passed on.
+    unsafe { own(activity, saved, saved_size) }
 }

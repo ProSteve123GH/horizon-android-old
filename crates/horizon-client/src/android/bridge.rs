@@ -28,6 +28,12 @@ use std::{
 
 struct Controller {
     home: PathBuf,
+    /// This install of the APK (`PackageManager.lastUpdateTime`): a native build is only loaded
+    /// under the install it was made for (`android/native_builds.rs`).
+    stamp: Option<String>,
+    /// The APK's `versionName` (`0.7.7` or `0.7.7-dev.N`): a native build is only loaded by the
+    /// game whose version name it was made for (`NativeMods.chosen`).
+    version_name: String,
     catalog: Catalog,
     appearance: crate::appearance::Settings,
     login: Login,
@@ -118,6 +124,8 @@ impl Controller {
         let installation = horizon_client::minecraft_import::info(&home);
         let mut controller = Self {
             home: home.clone(),
+            stamp: None,
+            version_name: crate::backend::VERSION.to_owned(),
             catalog,
             appearance: crate::appearance::Settings::load(&home),
             login: Login::new(),
@@ -244,6 +252,10 @@ impl Controller {
                 row("name", "Offline player name", if c.name.is_empty() { "Not set".into() } else { c.name.clone() }, "text"),
                 row("server", "Server", if c.server.is_empty() { "Singleplayer".into() } else { c.server.clone() }, "text"),
                 row("servers", "Saved servers", "Add, edit and organize".into(), "action"),
+            ]},
+            {"group": "Native mods", "rows": [
+                row("native_server", "Build server", if c.native_server.is_empty() { "Not set".into() } else { c.native_server.clone() }, "text"),
+                switch("native_github", "Compile on GitHub", if c.native_github { "Through the gateway" } else { "Off" }, c.native_github),
             ]},
             {"group": "Storage", "rows": [
                 row("screenshots", "Screenshots", "Browse, preview, share or delete".into(), "action"),
@@ -563,7 +575,7 @@ impl Controller {
                 let note = if java_mod {
                     Some("Java mod")
                 } else if crate::catalog::source_only_mod(p) {
-                    Some(".hnmod: later")
+                    Some("Native mod")
                 } else if p.kind == crate::browser::Kind::Mod && !cfg!(target_pointer_width = "64")
                 {
                     Some("64-bit required")
@@ -659,6 +671,12 @@ impl Controller {
                 "busy": self.catalog.busy(),
             },
             "local": local,
+            "native": crate::native_builds::snapshot(
+                &self.home,
+                &c.game_home(&self.home),
+                &self.version_name,
+                self.stamp.as_deref(),
+            ),
             "documents": crate::documents::overlay(),
             "is_64_bit": cfg!(target_pointer_width = "64"),
         })
@@ -745,6 +763,7 @@ impl Controller {
                 let _ = std::fs::remove_file(home.join("android-error.txt"));
             }
             "dismiss_status" => self.catalog.status.clear(),
+            "notice" => self.catalog.status = arg.to_owned(),
             "page" => {
                 let page = Page::ALL
                     .into_iter()
@@ -957,6 +976,14 @@ impl Controller {
                             crate::display::RenderScale::new(percent);
                     }
                     "client_id" => self.catalog.config.microsoft_client_id = value,
+                    "native_server" => {
+                        if !value.is_empty() && !crate::native_builds::plain_server(&value) {
+                            return Err(
+                                "Enter the build server as https://host or http://host:port".into(),
+                            );
+                        }
+                        self.catalog.config.native_server = value;
+                    }
                     _ => return Err("Unknown field".into()),
                 }
                 self.save()?;
@@ -1399,6 +1426,49 @@ impl Controller {
                 return Ok(json!({"started": started}));
             }
             "server_status" => return Ok(self.server_ping_status()),
+            "native_toggle" => {
+                let game = self.catalog.config.game_home(&home);
+                crate::native_builds::toggle(&home, &game, arg)?;
+            }
+            "native_remove" => {
+                let game = self.catalog.config.game_home(&home);
+                crate::native_builds::remove(&game, arg)?;
+                self.catalog.status = "Native mod removed. The next build leaves it out.".into();
+            }
+            "native_build" => {
+                let game = self.catalog.config.game_home(&home);
+                crate::native_builds::start(
+                    &home,
+                    &game,
+                    &self.version_name,
+                    crate::native_builds::build_commit(),
+                    &self.catalog.config.native_server,
+                    self.catalog.config.native_github,
+                    self.stamp.as_deref(),
+                )?;
+                self.catalog.status =
+                    "Building the game with the native mods that are on. Keep Horizon open.".into();
+            }
+            "native_cancel" => {
+                crate::native_builds::cancel();
+                self.catalog.status = "Cancelling the native mod build...".into();
+            }
+            "native_choose" => {
+                crate::native_builds::choose(&home, if arg.is_empty() { None } else { Some(arg) })?;
+                self.catalog.status = if arg.is_empty() {
+                    "The APK's own game plays from the next start.".into()
+                } else {
+                    format!("{arg} plays from the next start.")
+                };
+            }
+            "native_stop" => {
+                crate::native_builds::choose(&home, None)?;
+                self.catalog.status = "The APK's own game plays from the next start.".into();
+            }
+            "native_forget" => {
+                crate::native_builds::forget(&home, arg)?;
+                self.catalog.status = "Build deleted.".into();
+            }
             _ => return Err(format!("Unknown launcher action {method}")),
         }
         Ok(Value::Null)
@@ -1477,6 +1547,15 @@ impl Controller {
             "gpu_profile" => {
                 c.device.gpu_profile ^= true;
                 self.catalog.status = "Detailed GPU profiling records diagnostics and has overhead. Reports remain on this device.".into();
+            }
+            "native_github" => {
+                c.native_github ^= true;
+                self.catalog.status = if c.native_github {
+                    "Native mod builds are asked of the gateway's GitHub machines, which takes longer to start."
+                } else {
+                    "Native mod builds are asked of the gateway itself."
+                }
+                .into();
             }
             "record_performance" => {
                 c.record_performance ^= true;
@@ -1763,15 +1842,24 @@ fn reply(env: &mut JNIEnv<'_>, value: &Value) -> jstring {
         .unwrap_or(std::ptr::null_mut())
 }
 
-/// `NativeBridge.start(Activity, String home)`: once per Activity instance.
+/// `NativeBridge.start(Activity, String home, String stamp, String version)`: once per Activity
+/// instance.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_horizon_android_NativeBridge_start(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     activity: JObject<'_>,
     home: JString<'_>,
+    stamp: JString<'_>,
+    version: JString<'_>,
 ) {
     let home = PathBuf::from(string(&mut env, &home));
+    let stamp = (!stamp.is_null()).then(|| string(&mut env, &stamp));
+    let stamp = stamp.filter(|stamp| !stamp.is_empty());
+    let version = (!version.is_null())
+        .then(|| string(&mut env, &version))
+        .filter(|version| !version.is_empty())
+        .unwrap_or_else(|| crate::backend::VERSION.to_owned());
     let (Ok(vm), Ok(global)) = (env.get_java_vm(), env.new_global_ref(&activity)) else {
         let _ = env.exception_clear();
         return;
@@ -1798,7 +1886,9 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_start(
         log::error!("Cannot open {}: {error}", home.display());
     }
     horizon_client::crash::install(home.clone(), "launcher");
-    let controller = Controller::new(home);
+    let mut controller = Controller::new(home);
+    controller.stamp = stamp;
+    controller.version_name = version;
     CONTROLLER.with(|c| *c.borrow_mut() = Some(controller));
 }
 

@@ -8,8 +8,12 @@ object NativeBridge {
         System.loadLibrary("horizon_android")
     }
 
-    /** Registers [activity] for Android services and prepares the launcher once. */
-    @JvmStatic external fun start(activity: Activity, home: String)
+    /**
+     * Registers [activity] for Android services and prepares the launcher once.
+     * [stamp] is this install of the APK and [version] its version name: a
+     * native-mod build is only loaded under the install it was made for.
+     */
+    @JvmStatic external fun start(activity: Activity, home: String, stamp: String?, version: String?)
 
     /** The whole launcher state as JSON; call from the main thread. */
     @JvmStatic external fun snapshot(): String?

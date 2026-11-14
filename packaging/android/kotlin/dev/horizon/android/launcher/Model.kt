@@ -124,6 +124,49 @@ data class LocalItem(
     val toggle: Boolean,
 )
 
+data class NativeMod(
+    val file: String = "",
+    val id: String = "",
+    val version: String = "",
+    val enabled: Boolean = false,
+    val error: String? = null,
+)
+
+data class NativeBuildMod(val id: String = "", val version: String = "")
+
+data class NativeBuild(
+    val name: String = "",
+    val chosen: Boolean = false,
+    val loads: Boolean = false,
+    val forVersion: String? = null,
+    val commit: String? = null,
+    val size: Long = 0,
+    val mods: List<NativeBuildMod> = emptyList(),
+)
+
+data class NativeJob(
+    val running: Boolean = false,
+    val text: String = "",
+    val error: String? = null,
+    val done: String? = null,
+)
+
+/** The launcher's native-mod state (`android/native_builds.rs`). */
+data class NativeState(
+    val warning: String = "",
+    val server: String = "",
+    val github: Boolean = false,
+    val version: String = "",
+    val commit: String? = null,
+    val stamp: String? = null,
+    val mods: List<NativeMod> = emptyList(),
+    val enabled: Int = 0,
+    val upToDate: Boolean = false,
+    val current: String? = null,
+    val builds: List<NativeBuild> = emptyList(),
+    val job: NativeJob = NativeJob(),
+)
+
 data class Conflict(val name: String, val keepBoth: Boolean)
 
 data class Documents(val working: Boolean, val text: String?, val conflict: Conflict?)
@@ -140,6 +183,7 @@ data class Snapshot(
     val wardrobe: WardrobeState?,
     val catalog: CatalogState,
     val local: List<LocalItem>,
+    val native: NativeState,
     val documents: Documents,
 ) {
     companion object {
@@ -278,6 +322,49 @@ data class Snapshot(
                         toggle = it.optBoolean("toggle"),
                     )
                 },
+                native = root.optJSONObject("native")?.let { n ->
+                    NativeState(
+                        warning = n.optString("warning"),
+                        server = n.optString("server"),
+                        github = n.optBoolean("github"),
+                        version = n.optString("version"),
+                        commit = n.text("commit"),
+                        stamp = n.text("stamp"),
+                        mods = n.optJSONArray("mods").list {
+                            NativeMod(
+                                file = it.optString("file"),
+                                id = it.optString("id"),
+                                version = it.optString("version"),
+                                enabled = it.optBoolean("enabled"),
+                                error = it.text("error"),
+                            )
+                        },
+                        enabled = n.optInt("enabled"),
+                        upToDate = n.optBoolean("up_to_date"),
+                        current = n.text("current"),
+                        builds = n.optJSONArray("builds").list {
+                            NativeBuild(
+                                name = it.optString("name"),
+                                chosen = it.optBoolean("chosen"),
+                                loads = it.optBoolean("loads"),
+                                forVersion = it.text("for"),
+                                commit = it.text("commit"),
+                                size = it.optLong("size"),
+                                mods = it.optJSONArray("mods").list { m ->
+                                    NativeBuildMod(m.optString("id"), m.optString("version"))
+                                },
+                            )
+                        },
+                        job = n.optJSONObject("job")?.let { j ->
+                            NativeJob(
+                                running = j.optBoolean("running"),
+                                text = j.optString("text"),
+                                error = j.text("error"),
+                                done = j.text("done"),
+                            )
+                        } ?: NativeJob(),
+                    )
+                } ?: NativeState(),
                 documents = Documents(
                     working = documents.optBoolean("working"),
                     text = documents.text("text"),

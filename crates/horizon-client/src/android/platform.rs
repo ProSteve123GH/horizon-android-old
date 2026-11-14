@@ -198,6 +198,32 @@ fn vibrate_gamepad(pulse: horizon_client::gamepad::Pulse, amplitude: i32) -> boo
     .unwrap_or(false)
 }
 
+/// The game drew its first frame: `HorizonActivity.firstFrame()` clears the native-mod build's
+/// start count (`NativeMods.kt`). The game process has no bridge, but winit's `AndroidApp` is
+/// its activity.
+pub(crate) fn first_frame() {
+    crate::APP.with(|slot| {
+        let app = slot.borrow();
+        let Some(app) = app.as_ref() else {
+            return;
+        };
+        // AndroidApp keeps the VM and activity alive for this callback.
+        let Ok(vm) = (unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }) else {
+            return;
+        };
+        let Ok(mut env) = vm.attach_current_thread() else {
+            return;
+        };
+        let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+        if env
+            .call_method(&activity, "firstFrame", "()V", &[])
+            .is_err()
+        {
+            let _ = env.exception_clear();
+        }
+    });
+}
+
 /// The Compose launcher's process has no NativeActivity: its bridge registers the
 /// Java VM and the launcher Activity here (`bridge.rs`).
 static BRIDGE: std::sync::OnceLock<(JavaVM, std::sync::Mutex<Option<GlobalRef>>)> =

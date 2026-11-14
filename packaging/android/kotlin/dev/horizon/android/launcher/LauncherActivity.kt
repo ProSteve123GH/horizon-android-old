@@ -7,6 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import dev.horizon.android.HorizonActivity
 import dev.horizon.android.NativeBridge
+import dev.horizon.android.NativeMods
 import java.io.File
 
 /**
@@ -18,7 +19,12 @@ class LauncherActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         copyEngineData()
-        NativeBridge.start(this, filesDir.absolutePath)
+        NativeBridge.start(
+            this,
+            filesDir.absolutePath,
+            NativeMods.stamp(this),
+            runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull(),
+        )
         setContent {
             LauncherApp(
                 onPlay = ::startGame,
@@ -32,6 +38,8 @@ class LauncherActivity : ComponentActivity() {
         super.onResume()
         // Coming back from the game: reload settings, content and the last error.
         NativeBridge.call("resume", "")
+        // A native-mod build that was set aside after failing to start.
+        NativeMods.takeNotice(this)?.let { NativeBridge.call("notice", it) }
     }
 
     private fun startGame() {

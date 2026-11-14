@@ -289,7 +289,12 @@ fn stage(request: Request, mut input: std::fs::File, name: String) -> Result<()>
     if !content_files::plain_name(&name) || !request.kind.accepts(&name) {
         return Err("Selected file has the wrong extension for this folder".into());
     }
-    let dir = request.home.join(request.kind.folder());
+    let native_mod = name.to_ascii_lowercase().ends_with(".hnmod");
+    let dir = request.home.join(if native_mod {
+        horizon_client::mod_list::NATIVE_DIR
+    } else {
+        request.kind.folder()
+    });
     std::fs::create_dir_all(&dir)?;
     if std::fs::symlink_metadata(&dir)?.file_type().is_symlink() {
         return Err("Refusing a redirected content directory".into());
@@ -324,10 +329,24 @@ fn stage(request: Request, mut input: std::fs::File, name: String) -> Result<()>
         output.sync_all()?;
         drop(output);
         notice("Checking archive...", false);
-        let native_shader = content_files::validate(&staged, request.kind, &name, || {
-            CANCEL.load(Ordering::Relaxed)
-        })?;
-        let name = if request.kind == Kind::Mods {
+        let native_shader = if native_mod {
+            if std::fs::metadata(&staged)?.len() > 32 << 20 {
+                return Err("Horizon mod exceeds 32 MiB".into());
+            }
+            false
+        } else {
+            content_files::validate(&staged, request.kind, &name, || {
+                CANCEL.load(Ordering::Relaxed)
+            })?
+        };
+        let name = if native_mod {
+            format!(
+                "{}.hnmod",
+                horizon_mods::index::native::Bundle::read(&staged)?
+                    .manifest
+                    .id
+            )
+        } else if request.kind == Kind::Mods {
             format!("{}.hmod", horizon_mods::Package::read(&staged)?.manifest.id)
         } else if native_shader || name.to_ascii_lowercase().ends_with(".hshader") {
             let pack = horizon_shader_api::Pack::read(&staged)?;
@@ -358,11 +377,18 @@ fn stage(request: Request, mut input: std::fs::File, name: String) -> Result<()>
         } else {
             std::fs::rename(&staged, &target)?;
             imported(
-                format!(
-                    "Imported {} into {}. Enable it in game settings.",
-                    target.file_name().unwrap_or_default().to_string_lossy(),
-                    request.kind.label()
-                ),
+                if native_mod {
+                    format!(
+                        "Imported {}. Build it from the launcher's Mods page.",
+                        target.file_name().unwrap_or_default().to_string_lossy()
+                    )
+                } else {
+                    format!(
+                        "Imported {} into {}. Enable it in game settings.",
+                        target.file_name().unwrap_or_default().to_string_lossy(),
+                        request.kind.label()
+                    )
+                },
                 request.kind,
             );
         }

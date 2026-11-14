@@ -30,7 +30,7 @@ impl Kind {
     pub fn accepts(self, name: &str) -> bool {
         let lower = name.to_ascii_lowercase();
         match self {
-            Self::Mods => lower.ends_with(".hmod"),
+            Self::Mods => lower.ends_with(".hmod") || lower.ends_with(".hnmod"),
             Self::Packs => lower.ends_with(".zip"),
             Self::Shaders => lower.ends_with(".zip") || lower.ends_with(".hshader"),
         }
@@ -58,7 +58,7 @@ pub fn validate(
 ) -> crate::Result<bool> {
     if !plain_name(name) || !kind.accepts(name) {
         return Err(
-            "Choose a ZIP pack, .hshader shader pack or sandboxed .hmod matching this folder"
+            "Choose a ZIP pack, .hshader shader pack, sandboxed .hmod or native .hnmod matching this folder"
                 .into(),
         );
     }

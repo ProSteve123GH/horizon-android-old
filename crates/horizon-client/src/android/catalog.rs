@@ -74,6 +74,10 @@ pub struct Config {
     pub device: crate::device_preferences::Settings,
     pub shader_source: crate::shader_catalog::Origin,
     pub mod_source: crate::shader_catalog::Origin,
+    /// The native mod build service's address (`android/native_builds.rs`): empty until the player
+    /// sets one, and `native_github` asks it to compile on GitHub's machines instead.
+    pub native_server: String,
+    pub native_github: bool,
 }
 
 pub use horizon_client::android_gamepad::InputMode as InputHost;
@@ -464,7 +468,7 @@ impl Catalog {
         } else if self.page == Page::Mods {
             let native = items.iter().filter(|p| source_only_mod(p)).count();
             format!(
-                "{} .hmod / {} source-only .hnmod (not supported yet)",
+                "{} .hmod / {} native .hnmod (compiled by the build service)",
                 items.len() - native,
                 native
             )
@@ -532,10 +536,6 @@ impl Catalog {
         let Some(project) = self.results.get(index).cloned() else {
             return;
         };
-        if source_only_mod(&project) {
-            self.status = "This .hnmod needs a separately compiled client. Android support is planned; sandboxed .hmod mods can be installed now.".into();
-            return;
-        }
         if self.busy() || self.download_label(&project).is_some() {
             return;
         }

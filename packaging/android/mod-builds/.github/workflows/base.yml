@@ -1,0 +1,60 @@
+name: base
+run-name: base ${{ inputs.version }}
+# The clean build cache of one commit of the game, which every player's build starts from (build.yml).
+# Only trusted code runs here, and only here is the cache written. Run it once per release, after
+# adding the version to versions.json (or pass its commit).
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: A version in versions.json
+        required: true
+      commit:
+        description: The commit to build; empty falls back to versions.json
+        required: false
+        default: ''
+permissions:
+  contents: read
+concurrency: base-${{ inputs.version }}-${{ inputs.commit }}
+jobs:
+  base:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      VERSION: ${{ inputs.version }}
+      COMMIT: ${{ inputs.commit }}
+      # Change these to your fork's repository and its owner/name.
+      HORIZON_REPO: https://github.com/ludovic111/horizon
+      HORIZON_REPO_PATH: ludovic111/horizon
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: The commit and the scripts
+        id: prepare
+        run: bash scripts/prepare.sh
+      - name: Rust, the Android tools and the crates
+        run: bash scripts/tools.sh
+      - name: Make room
+        run: bash scripts/room.sh clean
+      - name: Build
+        env:
+          MOD_BUILD_BASE: '1'
+          MOD_BUILD_SECONDS: '14000'
+        run: |
+          job=$HOME/horizon-android-build/jobs/base
+          mkdir -p "$job/out" "$job/mods"
+          started=$(date +%s)
+          bash tools/mod_build_sandbox.sh "$HOME/horizon-android-build" "$COMMIT" "$job"
+          echo "Cold build: $(( $(date +%s) - started )) s"
+          du -sh "$HOME/horizon-android-build/base" "$HOME/horizon-android-build/cargo" \
+            "$HOME/android" "$HOME/.rustup"
+          sudo rm -rf "$job"
+      - uses: actions/cache/save@v4
+        with:
+          key: base-${{ steps.prepare.outputs.commit }}
+          path: |
+            ~/.rustup
+            ~/android
+            ~/horizon-android-build/cargo
+            ~/horizon-android-build/base
