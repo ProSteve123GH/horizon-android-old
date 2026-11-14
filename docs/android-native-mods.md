@@ -131,7 +131,11 @@ Its bindings are `STORE` (KV), its secret `GITHUB_TOKEN` (fine-grained: **Action
 builds repository), and its vars `GITHUB_REPO`, `GITHUB_WORKFLOW` (default `build.yml`), `GITHUB_REF`
 (default `main`), `PER_DAY` and `PER_ADDRESS`. `npx wrangler kv namespace create STORE`,
 `npx wrangler secret put GITHUB_TOKEN`, `npx wrangler deploy`, then set the launcher's **Build server**
-to the printed `https://….workers.dev` URL. **Compile on GitHub** only steers a gateway that can also
+to the printed `https://….workers.dev` URL. On a machine where `wrangler` can't run (Termux fails
+with "Unsupported platform: android arm64 LE": `wrangler` carries the `workerd` runtime, which has no
+Android build), `packaging/android/mod-build-worker/deploy.sh` does the same over Cloudflare's API
+with just curl and python3, and the same `CLOUDFLARE_API_TOKEN` instead of a login. **Compile on
+GitHub** only steers a gateway that can also
 run builds itself (`mod_build_gateway.py`): the Worker always uses GitHub's machines, and the launcher
 waits the same 90 minutes for either.
 

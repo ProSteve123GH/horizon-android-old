@@ -46,12 +46,13 @@ shift 6
 mount -t proc proc /proc
 mount -t tmpfs -o mode=1777 tmpfs /tmp
 
-# What the build may see, set aside before the home folder goes.
-keep=/mnt
+# What the build may see, set aside before the home folder goes. MOD_BUILD_KEEP exists only for
+# tests on a machine without root; CI leaves it unset and gets /mnt.
+keep=${MOD_BUILD_KEEP:-/mnt}
 mount -t tmpfs tmpfs "$keep"
 place() { mkdir -p "$keep/$1"; mount --bind "$2" "$keep/$1"; }
-# The crates are a lower layer, never changed: a mod's build script could otherwise leave code in
-# them for the next player's build. Cargo writes into the job's own upper layer, thrown away.
+# The crates are a lower layer, never changed: a build script could otherwise leave code in
+# them for the next build. Cargo writes into the upper layer of the job, thrown away.
 mkdir -p "$root/cargo" "$root/base" "$keep/cargo"
 mkdir -p "$job/cargo-overlay/upper" "$job/cargo-overlay/work"
 chown "$uid:$gid" "$job/cargo-overlay/upper"

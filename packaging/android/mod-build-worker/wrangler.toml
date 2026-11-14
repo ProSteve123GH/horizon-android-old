@@ -8,11 +8,11 @@ workers_dev = true
 
 [[kv_namespaces]]
 binding = "STORE"
-id = "paste-the-id-of-wrangler-kv-namespace-create-STORE"
+id = "2d9d17a700ea4bf9baace93dfaf6e498"
 
 [vars]
 # The repository made from packaging/android/mod-builds/ (owner/name).
-GITHUB_REPO = "you/horizon-mod-builds"
+GITHUB_REPO = "ProSteve123GH/horizon-mod-builds"
 # Its workflow, and the branch that holds it.
 GITHUB_WORKFLOW = "build.yml"
 GITHUB_REF = "main"

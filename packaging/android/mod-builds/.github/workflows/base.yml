@@ -24,8 +24,8 @@ jobs:
       VERSION: ${{ inputs.version }}
       COMMIT: ${{ inputs.commit }}
       # Change these to your fork's repository and its owner/name.
-      HORIZON_REPO: https://github.com/ludovic111/horizon
-      HORIZON_REPO_PATH: ludovic111/horizon
+      HORIZON_REPO: https://github.com/ProSteve123GH/horizon-android-old
+      HORIZON_REPO_PATH: ProSteve123GH/horizon-android-old
     steps:
       - uses: actions/checkout@v4
         with:
