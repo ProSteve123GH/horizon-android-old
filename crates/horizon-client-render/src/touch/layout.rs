@@ -158,6 +158,9 @@ pub struct Settings {
     pub shield_button: bool,
     pub circle_size: f32,
     pub button_scale: f32,
+    /// In the crosshair schemes, dragging the attack button turns the camera.
+    #[serde(default)]
+    pub attack_button_look: bool,
     pub custom_buttons: Vec<super::CustomButton>,
     pub analog_movement: bool,
     pub sprint_button: bool,
@@ -252,6 +255,7 @@ impl Default for Settings {
             shield_button: true,
             circle_size: 32.0,
             button_scale: 1.0,
+            attack_button_look: true,
             custom_buttons: Vec::new(),
             analog_movement: true,
             sprint_button: true,
