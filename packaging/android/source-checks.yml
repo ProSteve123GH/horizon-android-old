@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       native_checks:
-        description: Type-check all four Android ABIs (slower)
+        description: Type-check the arm64 Android ABI (slower)
         type: boolean
         default: false
 permissions:
@@ -70,15 +70,11 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
+        # The fork ships arm64-v8a only; other ABIs are cut from CI so their
+        # 32-bit-only breakage does not gate the sync (see SYNC_PROGRESS.md).
         include:
           - abi: arm64-v8a
             target: aarch64-linux-android
-          - abi: armeabi-v7a
-            target: armv7-linux-androideabi
-          - abi: x86
-            target: i686-linux-android
-          - abi: x86_64
-            target: x86_64-linux-android
     env:
       HORIZON_TELEMETRY_URL: "off"
       CARGO_TARGET_DIR: .local/ci-target

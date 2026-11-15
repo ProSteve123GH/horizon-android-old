@@ -79,9 +79,11 @@ fn lists_adds_and_removes_as_the_game_reads_them() {
     // A pack disabled before it was taken out comes back on.
     let gone = add(&world, &drops.join("Gone.zip")).unwrap();
     assert!(gone.enabled);
-    assert!(!fs::read_to_string(world.join("datapacks.json"))
-        .unwrap()
-        .contains("Gone.zip"));
+    assert!(
+        !fs::read_to_string(world.join("datapacks.json"))
+            .unwrap()
+            .contains("Gone.zip")
+    );
     assert_eq!(
         add(&world, &drops.join("Trades.zip")).unwrap().file,
         "Trades (2).zip"
@@ -95,9 +97,11 @@ fn lists_adds_and_removes_as_the_game_reads_them() {
     remove(&world, &folder).unwrap();
     std::env::remove_var(crate::desktop_seams::TRASH_ENV);
     assert!(trash.join("folder pack/pack.mcmeta").is_file());
-    assert!(!fs::read_to_string(world.join("datapacks.json"))
-        .unwrap()
-        .contains("folder pack"));
+    assert!(
+        !fs::read_to_string(world.join("datapacks.json"))
+            .unwrap()
+            .contains("folder pack")
+    );
     assert_eq!(find(&world, "Trades").unwrap().file, "Trades.zip");
     fs::remove_dir_all(&root).unwrap();
 }
@@ -117,14 +121,15 @@ fn coverage_says_what_runs() {
             ("data/a/loot_table/l.json", "{}"),
             ("data/a/loot_table/k.json", "{}"),
             ("data/a/worldgen/biome/b.json", "{}"),
+            ("data/a/worldgen/world_preset/w.json", "{}"),
             ("assets/a/lang/en_us.json", "{}"),
         ],
     );
     let c = coverage(&file).unwrap();
     assert_eq!(
         c.summary(),
-        "Runs its 1 function, 1 item modifier, 1 predicate. Not read yet: 2 loot tables, 1 item \
-         tag, 1 worldgen."
+        "Runs its 1 function, 1 item tag, 1 item modifier, 2 loot tables, 1 predicate, 1 \
+         worldgen. Not read yet: 1 worldgen world preset."
     );
     let many = Coverage {
         read: Vec::new(),

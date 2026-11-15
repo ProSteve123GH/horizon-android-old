@@ -1,6 +1,6 @@
 //! A download from a mock of Mojang's servers serving small fake files (never Mojang's).
 use super::*;
-use crate::sources::{resolve, sha1_hex, Resolved};
+use crate::sources::{Resolved, resolve, sha1_hex};
 use std::collections::HashMap;
 
 const CLIENT: &[u8] = b"fake client jar";
@@ -351,7 +351,10 @@ fn java_runtime_lays_out_mojangs_runtime_with_its_executables_and_links() {
         LICENSE
     );
     // horizon-prepare finds it where the official launcher would have put it.
-    assert_eq!(horizon_prepare::java::minecraft_runtimes(&dir), [home]);
+    assert_eq!(
+        horizon_platform::prepare::java::minecraft_runtimes(&dir),
+        [home]
+    );
     // A second call keeps the files: only the index and manifest are asked again.
     server.asked();
     java_runtime(
@@ -364,15 +367,17 @@ fn java_runtime_lays_out_mojangs_runtime_with_its_executables_and_links() {
     )
     .unwrap();
     assert_eq!(server.asked().len(), 2);
-    assert!(java_runtime(
-        "java-runtime-zeta",
-        &dir,
-        2,
-        &|url| server.fetch(url),
-        &GO,
-        &|_| {}
-    )
-    .is_err());
+    assert!(
+        java_runtime(
+            "java-runtime-zeta",
+            &dir,
+            2,
+            &|url| server.fetch(url),
+            &GO,
+            &|_| {}
+        )
+        .is_err()
+    );
     fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -591,11 +596,12 @@ fn a_download_goes_on_past_an_asset_that_keeps_failing() {
     )
     .unwrap();
     let lang = sha1_hex(LANG);
-    assert!(dir
-        .join("assets/objects")
-        .join(&lang[..2])
-        .join(&lang)
-        .is_file());
+    assert!(
+        dir.join("assets/objects")
+            .join(&lang[..2])
+            .join(&lang)
+            .is_file()
+    );
     let sound = server.asked().iter().filter(|u| u.ends_with(&hash)).count();
     assert_eq!(sound, 3, "tried three times");
     let last = logged.lock().unwrap().last().cloned().unwrap();

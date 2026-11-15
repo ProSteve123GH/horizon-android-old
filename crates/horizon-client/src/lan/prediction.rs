@@ -1,5 +1,5 @@
 //! The movement prediction's replay (docs/anticheat.md): each client tick a player's record holds
-//! ([`horizon_anticheat::prediction::Record`]) is played again with the client's own movement code,
+//! ([`Record`]) is played again with the client's own movement code,
 //! from where the last one ended, and compared with where the client said it went.
 //!
 //! The inputs are known exactly: a vanilla client sends ServerboundPlayerInputPacket after its tick's
@@ -21,9 +21,12 @@
 
 use std::collections::VecDeque;
 
-use horizon_anticheat::prediction::{Change, ClientTick, KEPT, Record, Restart};
-use horizon_core::geometry::Vec3;
+pub mod record;
 
+use horizon_core::geometry::Vec3;
+use record::{Change, ClientTick, KEPT, Record, Restart};
+
+use super::guest::Guest;
 use crate::motion::PlayerMotion;
 use crate::sprint::Keys;
 
@@ -84,6 +87,59 @@ pub fn near(at: [f64; 3], block: [i32; 3], slack: f64) -> bool {
 /// server's view of what is around it (a firework flying with it) is a tick or so behind.
 pub fn slack(moved: [f64; 3]) -> f64 {
     (2.0 * moved.iter().map(|v| v * v).sum::<f64>().sqrt()).min(16.0)
+}
+
+/// The smallest box (min, max corners) holding every block in `positions`. Empty: min above max,
+/// which [`reaches`] rejects.
+pub fn bounds(positions: &[(i32, i32, i32)]) -> ([i32; 3], [i32; 3]) {
+    positions
+        .iter()
+        .fold(([i32::MAX; 3], [i32::MIN; 3]), |(lo, hi), &(x, y, z)| {
+            let b = [x, y, z];
+            (
+                std::array::from_fn(|i| lo[i].min(b[i])),
+                std::array::from_fn(|i| hi[i].max(b[i])),
+            )
+        })
+}
+
+/// Whether a block of `bounds` can be [`near`] `at` with this `slack`: the same reach as `near`,
+/// tested on the box's corners. The offset from `at` grows monotonically with the block, so a box
+/// whose nearest corner is out of reach holds no near block, and a box holding one is never
+/// rejected.
+fn reaches(at: [f64; 3], slack: f64, (lo, hi): ([i32; 3], [i32; 3])) -> bool {
+    let d = |i: usize, b: i32| f64::from(b) + 0.5 - at[i];
+    let r = 4.5 + slack;
+    d(0, hi[0]) >= -r
+        && d(0, lo[0]) <= r
+        && d(2, hi[2]) >= -r
+        && d(2, lo[2]) <= r
+        && d(1, hi[1]) >= -4.5 - slack
+        && d(1, lo[1]) <= 6.5 + slack
+}
+
+/// Records, as [`Record::changed_near`] during server tick `tick`, the blocks of `positions` (one
+/// section, `bounds` its [`bounds`]) that are [`near`] guest `g`, in their order.
+pub fn note_changes(
+    g: &mut Guest,
+    tick: u64,
+    bounds: ([i32; 3], [i32; 3]),
+    positions: &[(i32, i32, i32)],
+) {
+    let Some(record) = g.record.as_deref_mut() else {
+        return;
+    };
+    let slack = slack(std::array::from_fn(|i| {
+        g.position[i] - g.previous_position[i]
+    }));
+    if !reaches(g.position, slack, bounds) {
+        return;
+    }
+    for &(x, y, z) in positions {
+        if near(g.position, [x, y, z], slack) {
+            record.changed_near(tick, [x, y, z]);
+        }
+    }
 }
 
 /// One client tick played again.
@@ -196,6 +252,10 @@ pub struct Replay {
     /// Ticks the client's jump delay is unknown: under an excuse the replay may have jumped where the
     /// client couldn't (on a block it hadn't received), or the other way round.
     jump_unsure: u8,
+    /// The last tick played: whether the client said it sprinted, and whether its keys pushed it
+    /// forward (for [`Replay::sprints`]).
+    claimed: bool,
+    forward: bool,
     /// Ticks in a row within the tolerance, at most [`STEADY`].
     steady: u8,
     /// The velocity the client's last tick left it with, less the replay's.
@@ -230,11 +290,30 @@ impl Replay {
             used: server.item_use_speed,
             use_window: 0,
             jump_unsure: 0,
+            claimed: false,
+            forward: false,
             steady: STEADY,
             missed: Vec3::ZERO,
             meeting: None,
             ticks: VecDeque::new(),
         }
+    }
+
+    /// A replay that goes on after the record lost what it hadn't played (a server that stalled for
+    /// seconds, more changes than it keeps, a tick that couldn't be played): it starts again at `at`,
+    /// the server's own position for the player, standing still, from the record's present. What the
+    /// client did in the gap is unknown, so the replay is excused ([`Replay::excuse`]) until its moves
+    /// agree with the client's again, at most [`DRIFT`] ticks of them off; after that a lie counts.
+    pub fn rebased(server: &PlayerMotion, at: [f64; 3], record: &Record) -> Self {
+        let restart = Restart {
+            at,
+            kept_motion: false,
+            ended: record.ended(),
+            changed: record.changes(),
+        };
+        let mut replay = Self::new(server, &restart);
+        replay.excuse();
+        replay
     }
 
     /// Goes on from another teleport the client accepted: what the client keeps through it (its jump
@@ -252,7 +331,7 @@ impl Replay {
     /// Plays the record's ticks it hasn't, each after what the server had changed by then (the
     /// changes of the server ticks the client had seen when the tick ended), and returns those that
     /// landed farther than `tolerance`. None when the record no longer keeps them, or a tick couldn't
-    /// be played: the replay starts again at a teleport.
+    /// be played: the replay starts again ([`Replay::rebased`]).
     pub fn catch_up(
         &mut self,
         record: &Record,
@@ -417,10 +496,26 @@ impl Replay {
                 body.attributes = server.attributes.clone();
                 let _ = body.set_sprint_modifier(sprint);
             }
+            // ClientPacketListener.handleSetEntityData: the flag alone. A sprint the tick goes on
+            // with is then started again (`MotionWorld::replayed_tick`), its modifier with it, as
+            // LocalPlayer.aiStep does when the sprint key is held ([`Replay::sprints`]).
+            Change::Sprinting(sprinting) => body.sprinting = sprinting,
             Change::Effects => body.status = server.status.clone(),
             // `sync` takes them every tick.
             Change::Abilities => {}
         }
+    }
+
+    /// Whether the client sprints in `tick`: as it said (ServerboundPlayerCommandPacket), but for a
+    /// sprint the server stopped (its flag, [`Change::Sprinting`]) that the client says goes on. That
+    /// client never said STOP: its LocalPlayer.aiStep started the sprint again, which takes the sprint
+    /// key held, or forward pressed again (a double tap). Without either it would have stopped and
+    /// said so: one that sprints on is played walking, until it holds the key or says STOP.
+    fn sprints(&mut self, tick: &ClientTick, keys: Keys) -> bool {
+        let restarted = tick.sprinting && self.claimed && !self.body.sprinting;
+        self.claimed = tick.sprinting;
+        let forward = std::mem::replace(&mut self.forward, keys.direction()[1] > 1.0e-5);
+        tick.sprinting && (!restarted || keys.sprint || !forward)
     }
 
     /// Plays `tick` again. `server` is the server's copy of the player, for what the server decides
@@ -454,6 +549,7 @@ impl Replay {
             || self.use_window > 0 && server.item_use_speed.is_none() && used.is_some();
         let said = tick.position.map(|p| Vec3::new(p[0], p[1], p[2]));
         let keys = keys(tick.input);
+        let sprinting = self.sprints(tick, keys);
         let last = self.said;
         let offset = |body: &PlayerMotion| match said {
             Some(p) => body.position.distance(p),
@@ -471,7 +567,7 @@ impl Replay {
         };
         let (offset, candidate) = if ![1, 2, 4, 8].into_iter().any(unknown) {
             // Nothing to try (most ticks): the body itself plays the tick.
-            run(&mut self.body, keys, tick.sprinting).ok()?;
+            run(&mut self.body, keys, sprinting).ok()?;
             (offset(&self.body), 0)
         } else {
             let mut best: Option<(f64, u8, Box<PlayerMotion>)> = None;
@@ -491,7 +587,7 @@ impl Replay {
                 if let Some(met) = meeting.filter(|_| candidate & 8 != 0) {
                     body.velocity = body.velocity.add_vector(met);
                 }
-                if run(&mut body, keys, tick.sprinting).is_err() {
+                if run(&mut body, keys, sprinting).is_err() {
                     continue;
                 }
                 let off = offset(&body);
@@ -627,14 +723,9 @@ fn sync(body: &mut PlayerMotion, server: &PlayerMotion) {
 
 #[cfg(test)]
 mod tests {
+    use super::record::Record;
     use super::*;
-    use crate::{
-        assets::Assets,
-        motion::{MotionResources, MotionWorld},
-        world::World,
-    };
-    use horizon_anticheat::prediction::Record;
-    use std::path::Path;
+    use crate::{motion::MotionWorld, world::World};
 
     /// Keys for each tick: 20 walking, 12 sprint-jumping, 12 strafing while turning, 6 still.
     fn script() -> Vec<(u8, f32)> {
@@ -691,11 +782,21 @@ mod tests {
         /// Ticks `.0 .. .1` arrive together: the server plays them all at tick `.1`, in one
         /// catch-up, as it does when its tick lags the client's.
         burst: Option<(usize, usize)>,
+        /// Ticks `.0 .. .1` are never played, and the record keeps fewer than the gap: at tick `.1`
+        /// the replay can't catch up and starts again ([`Replay::rebased`]) where the client is.
+        gap: Option<(usize, usize)>,
         /// Blocks set in the scene after the floor.
         blocks: Vec<([i32; 3], &'static str)>,
         /// On tick `.0`, the server sends the player attributes (the server's body has no sprint
         /// modifier): `.1` as in [`Change::Attributes`], which the client takes.
         attributes: Option<(usize, Option<bool>)>,
+        /// On each tick `.0`, the client handles what the server sent when it heard the client's
+        /// sprint `.1`: the shared flags with that sprinting bit, and the movement speed with the
+        /// sprint modifier or without ([`Change::Sprinting`], [`Change::Attributes`]).
+        server_sprint: Vec<(usize, bool)>,
+        /// The client ignores the sprinting flag and movement speed the server sends (a cheat that
+        /// keeps its sprint through a hit).
+        keep_sprint: bool,
         /// The first ticks the client is on its loading screen: it ends them without moving or
         /// sending a move.
         frozen: usize,
@@ -713,8 +814,11 @@ mod tests {
                 glider: false,
                 teleport: None,
                 burst: None,
+                gap: None,
                 blocks: Vec::new(),
                 attributes: None,
+                server_sprint: Vec::new(),
+                keep_sprint: false,
                 frozen: 0,
                 item_use: None,
             }
@@ -732,17 +836,9 @@ mod tests {
         cheat: impl Fn(usize, Vec3, Vec3) -> Vec3,
         push: Option<Push>,
     ) -> Option<Vec<Step>> {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client")
-            .join(horizon_core::VANILLA_VERSION);
-        if !root.join("movement-properties.nbt").exists() {
-            return None;
-        }
-        let assets = Assets::load(&root).unwrap();
-        let render = assets.reload(&root).unwrap();
-        let binding = crate::collisions::load(&root, assets.registry).unwrap();
-        let resources = MotionResources::load(&root, &assets).unwrap();
-        let mut scene = World::test_scene(&assets, &render, 2).unwrap();
+        let fixture = crate::test_fixtures::vanilla()?;
+        let (assets, binding, resources) = (&fixture.assets, &fixture.collision, &fixture.motion);
+        let mut scene = World::test_scene(assets, &fixture.render, 2).unwrap();
         // A clean stone floor with its top at y 5, and a slab on the walk to step up on.
         let stone = assets.registry.default_state("minecraft:stone").unwrap();
         let air = assets.registry.default_state("minecraft:air").unwrap();
@@ -764,9 +860,9 @@ mod tests {
             scene.set(at[0], at[1], at[2], state).unwrap();
         }
         let start = run.start;
-        let mut client = PlayerMotion::new(&resources, start).unwrap();
+        let mut client = PlayerMotion::new(resources, start).unwrap();
         client.client_side = true;
-        let mut server = PlayerMotion::new(&resources, start).unwrap();
+        let mut server = PlayerMotion::new(resources, start).unwrap();
         (client.glider, server.glider) = (run.glider, run.glider);
         client.pitch = run.pitch;
         let mut world = |player: &mut PlayerMotion, f: &mut dyn FnMut(&mut MotionWorld)| {
@@ -774,9 +870,10 @@ mod tests {
                 entities: &[],
                 player,
                 scene: &mut scene,
-                assets: &assets,
-                collision_binding: &binding,
-                resources: &resources,
+                assets,
+                collision_binding: binding,
+                resources,
+                health: &resources.health,
             })
         };
         // Settle on the floor first (or fall for a while).
@@ -794,6 +891,7 @@ mod tests {
         let mut played = Vec::new();
         let run_teleport = run.teleport;
         let run_burst = run.burst;
+        let run_gap = run.gap;
         let run_attributes = run.attributes;
         let run_frozen = run.frozen;
         let run_item_use = run.item_use;
@@ -813,6 +911,19 @@ mod tests {
                 record.changed(tick, Change::Attributes { sprint });
                 if let Some(kept) = sprint {
                     client.set_sprint_modifier(kept).unwrap();
+                }
+            }
+            for &(_, sprint) in run.server_sprint.iter().filter(|&&(at, _)| at == i) {
+                record.changed(tick, Change::Sprinting(sprint));
+                record.changed(
+                    tick,
+                    Change::Attributes {
+                        sprint: Some(sprint),
+                    },
+                );
+                if !run.keep_sprint {
+                    client.sprinting = sprint;
+                    client.set_sprint_modifier(sprint).unwrap();
                 }
             }
             record.pong(tick, tick);
@@ -841,6 +952,9 @@ mod tests {
             if run_burst.is_some_and(|(from, to)| (from..to).contains(&i)) {
                 continue;
             }
+            if run_gap.is_some_and(|(from, to)| (from..to).contains(&i)) {
+                continue;
+            }
             let mut run = |body: &mut PlayerMotion, keys, sprinting| {
                 let mut result = Ok(());
                 world(body, &mut |w| result = w.replayed_tick(keys, sprinting));
@@ -855,6 +969,11 @@ mod tests {
                 let restart = record.take_restart().unwrap();
                 assert!(replay.finish(&record, &server, &restart, &mut run));
                 replay.restart(&restart);
+            }
+            if run_gap.is_some_and(|(_, to)| to == i) {
+                assert!(replay.catch_up(&record, &server, 0.03, &mut run).is_none());
+                replay = Replay::rebased(&server, [p.x, p.y, p.z], &record);
+                continue;
             }
             let over = replay.catch_up(&record, &server, 0.03, run).unwrap();
             if over.ticks > 0 && push.as_ref().is_some_and(|p| p.excused) {
@@ -1199,6 +1318,152 @@ mod tests {
         assert!(counted.len() >= 30, "{} of 40: {counted:?}", counted.len());
     }
 
+    /// A sprint stopped for one tick (forward let go) and started again: the server hears the STOP
+    /// and the START in two of its ticks, and sends each back (the shared flags and the movement
+    /// speed). The STOP's reach the client `late` ticks after it sprints again: its flag cleared, it
+    /// starts the sprint again in its next aiStep, its modifier with it, and says nothing. The
+    /// START's come one tick later (the live server's `ground sprinting` flags, 0.045 off).
+    fn sprint_restarted(late: usize, gap: usize) -> Run {
+        let mut script = vec![(1 | 64, 0.0); 20];
+        script.push((0, 0.0));
+        script.extend(vec![(1 | 64, 0.0); 20]);
+        Run {
+            script,
+            server_sprint: vec![(21 + late, false), (21 + late + gap, true)],
+            ..Run::walk()
+        }
+    }
+
+    #[test]
+    fn a_sprint_the_server_cleared_is_started_again() {
+        for (late, gap) in [(1, 1), (2, 1), (3, 2)] {
+            let Some(steps) = steps_in(sprint_restarted(late, gap), |_, _, honest| honest, None)
+            else {
+                return;
+            };
+            for (i, s) in steps.iter().enumerate() {
+                assert!(
+                    s.played.offset <= EXACT && s.over == Over::default(),
+                    "late {late}, gap {gap}, tick {i}: {:?}",
+                    s.played
+                );
+            }
+        }
+    }
+
+    /// The same with a speed lie (a twentieth of a block a tick) from the tick the STOP's packets
+    /// reach the client: it counts from that tick on.
+    #[test]
+    fn a_speed_lie_through_a_sprint_restart_still_counts() {
+        let Some(steps) = steps_in(
+            sprint_restarted(2, 1),
+            |i, _, honest| honest.add_vector(Vec3::new(0.0, 0.0, if i >= 23 { 0.05 } else { 0.0 })),
+            None,
+        ) else {
+            return;
+        };
+        let counted: Vec<usize> = steps
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.over.ticks > 0)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(counted.first(), Some(&23), "{counted:?}");
+        assert!(counted.len() >= 10, "{} of 18: {counted:?}", counted.len());
+    }
+
+    /// A sprint the server stopped after a hit (Player.causeExtraKnockback), which the client's own
+    /// attack on a mob doesn't: the server's flag and movement speed reach the client on tick 14.
+    /// Forward is held throughout, the sprint key for the first 10 ticks, and for the rest if `key`.
+    /// The client's own commands say what it does: with the key it starts the sprint again in its
+    /// next aiStep and says nothing (the live server's `ground, keys forward sprint` flags, where
+    /// the record took the server's player and played the rest of the sprint as a walk); without it
+    /// it stops and says STOP. `water`: the same swimming across a pool, toward its surface.
+    fn sprint_hit(key: bool, water: bool) -> Run {
+        let sprint = if key { 64 } else { 0 };
+        let mut script = vec![(1 | 64, 0.0); 10];
+        script.extend(vec![(1 | sprint, 0.0); 40]);
+        let mut blocks = Vec::new();
+        if water {
+            for x in 14..=26 {
+                for y in 5..=7 {
+                    for z in 14..=40 {
+                        blocks.push(([x, y, z], "minecraft:water"));
+                    }
+                }
+            }
+        }
+        Run {
+            script,
+            pitch: if water { -8.0 } else { 0.0 },
+            blocks,
+            server_sprint: vec![(14, false)],
+            ..Run::walk()
+        }
+    }
+
+    #[test]
+    fn a_sprint_the_server_stopped_after_a_hit_is_the_clients() {
+        for (key, water) in [(true, false), (false, false), (true, true), (false, true)] {
+            let Some(steps) = steps_in(sprint_hit(key, water), |_, _, honest| honest, None) else {
+                return;
+            };
+            for (i, s) in steps.iter().enumerate() {
+                assert!(
+                    s.played.offset <= EXACT && s.over == Over::default(),
+                    "key {key}, water {water}, tick {i}: {:?}",
+                    s.played
+                );
+            }
+            // The client sprints on after the hit only with the key.
+            let last = steps.last().unwrap().played.state;
+            assert_eq!(
+                last & Played::SPRINTING != 0,
+                key,
+                "water {water}: {last:b}"
+            );
+        }
+    }
+
+    /// A client that sprints on through the server's stop without the sprint key, which vanilla's
+    /// starts again only with it, is played walking from the tick the stop reaches it; one that
+    /// holds the key and moves a twentieth of a block a tick too far counts from there too.
+    #[test]
+    fn a_sprint_kept_without_the_key_or_sped_up_after_a_hit_counts() {
+        for water in [false, true] {
+            let kept = Run {
+                keep_sprint: true,
+                ..sprint_hit(false, water)
+            };
+            let fast = |i: usize, _, honest: Vec3| {
+                honest.add_vector(Vec3::new(0.0, 0.0, if i >= 14 { 0.05 } else { 0.0 }))
+            };
+            for (name, steps) in [
+                ("kept", steps_in(kept, |_, _, honest| honest, None)),
+                ("fast", steps_in(sprint_hit(true, water), fast, None)),
+            ] {
+                let Some(steps) = steps else {
+                    return;
+                };
+                let counted: Vec<usize> = steps
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.over.ticks > 0)
+                    .map(|(i, _)| i)
+                    .collect();
+                assert!(
+                    counted.first().is_some_and(|&i| (14..=16).contains(&i)),
+                    "{name}, water {water}: {counted:?}"
+                );
+                assert!(
+                    counted.len() >= 25,
+                    "{name}, water {water}: {} of 36: {counted:?}",
+                    counted.len()
+                );
+            }
+        }
+    }
+
     /// An elytra: a jump while falling starts a glide, played again exactly.
     #[test]
     fn a_glide_is_played_again_exactly() {
@@ -1236,6 +1501,54 @@ mod tests {
         let offsets: Vec<f64> = steps.iter().map(|s| s.played.offset).collect();
         assert!(offsets.iter().all(|&o| o <= EXACT), "{offsets:?}");
         assert!(steps.iter().all(|s| s.over == Over::default()));
+    }
+
+    /// A server that couldn't catch up (a stall longer than the record keeps) goes on from the
+    /// client's place, excused until the moves agree, instead of leaving the player unchecked.
+    /// `cheat_from`: the tick from which the client moves 0.3 blocks farther each tick.
+    fn after_a_gap(cheat_from: Option<usize>) -> Option<Vec<Step>> {
+        // 90 ticks walking +z from z 10.5 stay on the floor (z 10 to 40); ticks 3 to 43 are never
+        // played, and at tick 44 the record has 42 unplayed (it keeps 40): the rebase, which plays
+        // nothing.
+        let run = Run {
+            start: Vec3::new(15.5, 5.0, 10.5),
+            script: vec![(1, 0.0); 90],
+            gap: Some((3, 44)),
+            ..Run::walk()
+        };
+        steps_in(
+            run,
+            |i, _, honest| match cheat_from {
+                Some(from) if i >= from => Vec3::new(honest.x, honest.y, honest.z + 0.3),
+                _ => honest,
+            },
+            None,
+        )
+    }
+
+    /// Ticks the replay lost (a gap) are not accused of anything: the client is played again from
+    /// where the server has it, and nothing counts.
+    #[test]
+    fn an_honest_client_after_a_history_gap_is_never_over() {
+        let Some(steps) = after_a_gap(None) else {
+            return;
+        };
+        assert_eq!(steps.len(), 90 - 41 - 1);
+        assert!(steps.iter().all(|s| s.over == Over::default()));
+    }
+
+    /// The check resumes after the gap without a teleport: a client that starts lying once the
+    /// excuse has run out (at most [`DRIFT`] ticks after the rebase) is counted on its first
+    /// lying tick, and none before it is.
+    #[test]
+    fn a_cheat_after_a_history_gap_is_counted_again() {
+        // Tick 44 is the rebase: the 40 ticks after it spend the excuse, the cheat starts at tick 85.
+        let Some(steps) = after_a_gap(Some(85)) else {
+            return;
+        };
+        let first = steps.iter().position(|s| s.over.ticks > 0);
+        // Steps hold ticks 0 to 2, then 45 on.
+        assert_eq!(first, Some(85 - 42), "{:?}", steps[first.unwrap_or(0)].over);
     }
 
     /// A client walking 40 ticks towards +z, over the slab, into `blocks`, its moves passed through
@@ -1302,5 +1615,89 @@ mod tests {
             (honest.z > 25.4 && honest.y < before.y)
                 .then(|| Vec3::new(honest.x, before.y, honest.z))
         });
+    }
+
+    /// A small deterministic generator for the reach tests (the crate has no rand dependency).
+    struct Xorshift(u64);
+
+    impl Xorshift {
+        fn next_u64(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        /// In [0, 1).
+        fn unit(&mut self) -> f64 {
+            (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
+        }
+    }
+
+    /// For random viewers and random sections, a section with a block near the viewer is never
+    /// rejected by its box, and a section with none may be.
+    #[test]
+    fn reach_box_never_rejects_a_near_block() {
+        let mut rng = Xorshift(0x9E37_79B9_7F4A_7C15);
+        let mut near_sections = 0;
+        assert!(
+            !reaches([0.5; 3], 0.0, bounds(&[])),
+            "an empty section reaches nobody"
+        );
+        for _ in 0..20_000 {
+            let at: [f64; 3] = std::array::from_fn(|_| (rng.unit() - 0.5) * 200.0);
+            let slack = rng.unit() * 16.0;
+            // Blocks out to the reach of `near` and a little past it, on every side.
+            let span = 2.0 * (4.5 + slack + 2.0);
+            let count = 1 + (rng.next_u64() % 16) as usize;
+            let mut positions = Vec::with_capacity(count);
+            for _ in 0..count {
+                let b: [i32; 3] =
+                    std::array::from_fn(|i| (at[i] + (rng.unit() - 0.5) * span).floor() as i32);
+                positions.push((b[0], b[1], b[2]));
+            }
+            if positions
+                .iter()
+                .any(|&(x, y, z)| near(at, [x, y, z], slack))
+            {
+                near_sections += 1;
+                assert!(
+                    reaches(at, slack, bounds(&positions)),
+                    "rejected {at:?} with slack {slack} and {positions:?}"
+                );
+            }
+        }
+        assert!(
+            near_sections > 1_000,
+            "only {near_sections} sections were near"
+        );
+    }
+
+    /// Every single block around a viewer, one at a time, on the edge of the reach included.
+    #[test]
+    fn reach_box_keeps_every_block_on_the_edge() {
+        let mut rng = Xorshift(0xD1B5_4A32_D192_ED03);
+        let mut near_blocks = 0;
+        for _ in 0..60 {
+            let at: [f64; 3] = std::array::from_fn(|_| (rng.unit() - 0.5) * 64.0);
+            let slack = rng.unit() * 16.0;
+            let base = at.map(|v| v.floor() as i32);
+            let span = (4.5 + slack).ceil() as i32 + 2;
+            for dx in -span..=span {
+                for dy in -span..=span {
+                    for dz in -span..=span {
+                        let b = (base[0] + dx, base[1] + dy, base[2] + dz);
+                        if near(at, [b.0, b.1, b.2], slack) {
+                            near_blocks += 1;
+                            assert!(
+                                reaches(at, slack, bounds(&[b])),
+                                "rejected {at:?} with slack {slack} and {b:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert!(near_blocks > 1_000, "only {near_blocks} blocks were near");
     }
 }

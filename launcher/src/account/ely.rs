@@ -214,9 +214,11 @@ mod tests {
                 write!(stream,"HTTP/1.1 {status} Result\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
             }
         });
-        assert!(authenticate_with(&base, "Player", "secret", "")
-            .unwrap_err()
-            .contains("two-factor"));
+        assert!(
+            authenticate_with(&base, "Player", "secret", "")
+                .unwrap_err()
+                .contains("two-factor")
+        );
         let (account, secrets) = authenticate_with(&base, "Player", "secret", "123456").unwrap();
         let (_, renewed) = refresh_with(&base, &account, &secrets).unwrap();
         assert_eq!(renewed.game_token(), "access-2");
@@ -238,11 +240,13 @@ mod tests {
         assert!(!format!("{secrets:?}").contains("private"));
         assert!(!serde_json::to_string(&ely).unwrap().contains("private"));
         assert!(decode(&value, "another-client").is_err());
-        assert!(decode(
-            &json!({"accessToken":"x","selectedProfile":{"id":"../bad","name":"Player"}}),
-            "c"
-        )
-        .is_err());
+        assert!(
+            decode(
+                &json!({"accessToken":"x","selectedProfile":{"id":"../bad","name":"Player"}}),
+                "c"
+            )
+            .is_err()
+        );
     }
     #[test]
     fn both_providers_keep_distinct_credentials_and_ely_never_grants_ownership() {
@@ -261,20 +265,24 @@ mod tests {
             owns: true,
         };
         let store = MemoryStore::default();
-        assert!(fresh(
-            &Endpoints::live(),
-            "unused",
-            &microsoft,
-            ely_secrets.clone()
-        )
-        .is_err());
-        assert!(fresh(
-            &Endpoints::live(),
-            "unused",
-            &ely,
-            microsoft_secrets.clone()
-        )
-        .is_err());
+        assert!(
+            fresh(
+                &Endpoints::live(),
+                "unused",
+                &microsoft,
+                ely_secrets.clone()
+            )
+            .is_err()
+        );
+        assert!(
+            fresh(
+                &Endpoints::live(),
+                "unused",
+                &ely,
+                microsoft_secrets.clone()
+            )
+            .is_err()
+        );
         let mut accounts = Accounts::default();
         accounts.add(&store, ely.clone(), &ely_secrets).unwrap();
         assert_eq!(accounts.selected(), Some(&ely));
@@ -293,16 +301,20 @@ mod tests {
         );
         assert_eq!(accounts.find(&ely.key()).unwrap().provider, Provider::Ely);
         assert!(accounts.has_owner(&store));
-        assert!(store
-            .get(&ely.key())
-            .unwrap()
-            .unwrap()
-            .contains("ely-token"));
-        assert!(store
-            .get(&microsoft.key())
-            .unwrap()
-            .unwrap()
-            .contains("ms-token"));
+        assert!(
+            store
+                .get(&ely.key())
+                .unwrap()
+                .unwrap()
+                .contains("ely-token")
+        );
+        assert!(
+            store
+                .get(&microsoft.key())
+                .unwrap()
+                .unwrap()
+                .contains("ms-token")
+        );
         accounts.remove(&store, &ely.key()).unwrap();
         assert_eq!(accounts.selected(), Some(&microsoft));
         assert!(store.get(&microsoft.key()).unwrap().is_some());

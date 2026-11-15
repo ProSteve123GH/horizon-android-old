@@ -15,9 +15,11 @@ fn versions_name_the_stable_ones() {
         pick(Kind::Fabric, &listed, Some("0.17.0-beta.1")).unwrap(),
         "0.17.0-beta.1"
     );
-    assert!(pick(Kind::Fabric, &listed, Some("0.1"))
-        .unwrap_err()
-        .contains("Fabric has no loader 0.1"));
+    assert!(
+        pick(Kind::Fabric, &listed, Some("0.1"))
+            .unwrap_err()
+            .contains("Fabric has no loader 0.1")
+    );
     // Quilt's comes in no order and says nothing of stability: a beta has a `-`.
     let quilt = [
         "0.20.0-beta.9",
@@ -51,7 +53,8 @@ fn versions_name_the_stable_ones() {
         "quilt-loader-0.19.2-1.21.4"
     );
     assert_eq!(Kind::parse(" Fabric ").unwrap(), Kind::Fabric);
-    assert!(Kind::parse("forge").is_err());
+    assert_eq!(Kind::parse("NeoForge").unwrap(), Kind::NeoForge);
+    assert!(Kind::parse("liteloader").is_err());
 }
 
 #[test]
@@ -104,7 +107,7 @@ fn a_profile_comes_with_its_libraries_checked() {
     };
     let install_with = |served: &HashMap<String, Vec<u8>>, minecraft: &str| {
         let fetch = |url: &str| served.get(url).cloned().ok_or(format!("404 {url}"));
-        install(&loader, minecraft, &dir, &fetch, &|_| {})
+        install(&loader, minecraft, &dir, Path::new("java"), &fetch, &|_| {})
     };
     let id = install_with(&served, "1.21.4").unwrap();
     assert_eq!(id, Kind::Fabric.profile_id("0.16.9", "1.21.4"));
@@ -124,14 +127,18 @@ fn a_profile_comes_with_its_libraries_checked() {
         "https://meta.fabricmc.net/v2/versions/loader/1.20.1/0.16.9/profile/json".into(),
         profile.to_string().into_bytes(),
     );
-    assert!(install_with(&served, "1.20.1")
-        .unwrap_err()
-        .contains("not Minecraft 1.20.1"));
+    assert!(
+        install_with(&served, "1.20.1")
+            .unwrap_err()
+            .contains("not Minecraft 1.20.1")
+    );
     fs::remove_file(dir.join("libraries/org/ow2/asm/asm/9.7/asm-9.7.jar")).unwrap();
     served.insert(asm.into(), b"tampered".to_vec());
-    assert!(install_with(&served, "1.21.4")
-        .unwrap_err()
-        .contains("asm-9.7.jar is not the one"));
+    assert!(
+        install_with(&served, "1.21.4")
+            .unwrap_err()
+            .contains("asm-9.7.jar is not the one")
+    );
     fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -143,9 +150,14 @@ fn the_real_loaders_install() {
         let dir =
             std::env::temp_dir().join(format!("horizon-loaders-{kind}-{}", std::process::id()));
         let loader = choose(kind, "1.21.4", None).unwrap();
-        let id = install(&loader, "1.21.4", &dir, &crate::backend::get_bytes, &|l| {
-            eprintln!("{l}")
-        })
+        let id = install(
+            &loader,
+            "1.21.4",
+            &dir,
+            Path::new("java"),
+            &crate::backend::get_bytes,
+            &|l| eprintln!("{l}"),
+        )
         .unwrap();
         assert_eq!(id, loader.kind.profile_id(&loader.version, "1.21.4"));
         let kept: Value = serde_json::from_slice(

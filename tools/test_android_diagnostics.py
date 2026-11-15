@@ -25,6 +25,9 @@ regex = "1"
 zip = {{ version = "={version}", default-features = false, features = ["deflate"] }}
 ''', encoding='utf-8')
     (harness / 'src/lib.rs').write_text('''#![allow(dead_code)]
+// `diagnostics.rs` is a module of the game's library, where `horizon_client` is the crate; this
+// shim keeps that path working when the same file is compiled as this test crate.
+extern crate self as horizon_client;
 mod backend { pub const VERSION: &str = "diagnostics-test"; }
 #[path = "../../../../crates/horizon-client/src/android/diagnostics.rs"] mod diagnostics;
 ''', encoding='utf-8')

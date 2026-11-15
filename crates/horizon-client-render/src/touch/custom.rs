@@ -1,8 +1,9 @@
 //! User-added keys share drawing/hit geometry and retain per-finger ownership.
+use super::draw::text_button;
 use super::*;
 use layout::Placement;
 use serde::{Deserialize, Serialize};
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CustomButton {
     pub key: String,
     pub layouts: [Placement; 3],
@@ -144,9 +145,6 @@ impl TouchControls {
     }
     pub fn held_custom_tokens(&self) -> impl Iterator<Item = &str> {
         self.custom_fingers.values().map(String::as_str)
-    }
-    pub fn key_events(&mut self) -> Vec<(String, bool)> {
-        std::mem::take(&mut self.custom_events)
     }
     pub(super) fn clear_custom(&mut self) {
         let keys: std::collections::BTreeSet<_> = std::mem::take(&mut self.custom_fingers)

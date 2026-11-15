@@ -388,7 +388,7 @@ mod run {
                         continue;
                     }
                 };
-                if let Err(e) = self.place_state([b.x, b.y, b.z], state, false) {
+                if let Err(e) = self.place_state([b.x, b.y, b.z], state, false, false) {
                     log::debug!(
                         "Horizon: a server mod's block at {} {} {}: {e:?}",
                         b.x,

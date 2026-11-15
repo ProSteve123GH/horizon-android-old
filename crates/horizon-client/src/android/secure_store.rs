@@ -25,7 +25,7 @@ fn path(key: &str) -> Result<PathBuf, String> {
     {
         return Err("Invalid account key".into());
     }
-    Ok(crate::backend::data_dir()
+    Ok(horizon_client::backend::data_dir()
         .join("account-secrets")
         .join(format!("{key}.gcm")))
 }
@@ -241,7 +241,7 @@ impl SecretStore for AndroidStore {
 /// JNI implementation over two Android process launches. No login is involved.
 #[cfg(debug_assertions)]
 pub fn development_probe() -> bool {
-    let home = crate::backend::data_dir();
+    let home = horizon_client::backend::data_dir();
     let request = home.join("keystore-probe-request.json");
     let Ok(phase) = std::fs::read_to_string(&request) else {
         return false;

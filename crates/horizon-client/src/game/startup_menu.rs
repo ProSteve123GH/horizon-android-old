@@ -63,9 +63,15 @@ pub(super) struct StartupMenu {
     key_synthetic: bool,
     /// The screen the keyboard's focus is on (`key_screen`).
     key_screen: u64,
+    /// The screen (`Self::key_screen`) the title's click focus belongs to:
+    /// another one in front drops it, as `Gui.setScreen` drops the focus of
+    /// the screen it leaves (`Screen.clearFocus`).
+    focus_screen: u64,
     pub pending: Option<PendingWorldEntry>,
     pub(super) entry_presented: bool,
     pub reload_packs: bool,
+    /// Browse mods' worker (`mod_browser`).
+    mod_jobs: super::mod_browser::Jobs,
     pub perf: horizon_client::telemetry::Session,
 }
 
@@ -81,6 +87,7 @@ impl StartupMenu {
                 name: options.player_name(),
                 cookies: None,
                 lan: false,
+                realm: false,
             })
         } else {
             options
@@ -267,11 +274,16 @@ impl StartupMenu {
                 creative,
                 create: Some(Box::new(options)),
             },
-            Action::Connect { address, lan } => PendingWorldEntry::Server {
+            Action::Connect {
+                address,
+                lan,
+                realm,
+            } => PendingWorldEntry::Server {
                 address,
                 name: player_name,
                 cookies: None,
                 lan,
+                realm,
             },
             _ => return,
         };
@@ -313,6 +325,21 @@ impl StartupMenu {
             }
             return Action::None;
         }
+        // `TabNavigationBar.keyPressed` comes before the open tab's own
+        // widgets: Ctrl plus a digit or Tab picks a tab instead of reaching
+        // them.
+        let ctrl = if cfg!(target_os = "macos") {
+            self.modifiers.super_key()
+        } else {
+            self.modifiers.control_key()
+        };
+        if let PhysicalKey::Code(key) = event.physical_key
+            && title
+                .tab_bar_key(key, ctrl, self.modifiers.shift_key())
+                .is_some()
+        {
+            return Action::None;
+        }
         match event.physical_key {
             PhysicalKey::Code(KeyCode::Escape) => title.escape(),
             PhysicalKey::Code(KeyCode::F5) => title.refresh_servers(),
@@ -323,7 +350,8 @@ impl StartupMenu {
                 return title.confirm_key_size(viewport).0;
             }
             PhysicalKey::Code(KeyCode::Space)
-                if title.list_focused() || title.focused_button.is_some() =>
+                if !title.has_caret_field()
+                    && (title.list_focused() || title.focused_button.is_some()) =>
             {
                 return title.confirm_key_size(viewport).0;
             }
@@ -347,7 +375,7 @@ impl StartupMenu {
                 | KeyCode::ArrowUp
                 | KeyCode::ArrowDown),
             ) => {
-                title.arrow_key(key, viewport);
+                title.arrow_key(key, viewport, self.modifiers.shift_key());
             }
             _ => {
                 let cleared = !title.has_caret_field()
@@ -379,6 +407,24 @@ fn panic_text(payload: &(dyn std::any::Any + Send)) -> &str {
         .unwrap_or("Box<dyn Any>")
 }
 
+/// Resolve vanilla and native content before applying the selected resource packs.
+pub(super) fn startup_resource_root(
+    vanilla_root: &std::path::Path,
+    settings: &Settings,
+    dev_mods: &[PathBuf],
+) -> (PathBuf, Option<String>) {
+    let base = mods::content_root(
+        vanilla_root,
+        &settings.mods.enabled,
+        &settings.mods.disabled,
+        dev_mods,
+    );
+    match packs::startup_root(vanilla_root, &base, &settings.resource_packs, &[]) {
+        Ok(root) => (root, None),
+        Err(error) => (base, Some(error.to_string())),
+    }
+}
+
 /// Each generation has its own channel and progress. Pack changes wait for the
 /// old tail before starting another generation, including cache/global writes.
 pub(super) fn spawn_loader(
@@ -397,13 +443,7 @@ pub(super) fn spawn_loader(
     let handle = std::thread::Builder::new()
         .name("resource-loader".into())
         .spawn(move || {
-            let mut pack_error = None;
-            let root = packs::startup_root(&vanilla_root, &settings.resource_packs, &[])
-                .unwrap_or_else(|error| {
-                    pack_error = Some(error.to_string());
-                    vanilla_root.clone()
-                });
-            let root = mods::content_root(&root, &settings.mods.enabled, &dev_mods);
+            let (root, pack_error) = startup_resource_root(&vanilla_root, &settings, &dev_mods);
             let result = load_resources(
                 root,
                 world.as_deref(),
@@ -455,7 +495,18 @@ impl Loading {
                 }
             }
         }
+        self.drive_menu_mod_browser();
         self.restart_menu_resources()
+    }
+    /// The startup menu's Browse mods, as `Game::drive_mod_browser`.
+    fn drive_menu_mod_browser(&mut self) {
+        let menu = &mut self.menu;
+        if menu
+            .mod_jobs
+            .poll(&mut menu.options.mod_browser, &mut self.settings.mods)
+        {
+            self.settings.save(&Game::options_path());
+        }
     }
     pub(super) fn apply_menu_settings(&mut self) {
         #[cfg(target_os = "android")]
@@ -541,6 +592,7 @@ impl Loading {
         self.menu.options.open_at(false, page);
         self.menu.options.languages = horizon_client::lang::available(&[&self.menu.root]);
         self.menu.options.pack_infos = packs::pack_infos(&self.vanilla_root, &[]);
+        self.menu.options.pack_configs = packs::pack_configs(&self.vanilla_root);
         self.menu.options.pack_selection = self.settings.resource_packs.clone();
         self.menu.options.pack_screen = None;
         self.menu.options_open = true;
@@ -579,10 +631,31 @@ impl Loading {
                     self.save_menu_settings();
                     self.menu.reload_packs = true;
                 }
+                Event::PackOptions { entries, chosen } => {
+                    packs::save_pack_options(&entries, chosen);
+                    self.menu.options.pack_configs = packs::pack_configs(&self.vanilla_root);
+                    self.menu.reload_packs = true;
+                }
                 Event::OpenPackFolder => {
                     let dir = packs::packs_dir();
                     let _ = std::fs::create_dir_all(&dir);
                     packs::open_folder(&dir);
+                }
+                Event::ImportPacks(paths) => {
+                    packs::import_resource_packs(
+                        &mut self.menu.options,
+                        &self.vanilla_root,
+                        &[],
+                        &paths,
+                    );
+                }
+                Event::DownloadPack(i) => {
+                    let dir = packs::packs_dir();
+                    if let Some(screen) = &mut self.menu.options.pack_screen
+                        && let Some(browser) = &mut screen.browser
+                    {
+                        browser.download(i, &dir, horizon_core::VANILLA_VERSION);
+                    }
                 }
                 Event::DataPacks(ids) => {
                     let resources = self.vanilla_root.clone();
@@ -595,11 +668,28 @@ impl Loading {
                     packs::open_folder(&dir);
                 }
                 Event::OpenModFolder => {
-                    let dir = Game::options_path().with_file_name(horizon_client::mod_list::DIR);
+                    let dir = Game::game_dir().join(horizon_client::mod_list::DIR);
                     let _ = std::fs::create_dir_all(&dir);
                     packs::open_folder(&dir);
                 }
+                Event::BrowseMods => {
+                    let ui = &mut self.menu.options.mod_browser;
+                    self.menu.mod_jobs.browse(ui, Game::game_dir());
+                }
+                Event::InstallMod(id) => {
+                    let ui = &mut self.menu.options.mod_browser;
+                    self.menu.mod_jobs.install(ui, Game::game_dir(), id);
+                }
+                Event::OpenModPage(url) => packs::open_uri(&url),
                 Event::ListShaderPacks => {
+                    let (key, _) = horizon_client::shader_pack_list::resolve(
+                        &Game::shader_packs_dir(),
+                        &self.settings.horizon.shader_pack,
+                    );
+                    if key != self.settings.horizon.shader_pack {
+                        self.settings.horizon.shader_pack = key;
+                        self.save_menu_settings();
+                    }
                     self.settings.shader_packs =
                         horizon_client::shader_pack_list::scan(&Game::shader_packs_dir());
                 }
@@ -645,14 +735,40 @@ impl Loading {
                     self.settings.narrator(),
                     &mut self.menu.narrator_toast,
                 ),
+                // The startup menu has no screen stack for ConfirmLinkScreen;
+                // the link opens directly, as the menu's other links do.
+                Event::AccessibilityHelp => {
+                    super::packs::open_uri(super::options::ACCESSIBILITY_HELP_LINK)
+                }
                 // Mods' settings pages open only in a running game.
-                Event::ModSettings(_) | Event::NativeSettings(_) | Event::NativeButton(..) => {}
-                // The startup menu runs before the game opens a control socket.
+                // The HUD editor needs a world: its button is inactive here.
+                Event::ModSettings(_)
+                | Event::NativeSettings(_)
+                | Event::NativeButton(..)
+                | Event::HudEditor => {}
+                // The startup menu runs before the game opens a control socket,
+                // and before its sound engine (no clicks, no volume previews,
+                // and no music tracks to list or play).
                 Event::ButtonClick => {
                     #[cfg(target_os = "android")]
                     self.menu.click_sound(self.settings.volumes);
                 }
-                Event::CopyAgentDetails | Event::Volume(..) => {}
+                Event::CopyAgentDetails
+                | Event::ToggleRecording
+                | Event::ExportRepro
+                | Event::ListMusicTracks
+                | Event::PlayMusicTrack(..)
+                | Event::Volume(..) => {}
+                Event::OpenStudioFolder => {
+                    let dir = std::path::PathBuf::from("recordings");
+                    let _ = std::fs::create_dir_all(&dir);
+                    packs::open_folder(&dir);
+                }
+                Event::OpenStudioReplay(path) => {
+                    self.menu.options_open = false;
+                    self.menu.dragging = false;
+                    self.menu.pending = Some(PendingWorldEntry::StudioReplay(path));
+                }
             }
         }
     }
@@ -713,6 +829,18 @@ impl Loading {
             right,
         );
         self.menu_option_events(events);
+    }
+
+    /// The Realms screen's join, once its address came back: queued like a click on a server.
+    pub(super) fn poll_menu_realms(&mut self, event_loop: &dyn EventLoopCtl) {
+        if let Some(action) = self
+            .menu
+            .title
+            .as_mut()
+            .and_then(Title::take_connect_request)
+        {
+            self.menu_action(event_loop, action);
+        }
     }
 
     fn menu_action(&mut self, event_loop: &dyn EventLoopCtl, action: Action) {
@@ -785,12 +913,13 @@ impl Loading {
                         t.backspace();
                     }
                 }
-                Output::Enter | Output::Close => {
+                Output::Enter | Output::Close | Output::Done => {
                     crate::platform::hide();
                     if let Some(t) = &mut self.menu.title {
                         t.confirm_edit();
                     }
                 }
+                Output::Complete | Output::Previous | Output::Next => {}
             }
             self.save_menu_address();
         }
@@ -1438,7 +1567,16 @@ impl Loading {
             // `PackSelectionScreen.onFilesDrop`: a pack dropped on the window
             // joins the Create New World screen's data packs.
             WindowEvent::DroppedFile(path) => {
-                if let Some(title) = &mut self.menu.title {
+                let batch = HudBatch::new(self.menu_size());
+                let handled = self.menu.options_open
+                    && self.gui.as_ref().is_some_and(|gui| {
+                        self.menu.options.drop_resource_pack(
+                            path.clone(),
+                            &gui.atlas,
+                            (batch.width, batch.height),
+                        )
+                    });
+                if !handled && let Some(title) = &mut self.menu.title {
                     title.drop_file(path);
                 }
             }
@@ -1537,6 +1675,22 @@ impl Loading {
                     }
                 }
             }
+            // AbstractSelectionList.mouseClicked: a world row takes a click
+            // of any button, so the middle one selects it without joining.
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Middle,
+                ..
+            } => {
+                let batch = HudBatch::new(self.menu_size());
+                if let Some(title) = &mut self.menu.title {
+                    title.select_world_at(
+                        self.menu.cursor.0,
+                        self.menu.cursor.1,
+                        (batch.width, batch.height),
+                    );
+                }
+            }
             WindowEvent::MouseWheel { delta, .. } => {
                 let raw = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
@@ -1618,6 +1772,16 @@ impl Loading {
             self.menu.controls.draw(batch, &gui.atlas);
             return;
         }
+        // `Gui.setScreen` clears the focus of the screen it leaves
+        // (`Screen.clearFocus`): the title behind the options, and the one
+        // that comes back, start with no button highlighted.
+        let screen = self.menu.key_screen();
+        if super::pad_menu::another_screen_is_front(&mut self.menu.focus_screen, screen) {
+            self.menu.options.clear_click_focus();
+            if let Some(title) = self.menu.title.as_mut() {
+                title.focused_button = None;
+            }
+        }
         if self.menu.pending.is_some() {
             horizon_client::level_loading::draw_loading_overlay(
                 batch,
@@ -1647,9 +1811,13 @@ impl Loading {
                 self.menu.win = None;
             }
         } else if self.menu.options_open {
+            let output = self
+                .renderer
+                .as_ref()
+                .map_or(Default::default(), |r| r.output());
             self.menu
                 .options
-                .draw(&self.settings, batch, &gui.atlas, self.menu.cursor);
+                .draw(&self.settings, output, batch, &gui.atlas, self.menu.cursor);
         } else if let Some(title) = &mut self.menu.title {
             title.poll_backup();
             if std::mem::take(&mut title.onboarding_finished) {
@@ -1674,6 +1842,7 @@ impl Loading {
                 batch,
                 self.menu.cursor,
                 self.settings.file.bool("hideSplashTexts"),
+                self.settings.file.bool("hideServerAddress"),
             );
         }
         if let Some(focus) = self.menu.key_focus
@@ -1790,10 +1959,9 @@ mod tests {
     fn gui(root: &std::path::Path) -> UiResources {
         UiResources {
             atlas: HudAtlas::fonts(root).unwrap(),
-            panorama: Arc::new(horizon_client::gfx::panorama::Faces {
-                size: 1,
-                pixels: [96, 110, 111, 255].repeat(6),
-            }),
+            panorama: Arc::new(horizon_client::gfx::panorama::Faces::colour([
+                96, 110, 111, 255,
+            ])),
         }
     }
 
@@ -1819,6 +1987,8 @@ mod tests {
             delivered: false,
             handle: None,
             shown: false,
+            ui_at: None,
+            title_drawn: false,
             menu: StartupMenu::default(),
             error: None,
         }
@@ -1861,6 +2031,150 @@ mod tests {
         loading.draw_menu(&mut batch);
         assert!(!batch.vertices.is_empty());
         assert!(loading.loaded.is_none());
+    }
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES and scratch homes/cwd"]
+    fn resource_pack_drops_import_from_startup_and_game_options() {
+        struct Loop;
+        impl super::super::event_loop::EventLoopCtl for Loop {
+            fn exit(&self) {}
+            fn set_control_flow(&self, _: winit::event_loop::ControlFlow) {}
+        }
+        let root =
+            PathBuf::from(std::env::var_os("HORIZON_TEST_RESOURCES").expect("prepared resources"));
+        let game_dir = std::env::current_dir().unwrap();
+        assert!(
+            std::fs::read_dir(&game_dir).unwrap().next().is_none(),
+            "run the built test executable directly from an empty scratch game directory"
+        );
+        let source = game_dir.join("drop-fixtures");
+        std::fs::create_dir(&source).unwrap();
+        for name in ["Startup pack", "Game pack"] {
+            let path = source.join(name);
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(
+                path.join("pack.mcmeta"),
+                br#"{"pack":{"pack_format":1,"description":"Drop test"}}"#,
+            )
+            .unwrap();
+        }
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let mut loading = loading(receiver);
+        loading.gui = Some(gui(&root));
+        loading.vanilla_root = root.clone();
+        loading.open_menu_options(Page::Packs);
+        loading
+            .menu_event(&Loop, WindowEvent::DroppedFile(source.join("Startup pack")))
+            .unwrap();
+        assert!(
+            loading
+                .menu
+                .options
+                .pack_screen
+                .as_ref()
+                .unwrap()
+                .confirming()
+        );
+        assert!(!packs::packs_dir().join("Startup pack").exists());
+        let batch = HudBatch::new(loading.menu_size());
+        let events = loading.menu.options.click(
+            &mut loading.settings,
+            &loading.gui.as_ref().unwrap().atlas,
+            batch.width / 2.0 - 150.0,
+            batch.height / 2.0 + 20.0,
+            (batch.width, batch.height),
+            [1280, 720],
+            false,
+            false,
+        );
+        assert!(events.iter().any(|e| matches!(e, Event::ImportPacks(_))));
+        loading.menu_option_events(events);
+        assert!(
+            packs::packs_dir()
+                .join("Startup pack/pack.mcmeta")
+                .is_file()
+        );
+        assert!(
+            loading
+                .menu
+                .options
+                .pack_infos
+                .iter()
+                .any(|p| p.id == "file/Startup pack")
+        );
+        assert!(loading.settings.resource_packs.is_empty());
+
+        let settings = Settings::default();
+        let loaded = load_resources(
+            root.clone(),
+            None,
+            &root,
+            &settings,
+            Instant::now(),
+            false,
+            true,
+            &Progress::new(),
+            &mut |_, _| unreachable!(),
+        )
+        .unwrap();
+        let mut options = Options::parse(std::iter::empty()).unwrap().unwrap();
+        options.resources = root.clone();
+        options.execution_role = execution_role::ExecutionRole::IntegratedServer;
+        let resources = Box::leak(Box::new(loaded.resources));
+        let mut game = Game::new(
+            resources,
+            loaded.pack,
+            loaded.gui.unwrap(),
+            options,
+            settings,
+            Audio::silent(&root),
+            None,
+        )
+        .unwrap();
+        game.title = Some(Title::new(PathBuf::from("saves"), &root));
+        game.open_options_at(true, Page::Packs);
+        game.handle_window_event_inner(&Loop, WindowEvent::DroppedFile(source.join("Game pack")));
+        assert!(game.ui.options.pack_screen.as_ref().unwrap().confirming());
+        assert!(!packs::packs_dir().join("Game pack").exists());
+        let size = game.gui_size();
+        let events = game.ui.options.click(
+            &mut game.settings,
+            &game.gui.atlas,
+            size.0 / 2.0 - 150.0,
+            size.1 / 2.0 + 20.0,
+            size,
+            [1280, 720],
+            false,
+            false,
+        );
+        assert!(events.iter().any(|e| matches!(e, Event::ImportPacks(_))));
+        game.handle_option_events(events).unwrap();
+        assert!(packs::packs_dir().join("Game pack/pack.mcmeta").is_file());
+        assert!(
+            game.ui
+                .options
+                .pack_infos
+                .iter()
+                .any(|p| p.id == "file/Game pack")
+        );
+        assert!(game.settings.resource_packs.is_empty());
+    }
+
+    #[test]
+    fn the_world_renderer_waits_for_the_first_title_frame() {
+        let (_send, receiver) = std::sync::mpsc::channel();
+        let mut loading = loading(receiver);
+        // No menu bundle yet: nothing to wait for.
+        assert!(loading.ready_for_handoff());
+        // The title artwork is up but no frame of it was presented.
+        loading.ui_at = Some(Instant::now());
+        assert!(!loading.ready_for_handoff());
+        loading.title_drawn = true;
+        assert!(loading.ready_for_handoff());
+        // A window never asked to redraw doesn't hold the start for long.
+        loading.title_drawn = false;
+        loading.ui_at = Instant::now().checked_sub(Duration::from_secs(2));
+        assert!(loading.ready_for_handoff());
     }
 
     #[test]
@@ -1924,6 +2238,7 @@ mod tests {
             Action::Connect {
                 address: "localhost:25565".into(),
                 lan: true,
+                realm: false,
             },
             "Guest".into(),
         );

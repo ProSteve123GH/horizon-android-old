@@ -1,6 +1,6 @@
 //! A native Rust installer and version screen, sharing the game's Vulkan renderer.
 use crate::catalog::{Catalog, Page};
-use crate::game;
+use horizon_client::game;
 #[path = "chooser.rs"]
 mod chooser;
 #[path = "launcher_gesture.rs"]
@@ -175,7 +175,7 @@ impl Launcher {
             game.exiting(events);
             drop(game);
         }
-        crate::game::android_reset_bundled_mods();
+        horizon_client::game::android_reset_bundled_mods();
         crate::document_store::set_game_active(&self.home, false);
         crate::performance::stop();
         if self.direct {
@@ -186,7 +186,6 @@ impl Launcher {
         horizon_client::auth::clear_current();
         self.session_ready = false;
         self.prepared_session = None;
-        horizon_client::discord_presence::stop();
         horizon_client::ui_theme::reset_atlas();
         self.cursor = (0.0, 0.0);
         self.drag = None;
@@ -253,16 +252,13 @@ impl Launcher {
         crate::display::prepare(&window)?;
         let gui = game::UiResources {
             atlas: HudAtlas::build(&self.home.join("installer"))?,
-            panorama: Arc::new(horizon_client::gfx::panorama::Faces {
-                size: 1,
-                pixels: [0u8; 4].repeat(6),
-            }),
+            panorama: Arc::new(horizon_client::gfx::panorama::Faces::colour([0, 0, 0, 255])),
         };
         self.renderer = Some(game::loading_renderer(
             window.clone(),
             false,
             Some(&gui.atlas),
-            Some(gui.panorama.as_ref()),
+            Some(&gui.panorama),
             None,
             if self.catalog.config.renderer == crate::catalog::RendererMode::OpenGl {
                 horizon_client::graphics::GraphicsApi::OpenGl

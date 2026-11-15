@@ -18,7 +18,7 @@ edition = "2024"
 base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-horizon-world = { path = "../../../crates/horizon-world" }
+horizon-platform = { path = "../../../crates/horizon-platform", features = ["world"] }
 horizon-telemetry = { path = "../../../crates/horizon-telemetry", default-features = false }
 ''', encoding='utf-8')
     (root / 'src/main.rs').write_text(RUST, encoding='utf-8')
@@ -34,7 +34,7 @@ mod servers;
 mod server_list;
 
 use base64::Engine;
-use horizon_world::nbt::{self, Compound, JavaString, Limits, NamedTag, Tag};
+use horizon_platform::world::nbt::{self, Compound, JavaString, Limits, NamedTag, Tag};
 use serde_json::{Value, json};
 use server_list::List;
 use servers::{Address, Manager, Ping, MAX_GROUP, MAX_ICON_BYTES, MAX_NAME};

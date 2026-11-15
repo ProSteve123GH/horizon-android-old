@@ -738,6 +738,10 @@ fn players(id: &str, ctx: &Context, env: &mut dyn Env) -> CmdResult<i32> {
             let op = string(ctx, "operation");
             let sources = holders(ctx, "source", env, true)?;
             let source_objective = objective_name(ctx, env, "sourceObjective")?;
+            let source_read_only = env
+                .sb()
+                .objective(&source_objective)
+                .is_some_and(|o| criteria_read_only(&o.criteria));
             let mut tracker = Tracker::default();
             for t in &targets {
                 for s in &sources {
@@ -747,6 +751,14 @@ fn players(id: &str, ctx: &Context, env: &mut dyn Env) -> CmdResult<i32> {
                     env.sb_mut()
                         .set_with(&t.name, &target_objective, na, t.display.as_ref());
                     if op == "><" {
+                        // `ScoreAccess.set` on a source score created without
+                        // `forceWritable` throws after the target's write; the
+                        // exception is not a `CommandSyntaxException`, so the
+                        // command reports `command.failed` and no result
+                        // callback runs (`Commands.performCommand`).
+                        if source_read_only {
+                            return Err(CommandError::unexpected());
+                        }
                         env.sb_mut().set(&s.name, &source_objective, nb);
                     }
                 }
@@ -776,7 +788,7 @@ fn players(id: &str, ctx: &Context, env: &mut dyn Env) -> CmdResult<i32> {
     }
 }
 
-/// `OperationArgument`: the new (target, source) values.
+/// `OperationArgument.getSimpleOperation`: the new (target, source) values.
 pub fn apply_operation(op: &str, a: i32, b: i32) -> CmdResult<(i32, i32)> {
     let div0 = || err("arguments.operation.div0", &[]);
     Ok(match op {
@@ -789,7 +801,7 @@ pub fn apply_operation(op: &str, a: i32, b: i32) -> CmdResult<(i32, i32)> {
                 return Err(div0());
             }
             (
-                a.wrapping_div(b) - i32::from((a % b != 0) && ((a < 0) != (b < 0))),
+                a.wrapping_div(b) - i32::from((a.wrapping_rem(b) != 0) && ((a < 0) != (b < 0))),
                 b,
             )
         }
@@ -797,7 +809,14 @@ pub fn apply_operation(op: &str, a: i32, b: i32) -> CmdResult<(i32, i32)> {
             if b == 0 {
                 return Err(div0());
             }
-            (a.wrapping_rem(b).wrapping_add(b).wrapping_rem(b), b)
+            let remainder = a.wrapping_rem(b);
+            // Floor remainder has the divisor's sign; only correct opposite signs.
+            let remainder = if remainder != 0 && ((remainder < 0) != (b < 0)) {
+                remainder + b
+            } else {
+                remainder
+            };
+            (remainder, b)
         }
         "<" => (a.min(b), b),
         ">" => (a.max(b), b),

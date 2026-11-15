@@ -11,7 +11,12 @@ fn blend(top: u32, under: u32, alpha: f32) -> u32 {
 
 #[test]
 fn every_accent_reads_as_well_as_the_violet() {
-    for base in [NIGHT.blocks(), DAWN.blocks()] {
+    for base in [
+        NIGHT.blocks(),
+        DAWN.blocks(),
+        NORD_DARK.blocks(),
+        NORD_LIGHT.blocks(),
+    ] {
         for accent in Accent::ALL
             .into_iter()
             .chain((0..720).map(|i| Accent::custom(i as f32 * 0.5)))
@@ -62,6 +67,53 @@ fn colours_go_to_hsl_and_back() {
 }
 
 #[test]
+fn nord_text_reads_over_its_sky() {
+    use horizon_theme::night::{UNCARDED_STOPS, over};
+
+    for p in [NORD_DARK, NORD_LIGHT] {
+        let look = if p.dark { "dark" } else { "light" };
+        let texts = [
+            ("ink", p.ink),
+            ("ink_soft", p.ink_soft),
+            ("muted", p.muted),
+            ("accent_hi", p.accent_hi),
+            ("success", p.success),
+            ("warn", p.warn),
+            ("danger", p.danger),
+        ];
+        for (i, &sky) in p.sky.iter().enumerate() {
+            for (plate, top, alpha) in [
+                ("card", p.card, p.card_alpha),
+                ("card_hi", p.card_hi, p.card_hi_alpha),
+            ] {
+                let bg = over(top, alpha, sky);
+                for (tn, fg) in texts {
+                    let ratio = contrast(fg, bg);
+                    assert!(
+                        ratio >= 4.5,
+                        "{look} {tn} on {plate} over sky {i}: {ratio:.2}"
+                    );
+                }
+            }
+        }
+        for (i, &sky) in p.sky[..UNCARDED_STOPS].iter().enumerate() {
+            for (tn, fg) in &texts[..4] {
+                let ratio = contrast(*fg, sky);
+                assert!(ratio >= 4.5, "{look} {tn} on sky {i}: {ratio:.2}");
+            }
+        }
+        for (bn, bg) in [("page", p.page), ("side", p.side)] {
+            for (tn, fg) in &texts[..4] {
+                let ratio = contrast(*fg, bg);
+                assert!(ratio >= 4.5, "{look} {tn} on {bn}: {ratio:.2}");
+            }
+        }
+        let label = contrast(p.on_accent, p.accent);
+        assert!(label >= 4.5, "{look} the main action's label: {label:.2}");
+    }
+}
+
+#[test]
 fn a_background_is_a_picture_kept_once() {
     let root = std::env::temp_dir().join(format!("horizon-background-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
@@ -88,19 +140,25 @@ fn a_background_is_a_picture_kept_once() {
     assert_eq!(background(&dir, None), None);
 
     let tiny = picture("tiny.png", 16, 16);
-    assert!(keep_background(&dir, &tiny)
-        .unwrap_err()
-        .contains("too small"));
+    assert!(
+        keep_background(&dir, &tiny)
+            .unwrap_err()
+            .contains("too small")
+    );
     let text = root.join("notes.txt");
     std::fs::write(&text, "hi").unwrap();
-    assert!(keep_background(&dir, &text)
-        .unwrap_err()
-        .contains("PNG, JPEG or WebP"));
+    assert!(
+        keep_background(&dir, &text)
+            .unwrap_err()
+            .contains("PNG, JPEG or WebP")
+    );
     let fake = root.join("fake.png");
     std::fs::write(&fake, "not a picture").unwrap();
-    assert!(keep_background(&dir, &fake)
-        .unwrap_err()
-        .contains("can read"));
+    assert!(
+        keep_background(&dir, &fake)
+            .unwrap_err()
+            .contains("can read")
+    );
     assert!(
         dir.join(&second).exists(),
         "a refused file keeps the old one"
@@ -121,4 +179,27 @@ fn a_picked_hue_is_any_degree_and_survives_settings_json() {
         serde_json::from_str::<Accent>(&saved).unwrap(),
         Accent::custom(217.5)
     );
+}
+
+#[test]
+fn a_typed_colour_is_worn_as_is_and_survives_settings_json() {
+    // The mockup's swatches are the named accents.
+    assert_eq!(Accent::parse("#2563EB"), Some(Accent::BLUE));
+    assert_eq!(Accent::BLUE.hex(), "#2563eb");
+    assert_eq!(Accent::VIOLET.hex(), "#6b4bff");
+    // Any other colour keeps its exact value for the glass look, and its hue for the light one.
+    let typed = Accent::parse("#ff8800").unwrap();
+    assert_eq!(typed.rgb(), 0xff8800);
+    assert!((typed.hue().unwrap() - 32.).abs() < 0.5);
+    let saved = serde_json::to_string(&typed).unwrap();
+    assert_eq!(saved, "\"#ff8800\"");
+    assert_eq!(serde_json::from_str::<Accent>(&saved).unwrap(), typed);
+    // Half-typed or not hex: no accent.
+    for wrong in ["#ff88", "#ff88001", "#gg8800", "#"] {
+        assert_eq!(Accent::parse(wrong), None, "{wrong}");
+    }
+    // A picked hue wears the violet's saturation and lightness.
+    let (h, s, l) = hsl(Accent::custom(120.).rgb());
+    let (_, vs, vl) = hsl(0x6b4bff);
+    assert!((h - 120.).abs() < 1. && (s - vs).abs() < 0.02 && (l - vl).abs() < 0.02);
 }

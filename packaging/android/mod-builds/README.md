@@ -1,57 +1,113 @@
 # Horizon Android's mod builds
 
 Native mods are compiled into Horizon's Android game library, and a phone can't do that itself. When a
-player turns on **Compile on GitHub**, Horizon's gateway asks this repository to compile the game with
-their mods, and the phone downloads the result.
+player presses **Build**, Horizon's gateway (a Cloudflare Worker or `mod_build_gateway.py`) asks this
+repository to compile the game with their mods, and the phone downloads the result.
 
-This folder is a template: copy it into a **separate** public repository (for example
+This folder is a template: copy it into a **separate public repository** (for example
 `<you>/horizon-mod-builds`). Keeping the runner in its own repository means a mod's code, which runs
 while it compiles, can read only that repository's contents, never the game's.
+
+## 1. Make the repository
+
+1. On GitHub, create a new **public** repository, for example `you/horizon-mod-builds`. Public
+   matters: the phone downloads the finished library from a release asset without a token.
+2. Copy everything in this folder into it, including the hidden `.github/` folder, and commit it to
+   `main`.
+3. In `.github/workflows/base.yml` and `build.yml`, set `HORIZON_REPO` to the game repository's
+   URL and `HORIZON_REPO_PATH` to its `owner/name`. The template already names this
+   fork: `https://github.com/ProSteve123GH/horizon-android-old` and
+   `ProSteve123GH/horizon-android-old`.
+4. Add each release to `versions.json`:
+
+   ```json
+   {
+     "0.7.7": "<the release's full commit>"
+   }
+   ```
+
+   The launcher sends its own commit for builds made by `tools/android_build.py`, so a dev build
+   does not need an entry; this is the fallback for a launcher that cannot name one. This fork's
+   signed-APK workflow can keep dev entries and the base cache in step automatically: see
+   [Automatic base preparation](#automatic-base-preparation) below. A release build should write its
+   own `0.7.7` entry (or call the same script with `--version 0.7.7`).
+
+## 2. Make the clean cache (once per commit)
+
+Every player's build starts from a cache of a clean build of the game at one commit.
+
+1. Open **Actions → base → Run workflow**.
+2. `version` = a version in `versions.json` (`0.7.7`); `commit` = the release's full commit, or
+   empty to use `versions.json`.
+3. Wait about 15 minutes. The cache is keyed by the full commit; without it `build.yml` stops on
+   the cache restore.
+
+Run it again for a new game commit. `build.yml`'s cache key is the commit the launcher was built
+from (a dev build's short commit is resolved to the full one first).
+
+### Automatic base preparation
+
+The signed-APK workflow in **this** repository (`.github/workflows/android-dev.yml`) prepares the
+base after every successful dev APK, so a tester does not have to dispatch it by hand:
+
+1. It reads the APK's version name (`0.7.7-dev.<run>.<commit>`) and upserts
+   `versions.json[version] = <full commit>`.
+2. It checks this repository's Actions caches for `base-<full commit>`.
+3. If the cache is absent, it dispatches **base** on `main` with that version and commit.
+
+To enable it, create a fine-grained token on **this builds repository** with
+**Contents: read and write** and **Actions: read and write**, and add it to the game repository
+(`ProSteve123GH/horizon-android-old`) as the `MOD_BUILDS_TOKEN` Actions secret. The token is used
+only by the workflow; it is never shipped in the APK. If the secret is absent, the job prints a
+warning and the APK still builds.
+
+Set the game repository's `MOD_BUILDS_REPO` Actions variable if the builds repository is not
+`ProSteve123GH/horizon-mod-builds`. The release's `0.7.7` entry is not touched by a dev build; a
+release workflow should call the same `packaging/android/mod_builds_announce.py` with
+`--version 0.7.7`.
+
+## 3. Put a gateway in front
+
+Something has to hold the token that may run this repository's workflows; the phone cannot. Two
+gateways speak the same protocol, so the launcher cannot tell them apart:
+
+- **`packaging/android/mod-build-worker/`** — a Cloudflare Worker. Free, no card, nothing to keep
+  running: the token is its secret, the requests live in its KV, and the library is downloaded from
+  the release. This is the one to pick if you have no server. Its README has the full steps:
+  `wrangler login`, `wrangler kv namespace create STORE`, `GITHUB_REPO` = this repository,
+  `wrangler secret put GITHUB_TOKEN`, `wrangler deploy`.
+- **`packaging/android/mod_build_gateway.py`** — a small machine of your own, which can also run
+  builds itself (`mod_build_server.py`) for players who don't want to wait for GitHub. It keeps the
+  artifact and serves it from its own disk.
+
+Either way the gateway needs a fine-grained GitHub token for this repository with **Actions: write**
+(the gateway dispatches the workflow and reads the run's artifact with it), and this repository must
+be public.
+
+## 4. Point Horizon at it
+
+1. **Settings → Native mods → Build server** = the gateway's URL (the Worker's
+   `https://<worker>.<account>.workers.dev`).
+2. Leave **Compile on GitHub** on.
+3. Open **Mods**, press **Build** on a native (`.hnmod`) mod, and wait for the run. The finished
+   library appears in **Settings → Native mods → Builds**; press **Use**.
+
+## What runs
 
 - `.github/workflows/build.yml` compiles one player's mods. The mods come from the gateway under a
   random name, compile in a sandbox with no network, and the library goes back as a release asset
   (`build-<ask>`) the phone downloads — a public asset needs no token, where a run's artifact does.
 - `.github/workflows/base.yml` makes the clean build cache for one commit of the game. It only runs
-  trusted code, and it is the only job that writes the cache.
+  trusted code, and it is the only job that writes the cache. The game's APK workflow can dispatch
+  it automatically; see [Automatic base preparation](#automatic-base-preparation).
 - `.github/workflows/cleanup.yml` deletes build releases older than four days; the gateway forgets a
   job after three, so a phone that asks again builds again anyway.
-- `versions.json` says which commit each released version of the game is. The launcher sends its own
-  commit for builds made by `tools/android_build.py`, so a dev build doesn't need an entry.
 - `scripts/prepare.sh` fetches the commit, its build scripts and the mod sandbox.
 - `scripts/tools.sh` installs Rust, the Android SDK and NDK, the crates and `horizon-mixins`.
 - `scripts/room.sh` adds swap and frees the runner's unused toolchains.
 - `scripts/publish.sh` puts the library in a release and tells the gateway the job is done. It
   posts with an explicit `User-Agent`: Cloudflare's edge refuses the default Python urllib one
   (error 1010), so without it a job's answer never arrives.
-
-## The gateway
-
-Something has to hold the token that runs this repository's workflows, and the phone can't. Two
-gateways speak the same protocol, so the launcher can't tell them apart:
-
-- **`packaging/android/mod-build-worker/`** — a Cloudflare Worker. Free, no card, nothing to keep
-  running: the token is its secret, the requests live in its KV, and the library is downloaded from
-  the release. This is the one to pick if you have no server.
-- **`packaging/android/mod_build_gateway.py`** — a small machine of your own, which can also run
-  builds itself (`mod_build_server.py`) for players who don't want to wait for GitHub. It keeps the
-  artifact and serves it from its own disk.
-
-Either way the gateway needs a token that may run this repository's workflows (fine-grained:
-**Actions: write**; **Contents: read**), and this repository must be public so the release assets can
-be downloaded without one.
-
-## Setting it up
-
-1. Create a public repository from this folder.
-2. Add the version you release to `versions.json` (`{"0.7.7": "<full commit>"}`), or rely on the
-   launcher's commit.
-3. Run **base** once for that commit (Actions → base → Run workflow). It takes a while and fills the
-   cache every player's build starts from.
-4. Put a gateway in front of it: deploy `mod-build-worker/` (`GITHUB_REPO` = this repository, and
-   `GITHUB_TOKEN` as its secret), or run `mod_build_gateway.py` with `GITHUB_BUILDS_REPO` and
-   `github-token` in its `CREDENTIALS_DIRECTORY`, plus a public URL (`GATEWAY_PUBLIC_URL`).
-5. In Horizon: **Settings → Native mods → Build server** = the gateway's URL, and leave **Compile on
-   GitHub** on.
 
 The same scripts run on a machine of your own: `mod_build_server.py` is the direct service, and
 `mod_build_gateway.py` is the door in front of it.

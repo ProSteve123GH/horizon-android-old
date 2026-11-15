@@ -1,5 +1,6 @@
 //! A Game's execution role is fixed at construction. Connecting or disconnecting
-//! changes `remote`, not this role. A client may simulate a world in-frame.
+//! changes `remote`, not this role. A client never simulates a world itself: single
+//! player's runs on its integrated server thread.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ExecutionRole {
@@ -19,9 +20,9 @@ impl ExecutionRole {
         self.is_client() && server_thread
     }
 
-    /// Single-player worlds (in-frame or on the integrated server thread) keep
-    /// the owner's state in `Level` and write `players/data/<singleplayer_uuid>.dat`
-    /// with the world; a dedicated server saves each connected player separately.
+    /// Single-player worlds (on the integrated server thread) keep the owner's state in
+    /// `Level` and write `players/data/<singleplayer_uuid>.dat` with the world; a dedicated
+    /// server saves each connected player separately.
     pub fn writes_singleplayer_player(self) -> bool {
         self != Self::DedicatedServer
     }

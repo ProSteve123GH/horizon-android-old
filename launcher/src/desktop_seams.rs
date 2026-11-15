@@ -38,9 +38,16 @@ pub fn to_folder(path: &Path, dir: &Path) -> Result<(), String> {
 }
 
 fn system_trash(path: &Path) -> Result<(), String> {
+    // Android has no system trash a sandboxed app can use: keep one in the app's data folder,
+    // where the player can still get the files back.
+    #[cfg(target_os = "android")]
+    {
+        return to_folder(path, &crate::backend::data_dir().join("trash"));
+    }
     // On Windows the crate starts COM on the calling thread and panics when that thread already
     // runs it in the other mode (RPC_E_CHANGED_MODE). A worker of GPUI's thread pool can, and a
     // panic there aborts the launcher (#3784); a thread of its own starts without COM.
+    #[cfg(not(target_os = "android"))]
     on_own_thread(|| {
         #[allow(unused_mut)]
         let mut trash = trash::TrashContext::default();
@@ -56,6 +63,7 @@ fn system_trash(path: &Path) -> Result<(), String> {
 }
 
 /// Runs `f` on a new thread and waits for it; a panic there comes back as an error.
+#[cfg(not(target_os = "android"))]
 fn on_own_thread<T: Send>(f: impl FnOnce() -> Result<T, String> + Send) -> Result<T, String> {
     std::thread::scope(|s| s.spawn(f).join()).unwrap_or_else(|panic| {
         let why = panic

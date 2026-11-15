@@ -159,9 +159,11 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         let cache = dir.join("minecraft/version_manifest_v2.json");
         let offline = |_: &str| -> Result<String, String> { Err("no network".into()) };
-        assert!(load_with(&cache, &offline)
-            .unwrap_err()
-            .contains("could not be fetched: no network"));
+        assert!(
+            load_with(&cache, &offline)
+                .unwrap_err()
+                .contains("could not be fetched: no network")
+        );
         let online = |url: &str| -> Result<String, String> {
             assert_eq!(url, MANIFEST);
             Ok(LIST.into())

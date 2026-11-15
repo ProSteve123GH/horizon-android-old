@@ -18,8 +18,9 @@ edition = "2024"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 ''', encoding='utf-8')
     (harness / 'src/lib.rs').write_text('''#![allow(dead_code)]
+// The game declares this file as `android_instances`; screenshots.rs imports it by that name.
 #[path = "../../../../crates/horizon-client/src/android/instances.rs"]
-mod instances;
+mod android_instances;
 #[path = "../../../../crates/horizon-client/src/android/screenshots.rs"]
 mod screenshots;
 ''', encoding='utf-8')

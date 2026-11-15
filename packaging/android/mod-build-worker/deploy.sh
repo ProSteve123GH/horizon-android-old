@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Deploy this Worker with curl, for a machine where `wrangler` can't run: wrangler carries Cloudflare's
-# `workerd` binary, and there is no build of it for Android arm64 (npx wrangler login fails there with
-# "Unsupported platform: android arm64 LE"). This does what the three wrangler commands in README.md do,
-# over Cloudflare's API, and needs nothing but curl and python3.
+# Deploy this Worker with curl, without `wrangler`: wrangler's local `dev` server carries Cloudflare's
+# `workerd` binary, and there is no build of it for Android arm64 (it fails there with "Unsupported
+# platform: android arm64 LE"). This does what the three wrangler commands in README.md do, over
+# Cloudflare's API, and needs nothing but curl and python3.
 #
 #   CLOUDFLARE_API_TOKEN=… GITHUB_TOKEN=… bash deploy.sh
 #

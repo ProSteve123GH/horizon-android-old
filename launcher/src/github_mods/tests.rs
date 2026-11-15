@@ -1,5 +1,5 @@
 use super::*;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 const SHA2: &str = "fedcba9876543210fedcba9876543210fedcba98";
@@ -397,9 +397,11 @@ fn installing_records_the_origin_and_updates_follow_releases_or_the_head() {
         id: "keys".into(),
         ..packed("keys")
     };
-    assert!(install(&home, &newer, &other)
-        .unwrap_err()
-        .contains("not from GitHub"));
+    assert!(
+        install(&home, &newer, &other)
+            .unwrap_err()
+            .contains("not from GitHub")
+    );
     assert!(remove(&home, "zoom").unwrap());
     assert!(!remove(&home, "zoom").unwrap());
     assert!(!home.join(INSTALLED).join("zoom.hnmod").exists());

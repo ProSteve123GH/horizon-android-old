@@ -2,7 +2,7 @@
 //! up, copying and deleting them. Backups are made as vanilla's Make Backup makes them
 //! (`LevelStorageAccess.makeWorldBackup`): `backups/<yyyy-MM-dd_HH-mm-ss>_<folder>.zip` in the
 //! game folder, every file under `<folder>/` but the world's `session.lock`.
-use horizon_world::nbt::{self, Limits, Tag};
+use horizon_platform::world::nbt::{self, Limits, Tag};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -10,6 +10,28 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// The lock a running game holds on a world; vanilla's backups leave it out.
 const LOCK: &str = "session.lock";
+
+struct WorldLock(fs::File);
+
+impl Drop for WorldLock {
+    fn drop(&mut self) {
+        // A concurrent process spawn can inherit the file before exec closes it.
+        // Release the lock explicitly rather than waiting for every handle to close.
+        let _ = self.0.unlock();
+    }
+}
+
+/// Hold the same exclusive lock as the game until a filesystem operation finishes.
+fn lock_world(world: &World) -> Result<WorldLock, String> {
+    let lock = fs::File::options()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(world.path.join(LOCK))
+        .map_err(|e| e.to_string())?;
+    lock.try_lock().map_err(|e| e.to_string())?;
+    Ok(WorldLock(lock))
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct World {
@@ -211,6 +233,7 @@ fn backup_at(
     world: &World,
     now: chrono::DateTime<chrono::Local>,
 ) -> Result<PathBuf, String> {
+    let _lock = lock_world(world)?;
     let dir = home.join("backups");
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let prefix = format!("{}_{}", now.format("%Y-%m-%d_%H-%M-%S"), world.folder);
@@ -265,6 +288,7 @@ pub fn copy_lenient(world: &World) -> Result<World, String> {
 }
 
 fn copy_with(world: &World, sized: bool) -> Result<World, String> {
+    let _lock = lock_world(world)?;
     let saves = world.path.parent().ok_or("A world folder has a parent")?;
     let folder = free_name(saves, &world.name, "", 1);
     let to = saves.join(&folder);
@@ -350,12 +374,22 @@ pub fn rename(world: &World, new_name: &str) -> Result<World, String> {
 /// Deletes the world. Android has no system trash, so the launcher removes the
 /// folder only after its own confirmation; desktop moves it to the trash.
 pub fn delete(world: &World) -> Result<(), String> {
+    let lock = lock_world(world)?;
+    // Android has no system trash: the launcher removes the folder only after the player's own
+    // confirmation (the Compose world manager's confirmation dialog).
     #[cfg(target_os = "android")]
     {
+        drop(lock);
         fs::remove_dir_all(&world.path).map_err(|e| format!("Could not delete {}: {e}", world.name))
     }
     #[cfg(not(target_os = "android"))]
     {
+        // Match server deletion: Windows cannot move the folder with this handle open.
+        // If the game opens it after the probe, its handle prevents the move instead.
+        #[cfg(windows)]
+        drop(lock);
+        #[cfg(not(windows))]
+        let _lock = lock;
         crate::desktop_seams::to_trash(&world.path)
             .map_err(|e| format!("Could not move {} to the trash: {e}", world.name))
     }

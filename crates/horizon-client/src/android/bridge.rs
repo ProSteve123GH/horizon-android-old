@@ -5,8 +5,8 @@
 //! as one JSON snapshot and takes its actions by name. Every call comes from the
 //! Android main thread; slow work stays on the same worker threads the native
 //! launcher uses.
+use crate::android_instances as instances;
 use crate::catalog::{Catalog, Page};
-use crate::instances;
 use crate::launcher::{
     login::Login,
     wardrobe::{CloudAction, Wardrobe},
@@ -125,7 +125,7 @@ impl Controller {
         let mut controller = Self {
             home: home.clone(),
             stamp: None,
-            version_name: crate::backend::VERSION.to_owned(),
+            version_name: horizon_client::backend::VERSION.to_owned(),
             catalog,
             appearance: crate::appearance::Settings::load(&home),
             login: Login::new(),
@@ -619,7 +619,7 @@ impl Controller {
             _ => None,
         };
         json!({
-            "version": crate::backend::VERSION,
+            "version": horizon_client::backend::VERSION,
             "status": self.catalog.status,
             "error": self.error,
             "install": {
@@ -979,7 +979,14 @@ impl Controller {
                     }
                     "client_id" => self.catalog.config.microsoft_client_id = value,
                     "native_server" => {
-                        if !value.is_empty() && !crate::native_builds::plain_server(&value) {
+                        // Clearing the row restores the fork's Worker rather than leaving every
+                        // build with "Set the native mod build server first".
+                        let value = if value.is_empty() {
+                            crate::native_builds::DEFAULT_SERVER.to_owned()
+                        } else {
+                            value
+                        };
+                        if !crate::native_builds::plain_server(&value) {
                             return Err(
                                 "Enter the build server as https://host or http://host:port".into(),
                             );
@@ -1876,7 +1883,7 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_start(
     let version = (!version.is_null())
         .then(|| string(&mut env, &version))
         .filter(|version| !version.is_empty())
-        .unwrap_or_else(|| crate::backend::VERSION.to_owned());
+        .unwrap_or_else(|| horizon_client::backend::VERSION.to_owned());
     let (Ok(vm), Ok(global)) = (env.get_java_vm(), env.new_global_ref(&activity)) else {
         let _ = env.exception_clear();
         return;
@@ -1886,7 +1893,7 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_start(
         return;
     }
     crate::init_logging();
-    crate::backend::initialize(home.clone());
+    horizon_client::backend::initialize(home.clone());
     if let Err(error) = crate::diagnostics::initialize(&home, json!({"launcher": "compose"})) {
         log::error!("Cannot initialize local diagnostics: {error}");
     }
@@ -2056,7 +2063,7 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_screenshots(
     order: JString<'_>,
 ) -> jstring {
     let order = string(&mut env, &order);
-    let value = match crate::backend::try_data_dir() {
+    let value = match horizon_client::backend::try_data_dir() {
         Some(home) => screenshot_list(&home, &order),
         None => json!({"items": [], "error": "Launcher is not initialized"}),
     };

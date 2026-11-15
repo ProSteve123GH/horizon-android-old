@@ -3,7 +3,7 @@
 //! opacity, and the stroke follows the steps. One canvas paints them all: a plate costs two
 //! elements, however many steps it has.
 use crate::theme::night::{self, Night};
-use gpui::{canvas, div, point, prelude::*, px, rgba, Bounds, Div, Pixels, Rgba};
+use gpui::{Bounds, Div, Pixels, Rgba, canvas, div, point, prelude::*, px, rgba};
 
 /// `c` at opacity `a`.
 pub fn alpha(c: u32, a: f32) -> Rgba {
@@ -13,6 +13,10 @@ pub fn alpha(c: u32, a: f32) -> Rgba {
 /// A plate: `card` at its opacity, each corner cut in two [`night::PIXEL_CORNER`] steps, with its
 /// 1 px `stroke` along the edge. Its content goes in as children, as on any div.
 pub fn plate(n: &Night) -> Div {
+    // The glass look has no stepped corners: a glass plate round at 16.
+    if crate::glass_ui::on() {
+        return crate::glass::plate(horizon_theme::glass::radius::POPOVER);
+    }
     cut(
         night::PIXEL_CORNER,
         2,

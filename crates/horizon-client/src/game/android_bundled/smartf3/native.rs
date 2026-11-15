@@ -519,7 +519,7 @@ impl Game<'_> {
                 best = Some((distance, kind));
             }
         };
-        if let Some((i, d)) = self.mob_hit() {
+        if let Some((i, d, _)) = self.mob_hit() {
             offer(d, self.mobs[i].kind.id.clone());
         }
         if let Some((_, d, _)) = self.armor_stand_hit() {
@@ -540,7 +540,7 @@ impl Game<'_> {
         if let Some((_, d)) = self.dragon_hit() {
             offer(d, "minecraft:ender_dragon".to_owned());
         }
-        if let Some((_, d)) = self.guest_hit() {
+        if let Some(d) = self.lan_guest_hit() {
             offer(d, "minecraft:player".to_owned());
         }
         let (distance, kind) = best?;

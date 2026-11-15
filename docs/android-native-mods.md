@@ -18,8 +18,10 @@ send every build to GitHub's runners instead of compiling it itself.
 - The card lists each native mod with a switch. A mod is on until it is turned off. Removing it deletes
   its file; a build that already has it keeps it until the next build.
 - **Build** sends the mods that are on to the server named in **Settings → Native mods → Build server**.
-  The build card shows the line, the compile, and the download. **Cancel** stops waiting; the server
-  keeps compiling and the result is not downloaded.
+  This fork's launcher fills in its own Worker
+  (`https://horizon-mod-builds.steve-horizon-android-hnmod.workers.dev`) until the player names a
+  server; the build card shows the line, the compile, and the download. **Cancel** stops waiting; the
+  server keeps compiling and the result is not downloaded.
 - The mod catalog (Mods, source Horizon) marks native mods **Native mod**; each one has **Build**, which
   downloads it, turns it on and builds in one press. **Select native** ticks several and **Build N**
   compiles them together, since one build carries every native mod that is on.
@@ -33,12 +35,15 @@ send every build to GitHub's runners instead of compiling it itself.
   own game plays. Choosing the build again after a new download starts the count afresh.
 
 The build server address is a launcher setting, not a game setting: `https://host` or `http://host:port`,
-no path. Cleartext `http://` is accepted for a server on the same network; the app's manifest still
-refuses cleartext for everything else.
+no path. This fork's launcher fills in its own Worker by default; another address replaces it.
+Cleartext `http://` is accepted for a server on the same network; the app's manifest still refuses
+cleartext for everything else.
 
-**Settings → Native mods → Host a build server** is the same setup as the gateway and builds repository
-sections below, in the launcher: the free Cloudflare Worker, the GitHub builder repository, and where to
-paste the URL.
+**Settings → Native mods → Host a build server** walks through the same setup in the launcher, in the
+order the pieces need each other: the GitHub builder repository and its cache, the fine-grained token,
+the free Cloudflare Worker, then the Worker's URL in **Build server**. The two READMEs are the printed
+version: `packaging/android/mod-builds/README.md` for the repository and
+`packaging/android/mod-build-worker/README.md` for the Worker.
 
 ## The build service
 
@@ -129,11 +134,12 @@ no build at all.
 
 Its bindings are `STORE` (KV), its secret `GITHUB_TOKEN` (fine-grained: **Actions: write** on the
 builds repository), and its vars `GITHUB_REPO`, `GITHUB_WORKFLOW` (default `build.yml`), `GITHUB_REF`
-(default `main`), `PER_DAY` and `PER_ADDRESS`. `npx wrangler kv namespace create STORE`,
-`npx wrangler secret put GITHUB_TOKEN`, `npx wrangler deploy`, then set the launcher's **Build server**
-to the printed `https://….workers.dev` URL. On a machine where `wrangler` can't run (Termux fails
-with "Unsupported platform: android arm64 LE": `wrangler` carries the `workerd` runtime, which has no
-Android build), `packaging/android/mod-build-worker/deploy.sh` does the same over Cloudflare's API
+(default `main`), `PER_DAY` and `PER_ADDRESS`. `wrangler kv namespace create STORE`,
+`wrangler secret put GITHUB_TOKEN`, `wrangler deploy`, then set the launcher's **Build server** to the
+printed `https://<name>.<account>.workers.dev` URL (this fork's is the launcher's default:
+`https://horizon-mod-builds.steve-horizon-android-hnmod.workers.dev`). On Termux, use the `wrangler`
+already in `PATH` for `login` and `deploy`; its local `dev` server needs `workerd`, which has no
+Android build. `packaging/android/mod-build-worker/deploy.sh` does the same over Cloudflare's API
 with just curl and python3, and the same `CLOUDFLARE_API_TOKEN` instead of a login. **Compile on
 GitHub** only steers a gateway that can also
 run builds itself (`mod_build_gateway.py`): the Worker always uses GitHub's machines, and the launcher
@@ -187,6 +193,13 @@ downloads, and tells the gateway. A `failed` job tells the gateway when the run 
 `cleanup` deletes releases older than four days. A mod's code runs while it compiles, so the token
 only reads that repository, and the player's build never writes the base cache.
 
+This fork's signed-APK workflow keeps that repository's fallback current: when the
+`MOD_BUILDS_TOKEN` secret is set, each successful dev APK adds its version label and full commit to
+`versions.json`, then dispatches **base** for the commit unless `base-<commit>` is already cached.
+The token needs **Contents: read and write** and **Actions: read and write** on the builds
+repository. Setup and the manual fallback are in
+[`packaging/android/mod-builds/README.md`](../packaging/android/mod-builds/README.md#automatic-base-preparation).
+
 ## Safety
 
 A native mod is native code with the app's rights on the phone: it is not sandboxed there. Import only
@@ -198,8 +211,11 @@ refused with the numbers, not built into a game that lacks the hooks.
 
 ## Troubleshooting
 
-- **"Set the native mod build server first"** — no address in Settings → Native mods. A direct server
-  is `http://<pc>:8787`; the gateway is its public `https://` URL.
+- **"Set the native mod build server first"** — the launcher has no build server address. This fork
+  fills in its Worker when the setting is empty, so this means a build without that default; set a
+  direct server as `http://<pc>:8787`, or a gateway's public `https://` URL.
+- **"That is not a version of the game"** — the Worker takes a release (`0.7.7`) or the fork's dev
+  label (`0.7.7-dev.<run>.<commit>`); the app's version name is neither. Update the app or the Worker.
 - **"The build server has no game for Horizon …"** — the request had no commit and the server's
   `versions.json` has no entry for that version name. Add the release's commit, or use a build made by
   `tools/android_build.py`, which sends its commit.

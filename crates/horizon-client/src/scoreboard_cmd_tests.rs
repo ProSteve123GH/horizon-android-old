@@ -190,6 +190,68 @@ fn operations_use_floor_semantics() {
 }
 
 #[test]
+fn division_wraps_minimum_integer_by_negative_one() {
+    let mut m = mock();
+    run(&mut m, "scoreboard objectives add poc dummy").unwrap();
+    run(&mut m, "scoreboard players set target poc -2147483648").unwrap();
+    run(&mut m, "scoreboard players set divisor poc -1").unwrap();
+    run(
+        &mut m,
+        "scoreboard players operation target poc /= divisor poc",
+    )
+    .unwrap();
+    assert_eq!(
+        run(&mut m, "scoreboard players get target poc").unwrap(),
+        i32::MIN
+    );
+    assert_eq!(
+        run(&mut m, "scoreboard players get divisor poc").unwrap(),
+        -1
+    );
+}
+
+#[test]
+fn remainder_handles_integer_boundaries() {
+    for (dividend, divisor, expected) in [
+        (i32::MAX - 1, i32::MAX, i32::MAX - 1),
+        (7, -3, -2),
+        (-7, 3, 2),
+        (i32::MIN, -1, 0),
+        (-1, i32::MIN, -1),
+        (1, i32::MIN, i32::MIN + 1),
+        (0, i32::MAX, 0),
+    ] {
+        let mut m = mock();
+        run(&mut m, "scoreboard objectives add boundary dummy").unwrap();
+        run(
+            &mut m,
+            &format!("scoreboard players set left boundary {dividend}"),
+        )
+        .unwrap();
+        run(
+            &mut m,
+            &format!("scoreboard players set right boundary {divisor}"),
+        )
+        .unwrap();
+        run(
+            &mut m,
+            "scoreboard players operation left boundary %= right boundary",
+        )
+        .unwrap();
+        assert_eq!(
+            run(&mut m, "scoreboard players get left boundary").unwrap(),
+            expected,
+            "{dividend} %= {divisor}"
+        );
+        assert_eq!(
+            run(&mut m, "scoreboard players get right boundary").unwrap(),
+            divisor
+        );
+    }
+    assert!(apply_operation("%=", 1, 0).is_err());
+}
+
+#[test]
 fn triggers() {
     let mut m = mock();
     run(&mut m, "scoreboard objectives add t trigger").unwrap();
@@ -293,4 +355,28 @@ fn selector_options_parse() {
     // Single-target arguments refuse multi-entity selectors.
     let parse = vanilla::dispatcher().parse("scoreboard players get @e kills", &reg);
     assert!(parse.executable().is_err());
+}
+
+#[test]
+fn swapping_with_a_read_only_source_writes_the_target_then_fails() {
+    let mut m = mock();
+    run(&mut m, "scoreboard objectives add hp health").unwrap();
+    run(&mut m, "scoreboard objectives add d dummy").unwrap();
+    run(&mut m, "scoreboard players set Steve d 5").unwrap();
+    // The game keeps the health objective's scores; a command cannot.
+    m.sb.set("Alex", "hp", 9);
+    // `OperationArgument.Operation.SWAP`: the target's write comes first.
+    assert_eq!(
+        fail(&mut m, "scoreboard players operation Steve d >< Alex hp"),
+        "command.failed"
+    );
+    // The target keeps the value it wrote before the source refused the swap.
+    assert_eq!(m.sb.score("Steve", "d").unwrap().value, 9);
+    assert_eq!(m.sb.score("Alex", "hp").unwrap().value, 9);
+    // Only the source's `set` throws: an operation that just reads it works.
+    assert_eq!(
+        run(&mut m, "scoreboard players operation Steve d += Alex hp").unwrap(),
+        18
+    );
+    assert_eq!(m.sb.score("Alex", "hp").unwrap().value, 9);
 }

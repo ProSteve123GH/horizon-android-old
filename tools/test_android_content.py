@@ -23,6 +23,7 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 miniz_oxide = "0.8"
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs", "runtime_detection"] }
 zip = { version = "9", default-features = false, features = ["deflate"] }
+rustix = { version = "1", default-features = false, features = ["std", "fs"] }
 ''', encoding='utf-8')
     lock=tomllib.loads((ROOT / 'Cargo.lock').read_text(encoding='utf-8'))
     version=next(p['version'] for p in lock['package'] if p['name']=='zip' and p['version'].startswith('9.'))
@@ -37,6 +38,7 @@ mod osk { pub enum Output { Text(String), Backspace, Enter, Close } }
 #[path = "../../../../crates/horizon-client-render/src/gfx/upload_budget.rs"] mod upload_budget;
 #[path = "../../../../crates/horizon-client-render/src/zip.rs"] mod archive_reader;
 #[path = "../../../../crates/horizon-client/src/android/search_queue.rs"] mod search_queue;
+#[path = "../../../../crates/horizon-client/src/android/native_built.rs"] mod native_built;
 #[path = "../../../../crates/horizon-client/src/android/document_store.rs"] mod document_store;
 #[path = "../../../../crates/horizon-client-render/src/graphics_startup.rs"] mod graphics_startup;
 #[path = "../../../../crates/horizon-client/src/android_resources.rs"] mod android_resources;

@@ -26,6 +26,7 @@ png = "0.18"
 sha2 = "0.10"
 getrandom = "0.3"
 ureq = { version = "2", features = ["json"] }
+chacha20poly1305 = "0.10"
 url = "2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 [target.'cfg(windows)'.dependencies]
@@ -45,17 +46,48 @@ mod backend {
     pub fn data_dir() -> std::path::PathBuf {
         std::env::temp_dir().join("horizon-appearance-harness")
     }
+    #[derive(Default, serde::Serialize, serde::Deserialize)]
+    pub struct Settings {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub keep_versions: Option<usize>,
+    }
+    impl Settings {
+        pub fn parse(source: &str) -> Self {
+            serde_json::from_str::<Self>(source).unwrap_or_default()
+        }
+    }
 }
 mod proxy {
     pub fn agent(builder: ureq::AgentBuilder, _: &str) -> ureq::AgentBuilder { builder }
+}
+mod i18n {
+    pub fn tr(en: &str) -> &str { en }
+    pub fn trf(en: &str, args: &[(&str, &str)]) -> String {
+        let mut out = en.to_string();
+        for (k, v) in args {
+            out = out.replace(&format!("{{{k}}}"), v);
+        }
+        out
+    }
+}
+mod secure_store {
+    /// A no-op keychain used in hosts that cannot run the real Android one.
+    use crate::account::SecretStore;
+    pub struct AndroidStore;
+    impl SecretStore for AndroidStore {
+        fn get(&self, _key: &str) -> Result<Option<String>, String> { Ok(None) }
+        fn set(&self, _key: &str, _secret: &str) -> Result<(), String> { Ok(()) }
+        fn delete(&self, _key: &str) -> Result<(), String> { Ok(()) }
+        fn persistent(&self) -> bool { true }
+    }
 }
 mod java_launch {
     #[derive(Debug)]
     pub struct Player { pub name: String, pub uuid: String, pub token: String, pub xuid: String }
 }
 '''
-    for name in ('account', 'skins'):
-        source += f'#[path = "{(ROOT / "launcher/src" / (name + ".rs")).as_posix()}"] pub mod {name};\n'
+    for name, rel in (('account', 'launcher/src/account.rs'),):
+        source += f'#[path = "{(ROOT / rel).as_posix()}"] pub mod {name};\n'
     source += "mod hud { pub fn decode_bytes(bytes:&[u8])->Result<(u32,u32,Vec<u8>),String> { let image=image::load_from_memory(bytes).map_err(|e|e.to_string())?.to_rgba8(); Ok((image.width(),image.height(),image.into_raw())) } }\n"
     source += 'mod engine { pub use horizon_core::player_texture::{process_cape,process_legacy_skin}; #[path="' + (ROOT / 'crates/horizon-client-render/src/skins/appearance.rs').as_posix() + '"] pub mod appearance; }\n'
     (harness / 'src/lib.rs').write_text(source, encoding='utf-8')

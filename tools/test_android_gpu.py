@@ -30,12 +30,13 @@ glam = "0.30"
         f'#[path = "{(ROOT / "crates/horizon-client-render/src/gfx" / (name + ".rs")).as_posix()}"] pub mod {name};'
         for name in ('arena', 'upload', 'timing', 'frame_timing', 'opaque_output', 'terrain_source', 'entity_source')
     )
-    (work / 'src/lib.rs').write_text('''#![allow(dead_code)]
-#[path = "C:/Users/vasia/Documents/Projects/horizon-main/crates/horizon-client-render/src/overlay.rs"] pub mod overlay;
-mod spans {
-    pub fn time<T>(_: &str, f: impl FnOnce() -> T) -> T { f() }
-}
-mod gfx {
+    overlay = (ROOT / 'crates/horizon-client-render/src/overlay.rs').as_posix()
+    (work / 'src/lib.rs').write_text(f'''#![allow(dead_code)]
+#[path = "{overlay}"] pub mod overlay;
+mod spans {{
+    pub fn time<T>(_: &str, f: impl FnOnce() -> T) -> T {{ f() }}
+}}
+mod gfx {{
 ''' + modules + '''
 #[test]
 fn stage_timestamps_are_collected_without_extra_render_passes() {

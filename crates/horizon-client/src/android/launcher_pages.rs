@@ -283,7 +283,7 @@ impl Launcher {
             32.0,
             if w < 700.0 { 12.0 } else { 28.0 },
             color::TEXT,
-            &format!("Horizon Android {}", crate::backend::VERSION),
+            &format!("Horizon Android {}", horizon_client::backend::VERSION),
         );
         button(
             &mut ui,

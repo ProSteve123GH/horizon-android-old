@@ -1,6 +1,7 @@
 # Horizon Android's native mod builds on GitHub's machines (docs/android-native-mods.md).
-# Deploy: `npx wrangler kv namespace create STORE`, put its id below, `npx wrangler secret put
-# GITHUB_TOKEN`, `npx wrangler deploy`. Then set the launcher's Build server to the URL it prints.
+# Deploy: `wrangler kv namespace create STORE`, put its id below, `wrangler secret put
+# GITHUB_TOKEN`, `wrangler deploy`. The launcher already names this fork's deployed Worker; set its
+# Build server to the URL it prints to use yours.
 name = "horizon-mod-builds"
 main = "src/index.js"
 compatibility_date = "2025-10-01"

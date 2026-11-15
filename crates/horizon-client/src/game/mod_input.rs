@@ -64,7 +64,7 @@ pub(super) struct ModFarTerrain {
 #[cfg(feature = "mods")]
 impl Game<'_> {
     /// The main hand's stack as `input` shows it; none when it is empty.
-    pub(super) fn mod_held(&self) -> Option<HeldItem> {
+    pub(super) fn mod_held_item(&self) -> Option<HeldItem> {
         let stack = self.inventory.get(self.selected)?.as_ref()?;
         Some(HeldItem {
             id: stack.item.to_string(),
@@ -81,7 +81,10 @@ impl Game<'_> {
         if !pressed {
             return self.stop_mod_use();
         }
-        let Some(item) = self.mod_held().filter(|h| self.mods.mods.claims(&h.id)) else {
+        let Some(item) = self
+            .mod_held_item()
+            .filter(|h| self.mods.mods.claims(&h.id))
+        else {
             return false;
         };
         self.mods.mods.use_start(&item);
@@ -108,7 +111,7 @@ impl Game<'_> {
             return;
         };
         let still = self
-            .mod_held()
+            .mod_held_item()
             .is_some_and(|h| h.id == u.item.id && h.slot == u.item.slot);
         if !still || self.screen != Screen::Playing {
             self.stop_mod_use();
