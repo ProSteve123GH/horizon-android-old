@@ -383,8 +383,30 @@ Status (2026-11-15, second session). `cargo check -p horizon-android` (aarch64 A
 --locked` and `cargo fmt --all --check` are clean; the 17 Python Android tests
 (`python3 -m unittest discover -s tests -p 'test_android*.py'`) and
 `python3 tools/check_public_tree.py` pass, as does the content harness
-(`tools/test_android_content.py`, which now carries `native_built.rs`'s test). Next: commit and push
-`sync/horizon-main-2026-11-14` to `origin`, dispatch `android-source.yml`
-(`native_checks=true`) and `android-dev.yml` (`profile=fast`, `all_abis=false`), run the builds
-repository's **base** workflow for the branch commit to prepare the native-mod cache, then open the
-PR against `android`. No on-device behaviour is claimed until that CI is green.
+(`tools/test_android_content.py`, which now carries `native_built.rs`'s test).
+
+### Pull request, Worker deploy and the `android` merge (2026-11-15, second session)
+
+Commit `521ac12dd0` (the two fixes, the dev-label pattern, the setup guides, `versions.json`) was
+pushed to `sync/horizon-main-2026-11-14`, and PR #13 opened against `android`:
+https://github.com/ProSteve123GH/horizon-android-old/pull/13. The Worker was redeployed from
+`packaging/android/mod-build-worker/` with the `wrangler` in `PATH` (version
+`a6f71f7f-08a9-4daf-8255-dfa407ee463b`): a POST of `version=bad` or `0.7.7-dev.` answers 400, and a
+POST of `0.7.7-dev.42.abcdef123456` with an empty body answers 413 (the version passed, the body did
+not), so the deployed pattern takes a dev label without dispatching a run. CI: android-source
+43731944066 failed in the diagnostics harness, android-dev 43731947652 builds the fast profile at
+`521ac12dd0`, and the builds repository's base run 43731881192 prepares the native-mod cache for that
+commit.
+
+PR #13 could not merge: `android` had PR #12 merged after our base. Merging `origin/android`
+(`7e37c9c3ca`) into the branch conflicted only in `android/native_builds.rs`, where the sync returned
+on the first too-new mod and #12 collects every one; kept #12's behaviour (sorted ids, one message)
+with the library's public `native_hooks_api()` accessor, because the file is also compiled as part of
+the `horizon-android` crate, which has no crate-root `game` module. `cargo check -p horizon-android`
+passes after the merge.
+
+The source checks exposed two harness shims that had not followed the sync's module moves:
+`tools/test_android_diagnostics.py` now aliases its generated crate with `extern crate self as
+horizon_client;`, and `tools/test_android_screenshots.py` declares the included `instances.rs` as
+`android_instances` (the name `screenshots.rs` imports). With those, the whole source-check suite
+passes locally: the 17 Python tests, all 12 harnesses, the 8 Worker tests and the workflow copies.
