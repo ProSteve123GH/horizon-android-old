@@ -11,12 +11,15 @@
 //! D-pad, a button, or a look gesture on the world) and keeps it until it
 //! lifts, so moving, looking and pressing never take each other's fingers.
 pub mod aim;
+pub mod custom;
 mod draw;
+pub mod editor;
 pub mod layout;
 pub use aim::{
     attack_indicator, camera_delta, hotbar_slot, item_places_entity_on_tap, item_uses_on_tap,
     projectile_crosshair, screen_direction,
 };
+pub use custom::CustomButton;
 pub use layout::{Control, Mode, Placement, Settings};
 
 use crate::gamepad::{Button, PadState};
