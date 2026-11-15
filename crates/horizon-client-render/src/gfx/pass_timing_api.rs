@@ -63,7 +63,7 @@ pub(super) fn after_culling_pass<'e>(
 impl Renderer {
     /// Times the shader pack's passes on the GPU while `on` (the F3 overlay is open or a capture records them).
     pub fn set_pass_timing(&mut self, on: bool) {
-        self.pass_timing = on;
+        self.pass_timing = on || pack_timing::PassTiming::logging();
     }
     /// Times the parts of Horizon's own passes while `on`.
     pub fn set_pass_detail(&mut self, on: bool) {

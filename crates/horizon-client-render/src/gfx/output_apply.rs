@@ -388,7 +388,14 @@ impl Renderer {
     /// The swapchain's configuration: `config` (what every pipeline draws in), or
     /// HDR10 or scRGB while HDR output is on.
     pub(super) fn surface_config(&self) -> wgpu::SurfaceConfiguration {
-        surface_config(&self.config, self.hdr.as_ref().map(|hdr| hdr.output))
+        let mut config = self.config.clone();
+        #[cfg(target_os = "android")]
+        if self.offscreen.is_none() {
+            let physical = self.window.outer_size();
+            config.width = physical.width.max(1);
+            config.height = physical.height.max(1);
+        }
+        surface_config(&config, self.hdr.as_ref().map(|hdr| hdr.output))
     }
 
     /// After a new window surface: what it offers, and an output that failed on the old one

@@ -7318,24 +7318,6 @@ impl Renderer {
             horizon_hdr::set_metadata(&self.device, surface, hdr.declared_peak(), hdr.black);
         }
     }
-    /// The swapchain's configuration: `config` (what every pipeline draws in), or
-    /// HDR10 or scRGB while HDR output is on.
-    fn surface_config(&self) -> wgpu::SurfaceConfiguration {
-        let mut config = self.config.clone();
-        #[cfg(target_os = "android")]
-        if self.offscreen.is_none() {
-            let physical = self.window.outer_size();
-            config.width = physical.width.max(1);
-            config.height = physical.height.max(1);
-        }
-        if let Some(hdr) = &self.hdr {
-            config.format = hdr.output.format();
-            config.view_formats = vec![hdr.output.format()];
-            config.color_space = hdr.output.color_space();
-            config.usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
-        }
-        config
-    }
     /// This renderer's output as applied, with what its destination offers and reports.
     pub fn output(&self) -> output::EffectiveOutput {
         let native = self.native.as_ref().map(|n| n.frame.api);
@@ -7973,32 +7955,6 @@ impl Renderer {
         self.gpu_stages
             .as_ref()
             .map(frame_timing::FrameTiming::summaries)
-            .unwrap_or_default()
-    }
-    pub fn set_pass_timing(&mut self, on: bool) {
-        self.pass_timing = on || pack_timing::PassTiming::logging();
-    }
-    /// The running shader pack's timer, of either kind.
-    fn pass_timer<'a>(
-        pack: &'a mut Option<(i32, Option<pack_post::PackPost>)>,
-        native: &'a mut Option<native_pack::NativePack>,
-    ) -> Option<&'a mut Option<pack_timing::PassTiming>> {
-        match (pack, native) {
-            (Some((_, Some(post))), _) => Some(&mut post.timing),
-            (_, Some(native)) => Some(&mut native.timing),
-            _ => None,
-        }
-    }
-    /// Each pass of the running shader pack with its median GPU time in milliseconds, while
-    /// they are timed (`set_pass_timing`).
-    pub fn shader_pass_times(&self) -> Vec<(String, f32)> {
-        let timer = match (&self.pack_post, &self.native) {
-            (Some((_, Some(post))), _) => post.timing.as_ref(),
-            (_, Some(native)) => native.timing.as_ref(),
-            _ => None,
-        };
-        timer
-            .map(pack_timing::PassTiming::medians)
             .unwrap_or_default()
     }
     /// The macros of the GL extensions this device gives shader packs: subgroups, when it
