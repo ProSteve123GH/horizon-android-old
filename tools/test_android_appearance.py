@@ -54,8 +54,9 @@ mod java_launch {
     pub struct Player { pub name: String, pub uuid: String, pub token: String, pub xuid: String }
 }
 '''
-    for name in ('account', 'skins'):
-        source += f'#[path = "{(ROOT / "launcher/src" / (name + ".rs")).as_posix()}"] pub mod {name};\n'
+    for name, rel in (('account', 'launcher/src/account.rs'),
+                      ('skins', 'crates/horizon-client-render/src/skins.rs')):
+        source += f'#[path = "{(ROOT / rel).as_posix()}"] pub mod {name};\n'
     source += "mod hud { pub fn decode_bytes(bytes:&[u8])->Result<(u32,u32,Vec<u8>),String> { let image=image::load_from_memory(bytes).map_err(|e|e.to_string())?.to_rgba8(); Ok((image.width(),image.height(),image.into_raw())) } }\n"
     source += 'mod engine { pub use horizon_core::player_texture::{process_cape,process_legacy_skin}; #[path="' + (ROOT / 'crates/horizon-client-render/src/skins/appearance.rs').as_posix() + '"] pub mod appearance; }\n'
     (harness / 'src/lib.rs').write_text(source, encoding='utf-8')
