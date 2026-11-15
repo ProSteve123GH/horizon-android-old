@@ -393,10 +393,10 @@ https://github.com/ProSteve123GH/horizon-android-old/pull/13. The Worker was red
 `packaging/android/mod-build-worker/` with the `wrangler` in `PATH` (version
 `a6f71f7f-08a9-4daf-8255-dfa407ee463b`): a POST of `version=bad` or `0.7.7-dev.` answers 400, and a
 POST of `0.7.7-dev.42.abcdef123456` with an empty body answers 413 (the version passed, the body did
-not), so the deployed pattern takes a dev label without dispatching a run. CI: android-source
-43731944066 failed in the diagnostics harness, android-dev 43731947652 builds the fast profile at
-`521ac12dd0`, and the builds repository's base run 43731881192 prepares the native-mod cache for that
-commit.
+not), so the deployed pattern takes a dev label without dispatching a run. CI at `521ac12dd0`:
+android-source 43731944066 failed in the diagnostics harness (fixed below), android-dev 43731947652
+built the fast profile at `521ac12dd0` (success, 16m37s), and the builds repository's base run
+43731881192 prepared the native-mod cache for that commit (success).
 
 PR #13 could not merge: `android` had PR #12 merged after our base. Merging `origin/android`
 (`7e37c9c3ca`) into the branch conflicted only in `android/native_builds.rs`, where the sync returned
@@ -410,3 +410,7 @@ The source checks exposed two harness shims that had not followed the sync's mod
 horizon_client;`, and `tools/test_android_screenshots.py` declares the included `instances.rs` as
 `android_instances` (the name `screenshots.rs` imports). With those, the whole source-check suite
 passes locally: the 17 Python tests, all 12 harnesses, the 8 Worker tests and the workflow copies.
+
+The merge head `efc1f9136c` is green in CI: PR #13's source checks (run 43734768054) pass, and the
+branch's source plus arm64 native check (run 43734793582, `android_build.py --check --public` in
+3m26s) passes. The PR body carries the run links; no on-device behaviour is claimed beyond them.
