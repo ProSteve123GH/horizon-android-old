@@ -129,7 +129,6 @@ controllers = ["horizon-client-lib/controllers", "dep:gilrs", "dep:horizon-duals
 # Runs code mods (wasmtime and cranelift: a quarter of a clean build). On in every release build
 # (release.yml); the tests and probes don't need it. Content mods load without it.
 mods = ["horizon-mods/runtime"]
-controllers = ["horizon-client-lib/controllers", "dep:gilrs", "dep:horizon-dualsense", "horizon-client-input/controllers"]
 # Horizon's own extras over the vanilla game, for a fork that wants them out (docs/forking.md):
 # cosmetics and emotes, the "Horizon player" presence, the official server added to
 # the server list, the Horizon Settings and Mods pages and Play with Friends, and ray tracing on
