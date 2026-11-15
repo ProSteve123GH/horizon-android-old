@@ -66,6 +66,8 @@ serde_json = { version = "1.0.151", features = ["raw_value"] }
 naga = { version = "30.0.1", features = ["wgsl-in", "hlsl-out"] }
 miniz_oxide = "0.8"
 ab_glyph = "0.2.32"
+# The game's menus and on-screen keyboards use the launcher's tokens and fonts.
+horizon-theme = { path = "../horizon-theme" }
 log = "0.4"
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs", "runtime_detection"] }

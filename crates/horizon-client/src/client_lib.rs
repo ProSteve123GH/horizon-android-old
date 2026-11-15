@@ -150,6 +150,7 @@ pub mod tick_chunk_membership;
 pub mod ticket_levels;
 pub mod title;
 pub mod toasts;
+pub mod ui_text;
 pub mod ui_theme;
 pub mod vanillagen;
 pub mod voxel_occlusion;

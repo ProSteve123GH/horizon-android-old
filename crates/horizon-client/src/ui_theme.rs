@@ -429,8 +429,11 @@ impl<'a> Ui<'a> {
         }
         let px = (size * self.density * 4.0).round() / 4.0;
         with_cache(self.atlas, |cache| {
-            let font = cache.fonts.face(face);
-            let scaled = font.as_scaled(cache.fonts.scale(face, px));
+            let Some(fonts) = &cache.fonts else {
+                return text.to_owned();
+            };
+            let font = fonts.face(face);
+            let scaled = font.as_scaled(fonts.scale(face, px));
             crate::ui_text::fit(text, width * self.density, |previous, ch| {
                 let id = font.glyph_id(ch);
                 previous.map_or(0.0, |p| scaled.kern(font.glyph_id(p), id)) + scaled.h_advance(id)
