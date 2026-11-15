@@ -28,7 +28,6 @@ pub(crate) fn cache_dir() -> Option<&'static std::path::Path> {
 use crate::android_gamepad::{Devices, InputMode, Selection};
 use crate::gamepad::PadState;
 use crate::keypad::{Keypad, Settings};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 use winit::event::{DeviceEvent, ElementState};
 use winit::keyboard::KeyCode;

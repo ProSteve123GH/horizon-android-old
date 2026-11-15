@@ -32,7 +32,6 @@ const TERRAIN_ATTRIBUTES: [wgpu::VertexAttribute; 5] =
 
 mod entity_source;
 mod terrain_source;
-use terrain_source::terrain_shader;
 
 /// entity.wgsl after the OverlayTexture constants it reads.
 fn entity_shader() -> String {
@@ -2793,9 +2792,16 @@ impl Renderer {
         let pipelines_step = crate::spans::startup::step("renderer.pipelines_textures");
         let terrain_step = crate::spans::startup::step("renderer.terrain_pipelines");
         let gpu_timer = timing::GpuTimer::new(&device, &queue);
+        let terrain_source_gl =
+            cfg!(target_os = "android") && adapter.get_info().backend == wgpu::Backend::Gl;
+        let terrain_source_wgsl = if terrain_source_gl {
+            terrain_source::terrain_shader(true).into_owned()
+        } else {
+            terrain_shader()
+        };
         let shader = kept.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Horizon terrain"),
-            source: wgpu::ShaderSource::Wgsl(terrain_shader().into()),
+            source: wgpu::ShaderSource::Wgsl(terrain_source_wgsl.into()),
         });
         let entry = |binding, visibility, ty| wgpu::BindGroupLayoutEntry {
             binding,
@@ -3022,10 +3028,15 @@ impl Renderer {
                 cache: None,
             };
             if hud == Some(true) {
+                let terrain_source_wgsl = if terrain_source_gl {
+                    terrain_source::terrain_shader(true).into_owned()
+                } else {
+                    terrain_shader()
+                };
                 hud_coverage::pipeline(
                     &device,
                     &desc,
-                    wgpu::ShaderSource::Wgsl(terrain_shader().into()),
+                    wgpu::ShaderSource::Wgsl(terrain_source_wgsl.into()),
                 )
                 .expect("the debug crosshair's coverage")
             } else {
