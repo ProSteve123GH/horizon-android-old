@@ -18,11 +18,14 @@ edition = "2024"
 serde_json = "1"
 log = "0.4"
 rustix = { version = "1", features = ["time"] }
+getrandom = "0.3"
 horizon-threads = { path = "../../../crates/horizon-threads" }
+horizon-server-files = { path = "../../../crates/horizon-server-files" }
 ''', encoding='utf-8')
     (harness / 'src/lib.rs').write_text('''#![allow(dead_code)]
 extern crate self as horizon_client;
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+#[path = "../../../../crates/horizon-client-render/src/block_entity_render.rs"] pub mod block_entity_render;
 #[path = "../../../../crates/horizon-client/src/control.rs"] pub mod control;
 #[path = "../../../../crates/horizon-client-render/src/spans.rs"] pub mod spans;
 mod backend { pub const VERSION: &str = "0.7.2-test"; }
