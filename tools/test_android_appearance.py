@@ -26,6 +26,7 @@ png = "0.18"
 sha2 = "0.10"
 getrandom = "0.3"
 ureq = { version = "2", features = ["json"] }
+chacha20poly1305 = "0.10"
 url = "2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 [target.'cfg(windows)'.dependencies]
@@ -49,13 +50,22 @@ mod backend {
 mod proxy {
     pub fn agent(builder: ureq::AgentBuilder, _: &str) -> ureq::AgentBuilder { builder }
 }
+mod i18n {
+    pub fn tr(en: &str) -> &str { en }
+    pub fn trf(en: &str, args: &[(&str, &str)]) -> String {
+        let mut out = en.to_string();
+        for (k, v) in args {
+            out = out.replace(&format!("{{{k}}}"), v);
+        }
+        out
+    }
+}
 mod java_launch {
     #[derive(Debug)]
     pub struct Player { pub name: String, pub uuid: String, pub token: String, pub xuid: String }
 }
 '''
-    for name, rel in (('account', 'launcher/src/account.rs'),
-                      ('skins', 'crates/horizon-client-render/src/skins.rs')):
+    for name, rel in (('account', 'launcher/src/account.rs'),):
         source += f'#[path = "{(ROOT / rel).as_posix()}"] pub mod {name};\n'
     source += "mod hud { pub fn decode_bytes(bytes:&[u8])->Result<(u32,u32,Vec<u8>),String> { let image=image::load_from_memory(bytes).map_err(|e|e.to_string())?.to_rgba8(); Ok((image.width(),image.height(),image.into_raw())) } }\n"
     source += 'mod engine { pub use horizon_core::player_texture::{process_cape,process_legacy_skin}; #[path="' + (ROOT / 'crates/horizon-client-render/src/skins/appearance.rs').as_posix() + '"] pub mod appearance; }\n'
