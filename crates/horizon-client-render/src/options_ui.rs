@@ -4633,6 +4633,7 @@ impl OptionsUi {
     /// Touch uses direct manipulation rather than sticky keyboard selection.
     /// Text-editor focus is independent and is retained for the IME.
     pub fn touch_start(&mut self) {
+        use crate::settings_shell::Screen as _;
         self.focus = None;
         self.graphics.clear_focus();
     }

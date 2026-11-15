@@ -3058,31 +3058,6 @@ impl Renderer {
                 kept.create_render_pipeline(&desc)
             }
         };
-        let pipeline_in = |layout: &wgpu::PipelineLayout,
-                           label: &str,
-                           vertex: &str,
-                           fragment: &str,
-                           buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
-                           topology: wgpu::PrimitiveTopology,
-                           cull: Option<wgpu::Face>,
-                           depth_write: bool,
-                           depth_test: bool,
-                           blend: Option<wgpu::BlendState>| {
-            pipeline_with(
-                &sprite_constants,
-                layout,
-                label,
-                vertex,
-                fragment,
-                buffers,
-                topology,
-                cull,
-                depth_write,
-                depth_test,
-                blend,
-                None,
-            )
-        };
         // A solid terrain pipeline (back faces culled, depth written, no blend) without HDR
         // output's lighting, and with it where the display offers HDR output.
         let solid_in = |layout: &wgpu::PipelineLayout,
