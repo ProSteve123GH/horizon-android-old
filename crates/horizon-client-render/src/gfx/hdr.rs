@@ -667,6 +667,7 @@ impl Hdr {
             &copy.create_view(&Default::default()),
             "HDR SDR screenshot",
             None,
+            None,
         );
         Some(copy)
     }
@@ -941,6 +942,7 @@ impl Hdr {
             &group,
             &view,
             "HDR output",
+            None,
             None,
         );
         Some(texture)

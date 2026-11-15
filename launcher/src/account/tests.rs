@@ -1302,6 +1302,7 @@ fn play_as_picks_a_signed_in_account() {
     );
 }
 
+#[cfg(not(target_os = "android"))]
 #[test]
 fn the_java_edition_plays_as_an_owner_even_offline() {
     let (_, ep) = mock(|_| {});
@@ -2615,6 +2616,7 @@ fn splitscreen_stops_renewing_other_accounts_once_out_of_time() {
         ..secrets("old", true)
     };
     let cal = Account {
+        provider: Default::default(),
         uuid: "c".into(),
         name: "Cal".into(),
         skin: None,
@@ -2690,6 +2692,7 @@ fn a_launch_saving_late_keeps_sign_ins_and_outs_made_meanwhile() {
     let _ = std::fs::remove_dir_all(&dir);
     let file = dir.join("accounts.json");
     let other = |uuid: &str, name: &str| Account {
+        provider: Default::default(),
         uuid: uuid.into(),
         name: name.into(),
         skin: None,

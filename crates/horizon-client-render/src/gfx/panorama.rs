@@ -26,6 +26,22 @@ pub struct Faces {
     decoded: Mutex<Option<Vec<u8>>>,
 }
 
+impl Clone for Faces {
+    fn clone(&self) -> Self {
+        Self {
+            size: self.size,
+            files: self.files.clone(),
+            colour: self.colour,
+            decoded: Mutex::new(
+                self.decoded
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+            ),
+        }
+    }
+}
+
 impl Faces {
     /// The title artwork of `root` (the packs' overlay) over `defaults` (the
     /// game's own resources). `CubeMapTexture` registers each face with the

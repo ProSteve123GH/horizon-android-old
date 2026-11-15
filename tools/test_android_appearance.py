@@ -70,6 +70,17 @@ mod i18n {
         out
     }
 }
+mod secure_store {
+    /// A no-op keychain used in hosts that cannot run the real Android one.
+    use crate::account::SecretStore;
+    pub struct AndroidStore;
+    impl SecretStore for AndroidStore {
+        fn get(&self, _key: &str) -> Result<Option<String>, String> { Ok(None) }
+        fn set(&self, _key: &str, _secret: &str) -> Result<(), String> { Ok(()) }
+        fn delete(&self, _key: &str) -> Result<(), String> { Ok(()) }
+        fn persistent(&self) -> bool { true }
+    }
+}
 mod java_launch {
     #[derive(Debug)]
     pub struct Player { pub name: String, pub uuid: String, pub token: String, pub xuid: String }

@@ -146,9 +146,6 @@ impl TouchControls {
     pub fn held_custom_tokens(&self) -> impl Iterator<Item = &str> {
         self.custom_fingers.values().map(String::as_str)
     }
-    pub fn key_events(&mut self) -> Vec<(String, bool)> {
-        std::mem::take(&mut self.custom_events)
-    }
     pub(super) fn clear_custom(&mut self) {
         let keys: std::collections::BTreeSet<_> = std::mem::take(&mut self.custom_fingers)
             .into_values()

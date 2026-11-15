@@ -4425,6 +4425,7 @@ impl OptionsUi {
                         Act::TouchControls => events.push(Event::TouchControls),
                         Act::ToggleRecording => events.push(Event::ToggleRecording),
                         Act::ExportRepro => events.push(Event::ExportRepro),
+                        Act::PadKey(_) | Act::ResetPadKey(_) | Act::ResetPadKeys => {}
                         Act::None => {}
                     }
                 }
@@ -5336,6 +5337,7 @@ impl OptionsUi {
                         Act::CopyAgentDetails => events.push(Event::CopyAgentDetails),
                         Act::ToggleRecording => events.push(Event::ToggleRecording),
                         Act::ExportRepro => events.push(Event::ExportRepro),
+                        Act::PadKey(_) | Act::ResetPadKey(_) | Act::ResetPadKeys => {}
                         Act::None => {}
                     }
                     return events;

@@ -23,6 +23,7 @@ pub use custom::CustomButton;
 pub use layout::{Control, Mode, Placement, Settings};
 
 use crate::gamepad::{Button, PadState};
+use crate::hud::{HudAtlas, HudBatch, rgba};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 

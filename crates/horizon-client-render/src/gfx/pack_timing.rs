@@ -233,6 +233,11 @@ pub struct PassTiming {
 }
 
 impl PassTiming {
+    /// Whether `HORIZON_SHADER_PACK_TIMING` asks for timing without the F3 overlay.
+    pub fn logging() -> bool {
+        static LOG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *LOG.get_or_init(|| std::env::var_os("HORIZON_SHADER_PACK_TIMING").is_some())
+    }
     /// `None` when the device can't time passes.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<Self> {
         let has = device.features();
