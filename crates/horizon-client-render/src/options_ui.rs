@@ -4634,7 +4634,7 @@ impl OptionsUi {
     /// Text-editor focus is independent and is retained for the IME.
     pub fn touch_start(&mut self) {
         self.focus = None;
-        self.graphics.focus = None;
+        self.graphics.clear_focus();
     }
     /// A touchscreen scroll moves the list, never the last focused or hovered
     /// option. Keep physical wheel handling in `wheel` separate.

@@ -2624,6 +2624,8 @@ impl Renderer {
             prepared,
             previous.map(Self::replacement_context),
             api,
+            translucent_batching,
+            shader_pack,
             settings,
             request,
             display,
@@ -2649,6 +2651,10 @@ impl Renderer {
         prepared: Option<PreparedTextures>,
         mut previous: Option<ReplacementContext>,
         api: GraphicsApi,
+        translucent_batching: bool,
+        shader_pack: bool,
+        // The settings and the pack's `request` pick the frame (`output::resolve_frame`),
+        // with what this window's display reported to the renderer before (`display`).
         settings: &crate::graphics::Graphics,
         request: output::FrameRequest,
         display: output::DisplayReading,
@@ -2929,45 +2935,6 @@ impl Renderer {
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &debug_line_attributes,
         })];
-        let specialized_pipeline = |layout: &wgpu::PipelineLayout,
-                                    label: &str,
-                                    vertex: &str,
-                                    fragment: &str,
-                                    buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
-                                    topology: wgpu::PrimitiveTopology,
-                                    cull: Option<wgpu::Face>,
-                                    depth_write: bool,
-                                    depth_test: bool,
-                                    blend: Option<wgpu::BlendState>,
-                                    settled: bool| {
-            let mut constants = sprite_constants.to_vec();
-            if settled {
-                constants.extend([("TERRAIN_FILTERING", 0.0), ("TERRAIN_FULLY_VISIBLE", 1.0)]);
-            }
-            pipeline_with(
-                &constants,
-                layout,
-                label,
-                vertex,
-                fragment,
-                buffers,
-                topology,
-                cull,
-                depth_write,
-                depth_test,
-                blend,
-                None,
-            )
-        };
-        // The solid terrain's fragment constants without HDR output's lighting, for the
-        // frames HDR is off (`SolidPipeline`).
-        let plain_constants = [
-            sprite_constants[0],
-            sprite_constants[1],
-            ("HDR_LIGHTING", 0.0),
-        ];
-        // `hud`: the debug crosshair, drawn with the HUD in the overlays' format, with its
-        // coverage or without.
         let pipeline_with = |constants: &[(&str, f64)],
                              layout: &wgpu::PipelineLayout,
                              label: &str,
@@ -3035,6 +3002,46 @@ impl Renderer {
                 multiview_mask: None,
                 cache: None,
             };
+
+            let specialized_pipeline = |layout: &wgpu::PipelineLayout,
+                                        label: &str,
+                                        vertex: &str,
+                                        fragment: &str,
+                                        buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
+                                        topology: wgpu::PrimitiveTopology,
+                                        cull: Option<wgpu::Face>,
+                                        depth_write: bool,
+                                        depth_test: bool,
+                                        blend: Option<wgpu::BlendState>,
+                                        settled: bool| {
+                let mut constants = sprite_constants.to_vec();
+                if settled {
+                    constants.extend([("TERRAIN_FILTERING", 0.0), ("TERRAIN_FULLY_VISIBLE", 1.0)]);
+                }
+                pipeline_with(
+                    &constants,
+                    layout,
+                    label,
+                    vertex,
+                    fragment,
+                    buffers,
+                    topology,
+                    cull,
+                    depth_write,
+                    depth_test,
+                    blend,
+                    None,
+                )
+            };
+            // The solid terrain's fragment constants without HDR output's lighting, for the
+            // frames HDR is off (`SolidPipeline`).
+            let plain_constants = [
+                sprite_constants[0],
+                sprite_constants[1],
+                ("HDR_LIGHTING", 0.0),
+            ];
+            // `hud`: the debug crosshair, drawn with the HUD in the overlays' format, with its
+            // coverage or without.
             if hud == Some(true) {
                 let terrain_source_wgsl = if terrain_source_gl {
                     terrain_source::terrain_shader(true).into_owned()
@@ -5679,7 +5686,7 @@ impl Renderer {
             device_lost: self.device_lost.clone(),
             config: self.config.clone(),
             present_modes: self.present_modes.clone(),
-            hdr_output: self.hdr_output,
+            hdr_output: self.hdr.as_ref().map(|h| h.output),
             reuse: self.reuse.clone(),
         }
     }
@@ -11038,7 +11045,7 @@ impl Renderer {
                 if !frame.title && frame.stars.is_some() && !pack_draws_sky && !own_stars {
                     match self.core_sky.as_ref().filter(|c| c.draws_stars()) {
                         Some(core) => core.draw_stars(&mut pass),
-                        None => self.stars.draw(&mut pass),
+                        None => self.stars.draw(&mut pass, true),
                     }
                     pass.set_bind_group(0, &self.group, &[]);
                 }

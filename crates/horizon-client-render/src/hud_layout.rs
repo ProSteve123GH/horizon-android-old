@@ -480,6 +480,9 @@ pub fn experience_colored(
     bar: bool,
     width: &dyn Fn(&str) -> i32,
 ) -> Vec<GuiDraw> {
+    fn opaque(c: u32) -> u32 {
+        c | 0xFF00_0000
+    }
     let mut out = Vec::new();
     if bar {
         let (left, top) = (w / 2 - 91, h - 32 + 3);

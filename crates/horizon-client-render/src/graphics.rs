@@ -1001,6 +1001,10 @@ fn bool_text(v: bool) -> &'static str {
     if v { "true" } else { "false" }
 }
 impl Graphics {
+    /// No Horizon graphics keys are wired up; always returns false.
+    pub fn set_key(&mut self, _name: &str, _value: String) -> bool {
+        false
+    }
     pub fn load(dir: &Path) -> Self {
         let mut g: Self = fs::read_to_string(dir.join(FILE))
             .map(|t| Self::parse(&t))
