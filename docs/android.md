@@ -194,7 +194,11 @@ both a QWERTY keyboard and a mouse. **Keyboard & mouse** selects it explicitly;
 
 The Compose launcher is Kotlin in the main process. The Rust game is an
 `android.app.NativeActivity` in the `:game` process, so closing the game does not
-destroy the launcher and the two cannot share a winit event loop. Kotlin starts
+destroy the launcher and the two cannot share a winit event loop. `HorizonActivity`
+is `singleTask`: pressing Play while a game is alive brings it back instead of
+starting a second activity, which the `:game` process cannot host (winit allows
+one event loop per process). It also handles configuration changes itself, so a
+system change does not recreate the activity. Kotlin starts
 the Android document pickers and owns the documents provider; Rust/JNI provides
 the controller bridge, persisted document reads, storage checks and the system
 keyboard. The system keyboard uses Android's stock text editor and input-method
