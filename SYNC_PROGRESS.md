@@ -350,11 +350,41 @@ field, `mapped_key(..., raw, source)` and `key_pressed(key, raw)` call sites, `h
 screen, the OSK's `Done`/`Complete`/`Previous`/`Next` outputs, `regex` for the Android diagnostics
 report, and the fork's themed touch-button art restored in `horizon-client-render/src/touch.rs`.
 
+Two fork-only fixes joined the same push. The mod catalog called a native mod "Installed"
+whenever its source `.hnmod` was imported, although nothing had been compiled; the new
+`android/native_built.rs` reads `build.json` of the build chosen in `home/native/current` and the
+catalog says "Built" only for the mods that build carries (the game's Mods page already did this;
+its test `native_mods_installed_but_not_built_get_a_row_saying_so` is the desktop counterpart).
+And the launcher never reached its Worker: the build server setting defaulted to an empty string, so
+the native card's **Build** button (disabled while `native.server` is blank) and the catalog's
+per-project **Build** (a "Set the native mod build server first" refusal) stopped before any request.
+`native_builds::DEFAULT_SERVER` is now this fork's deployed Worker,
+`https://horizon-mod-builds.steve-horizon-android-hnmod.workers.dev`, and `Config::load` fills it
+when the saved address is empty (a player can still name a server of their own). The URL is the
+account subdomain `steve-horizon-android-hnmod` with the `horizon-mod-builds` script from
+`wrangler.toml`; a POST of `version=bad` with the app's own `Horizon/<version>` user agent, made on
+2026-11-15, answers the protocol's 400 `{"error":"That is not a version of the game."}`, so the
+Worker is live and accepts the launcher's request (the earlier 403 was GitHub refusing the Worker's
+dispatch without a user agent, fixed in the Worker). The launcher guide, the Worker README and
+`docs/android-native-mods.md` now name the default and tell Termux users to run the `wrangler` in
+`PATH` rather than `npx wrangler`.
+
+The launcher's dev builds name themselves `0.7.7-dev.<run>.<commit>`, and the Worker's and the Python
+gateway's version pattern only allowed one part after `-dev.`: every dev-build request was refused
+with the protocol's 400 before a run was dispatched. Both now accept the dot-separated label (the
+Worker test covers it and still refuses an empty part). The in-app guide, both READMEs and
+`docs/android-native-mods.md` were rewritten as ordered steps: the builds repository and its base
+cache, the fine-grained token, the Worker's KV and secret, the launcher's URL, then the mod. The
+builds template's `versions.json` now maps 0.7.7 to its actual release commit (`152710c0`, as the
+deployed builds repository already did).
+
 Status (2026-11-15, second session). `cargo check -p horizon-android` (aarch64 Android host,
 `CARGO_BUILD_JOBS=1`, no debuginfo, no incremental) finishes with 0 errors; `cargo metadata
 --locked` and `cargo fmt --all --check` are clean; the 17 Python Android tests
 (`python3 -m unittest discover -s tests -p 'test_android*.py'`) and
-`python3 tools/check_public_tree.py` pass. Next: commit and push
+`python3 tools/check_public_tree.py` pass, as does the content harness
+(`tools/test_android_content.py`, which now carries `native_built.rs`'s test). Next: commit and push
 `sync/horizon-main-2026-11-14` to `origin`, dispatch `android-source.yml`
-(`native_checks=true`) and `android-dev.yml` (`profile=fast`, `all_abis=false`), then open the PR
-against `android`. No on-device behaviour is claimed until that CI is green.
+(`native_checks=true`) and `android-dev.yml` (`profile=fast`, `all_abis=false`), run the builds
+repository's **base** workflow for the branch commit to prepare the native-mod cache, then open the
+PR against `android`. No on-device behaviour is claimed until that CI is green.

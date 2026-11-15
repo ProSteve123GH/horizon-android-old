@@ -26,7 +26,9 @@ const CHUNK = 8 << 20;
 const LIBRARY = "libhorizon_android.so";
 const JOB = /^[0-9a-f]{24}$/;
 const ASK = /^[0-9a-f]{32}$/;
-const VERSION = /^\d+(\.\d+){1,3}(-dev\.[A-Za-z0-9]+)?$/;
+// A release (0.7.7) or this fork's dev label (0.7.7-dev.<run>.<sha12>): the dev label has
+// dot-separated parts, so a single segment after -dev. is not enough.
+const VERSION = /^\d+(\.\d+){1,3}(-dev(\.[A-Za-z0-9]+)+)?$/;
 const COMMIT = /^[0-9a-f]{7,40}$/;
 /// A run that has not fetched its mods in this long, or one still building after this, isn't coming.
 const QUEUED_SECONDS = 25 * 60;

@@ -55,11 +55,13 @@ fun BuildServerGuide(state: Snapshot) {
                     "A native mod (.hnmod) is compiled into the game itself, so a phone can't build " +
                         "one. The launcher sends the mods to a build server and downloads the game it " +
                         "makes. This page sets one up with GitHub's machines doing the compile, behind " +
-                        "a gateway that keeps the token off the phone.",
+                        "a free Cloudflare Worker that keeps the token off the phone.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
-                    "You need a GitHub account and a Cloudflare account, both free, and about ten minutes.",
+                    "You need a GitHub account and a Cloudflare account, both free, and about 15 " +
+                        "minutes. The five steps below go in order: the builder repository first, " +
+                        "then its token, then the Worker, then the launcher.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -68,7 +70,7 @@ fun BuildServerGuide(state: Snapshot) {
         item(key = "status") {
             GuideCard("Your build server") {
                 Text(
-                    state.native.server.ifBlank { "Not set yet - the last step below fills this in." },
+                    state.native.server.ifBlank { "Not set yet - step 4 below fills this in." },
                     style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
                 )
                 Text(
@@ -86,46 +88,81 @@ fun BuildServerGuide(state: Snapshot) {
         item(key = "step1") {
             GuideCard("1. Make the builds repository") {
                 Text(
-                    "Copy packaging/android/mod-builds/ from this repository into a new public " +
-                        "repository, for example <you>/horizon-mod-builds. In its build.yml and " +
-                        "cleanup.yml set HORIZON_REPO and HORIZON_REPO_PATH to this fork.",
+                    "The compile runs in a separate public repository, never in the game's own. " +
+                        "Create one on GitHub, for example <you>/horizon-mod-builds. Public matters: " +
+                        "the phone downloads the finished game from its release assets without a token.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
-                    "Then open Actions -> Android native mod build -> Run workflow with build = base, " +
-                        "once, for the release commit. That fills the cache every player's build starts " +
-                        "from; without it every build starts from nothing.",
+                    "Copy everything in packaging/android/mod-builds/ into it, including the hidden " +
+                        ".github folder, and commit it to main.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    "In .github/workflows/base.yml and build.yml, set HORIZON_REPO to the game " +
+                        "repository's URL and HORIZON_REPO_PATH to its owner/name. The template " +
+                        "already names this fork.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    "Add each release to versions.json, for example " +
+                        "{\"0.7.7\": \"<the release's full commit>\"}. The launcher normally sends the " +
+                        "commit it was built from; this file is the fallback.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    "Then make the clean cache once: Actions > base > Run workflow. Set version to " +
+                        "0.7.7 and commit to the release's full commit (or leave it empty to use " +
+                        "versions.json). It takes about 15 minutes. Every player build starts from " +
+                        "that cache; without it, the build stops on the cache restore.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
         }
         item(key = "step2") {
-            GuideCard("2. Create the free gateway") {
+            GuideCard("2. Make the token") {
                 Text(
-                    "packaging/android/mod-build-worker/ is a Cloudflare Worker: free plan, no card, " +
-                        "nothing to keep running. From that folder:",
+                    "Create a fine-grained GitHub token for the builds repository only, with " +
+                        "Actions: write. Nothing else is needed: the workflow reads the builds " +
+                        "repository with its own token.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                GuideCode(
-                    "npx wrangler login\n" +
-                        "npx wrangler kv namespace create STORE\n" +
-                        "npx wrangler secret put GITHUB_TOKEN\n" +
-                        "npx wrangler deploy",
-                    copy,
+                Text(
+                    "Keep it for step 3. It is a secret: the Worker stores it, the phone never sees it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
         item(key = "step3") {
-            GuideCard("3. Fill in the Worker") {
+            GuideCard("3. Deploy the Worker") {
                 Text(
-                    "Put the KV id wrangler printed into wrangler.toml, and set " +
-                        "GITHUB_REPO = \"<you>/horizon-mod-builds\".",
+                    "packaging/android/mod-build-worker/ is a Cloudflare Worker: free plan, no card, " +
+                        "nothing to keep running. From that folder, with the wrangler in your PATH " +
+                        "(npx wrangler runs the same commands):",
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                GuideCode(
+                    "wrangler login\n" +
+                        "wrangler kv namespace create STORE",
+                    copy,
+                )
                 Text(
-                    "The token is fine-grained, on that repository only, with Actions: write. " +
-                        "wrangler also takes CLOUDFLARE_API_TOKEN in the environment instead of " +
-                        "logging in, so it can run from the phone.",
+                    "Put the printed id in wrangler.toml under [[kv_namespaces]] (binding STORE), " +
+                        "and set GITHUB_REPO = \"<you>/horizon-mod-builds\" in [vars]. Then:",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                GuideCode(
+                    "wrangler secret put GITHUB_TOKEN\n" +
+                        "wrangler deploy",
+                    copy,
+                )
+                Text(
+                    "Paste the token from step 2 at the secret prompt. deploy prints the URL, " +
+                        "https://<worker>.<account>.workers.dev: that is the build server. On Termux, " +
+                        "use the wrangler in PATH for login and deploy (its local dev server needs " +
+                        "workerd, which has no Android build), or run deploy.sh with " +
+                        "CLOUDFLARE_API_TOKEN.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
@@ -133,10 +170,21 @@ fun BuildServerGuide(state: Snapshot) {
         item(key = "step4") {
             GuideCard("4. Point the launcher at it") {
                 Text(
-                    "Set Settings > Native mods > Build server to the URL wrangler printed, " +
-                        "https://<name>.<you>.workers.dev. Compile on GitHub can stay on: the Worker " +
-                        "always uses GitHub's runners.",
+                    "Set Settings > Native mods > Build server to the URL wrangler deploy printed. " +
+                        "This fork's launcher otherwise names its own Worker " +
+                        "(horizon-mod-builds.steve-horizon-android-hnmod.workers.dev).",
                     style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    "Leave Compile on GitHub on: the Worker always uses GitHub's runners.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    "Check it without building anything: curl -X POST " +
+                        "'https://<worker>.<account>.workers.dev/v1/build?version=bad' should answer " +
+                        "400 with {\"error\":\"That is not a version of the game.\"}.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
@@ -155,6 +203,35 @@ fun BuildServerGuide(state: Snapshot) {
                 Text(
                     "The result appears in Settings > Native mods > Builds; press Use to play it. " +
                         "The launcher waits up to 90 minutes for the runners.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+        item(key = "trouble") {
+            GuideCard("If it does not work") {
+                Text(
+                    "GitHub refused the build: the token lacks Actions: write on the builds " +
+                        "repository, or GITHUB_REPO names another repository.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    "GitHub did not start the build: Actions are disabled on the builds repository, " +
+                        "or GITHUB_REF is not the branch that holds build.yml.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    "The job stops on the cache restore: run base once for that commit (step 1), " +
+                        "then build again.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    "400 That is not a version of the game: the app sent a version name the Worker " +
+                        "does not know. Update the app, or check its version name.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    "403 from Cloudflare: the URL is not the one wrangler deploy printed. Opening it " +
+                        "in a browser should answer {\"error\":\"No such thing here.\"}.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }

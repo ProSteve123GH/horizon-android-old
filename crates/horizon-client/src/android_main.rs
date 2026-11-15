@@ -45,6 +45,8 @@ mod gallery;
 mod minecraft_import;
 #[path = "android/native_builds.rs"]
 mod native_builds;
+#[path = "android/native_built.rs"]
+mod native_built;
 #[path = "android/native_ime.rs"]
 mod native_ime;
 #[path = "android/performance_presets.rs"]

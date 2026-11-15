@@ -284,6 +284,21 @@ test("a failure the mods caused stands, one that wasn't is built again", async (
   assert.equal(gh.dispatches.length, 3, "a build that wasn't the mods' fault is asked for again");
 });
 
+test("a dev build's label is a version of the game", async () => {
+  const { gh, send } = setup();
+  const version = "0.7.7-dev.42.abcdef123456";
+  const answer = await send(buildUrl(version, "abcdef123456"), {
+    method: "POST",
+    body: mods,
+    headers: { "Content-Length": String(mods.length) },
+  });
+  assert.equal(answer.status, 200);
+  const { job } = await answer.json();
+  assert.match(job, /^[0-9a-f]{24}$/);
+  assert.equal(gh.dispatches[0].inputs.version, version);
+  assert.equal(gh.dispatches[0].inputs.commit, "abcdef123456");
+});
+
 test("what is not a request is refused, and says why", async () => {
   const { gh, send } = setup();
   const tooBig = await send(buildUrl(), {
@@ -300,6 +315,13 @@ test("what is not a request is refused, and says why", async () => {
     headers: { "Content-Length": String(mods.length) },
   });
   assert.equal(notAVersion.status, 400);
+
+  const emptySegment = await send(buildUrl("0.7.7-dev."), {
+    method: "POST",
+    body: mods,
+    headers: { "Content-Length": String(mods.length) },
+  });
+  assert.equal(emptySegment.status, 400);
 
   assert.equal(gh.dispatches.length, 0);
   assert.equal((await send(`${BASE}/v1/job/${"0".repeat(24)}`)).status, 404);

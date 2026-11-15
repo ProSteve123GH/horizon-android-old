@@ -127,6 +127,10 @@ impl Config {
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
         let mut config: Self = serde_json::from_value(value.clone()).unwrap_or_default();
+        // The fork's build Worker is the default; a player can point at a server of their own.
+        if config.native_server.trim().is_empty() {
+            config.native_server = crate::native_builds::DEFAULT_SERVER.to_owned();
+        }
         if cfg!(target_pointer_width = "32") && value.get("renderer").is_none() {
             config.renderer = RendererMode::OpenGl;
         }
@@ -212,9 +216,9 @@ pub struct Catalog {
     pub sections: [bool; 3],
     pub pending_delete: Option<LocalItem>,
     downloaded: Vec<(browser::SourceId, String)>,
-    /// The native mods (`.hnmod`) this instance has, by id: they are compiled into the game, so
-    /// they live in `horizon-native-mods/`, not in a content folder (`refresh`).
-    native_ids: std::collections::BTreeSet<String>,
+    /// The ids of the native mods the chosen build carries (`native_built::built_ids`): a native
+    /// mod is compiled into the game, so it is "Built", never "Installed" from its source alone.
+    native_built: std::collections::BTreeSet<String>,
     downloading: Option<(browser::SourceId, String)>,
     progress: Arc<Mutex<f32>>,
     failed: Option<(browser::SourceId, String)>,
@@ -247,7 +251,7 @@ impl Catalog {
             sections: [false, false, false],
             pending_delete: None,
             downloaded: vec![],
-            native_ids: Default::default(),
+            native_built: Default::default(),
             downloading: None,
             progress: Arc::new(Mutex::new(0.0)),
             failed: None,
@@ -291,16 +295,7 @@ impl Catalog {
             .collect();
         let on = horizon_client::mod_list::ModList::load(&game);
         self.bundled_enabled = on.enabled.difference(&on.disabled).cloned().collect();
-        self.native_ids = std::fs::read_dir(game.join(horizon_client::mod_list::NATIVE_DIR))
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter(|entry| entry.file_type().is_ok_and(|t| t.is_file()))
-            .filter_map(|entry| {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                name.strip_suffix(".hnmod").map(str::to_owned)
-            })
-            .collect();
+        self.native_built = crate::native_built::built_ids(home);
         let settings = horizon_client::settings::Settings::load(&game.join("options.txt"));
         self.local.clear();
         for kind in horizon_client::content_files::Kind::ALL {
@@ -351,11 +346,18 @@ impl Catalog {
                 *self.progress.lock().unwrap_or_else(|e| e.into_inner()) * 100.0
             ));
         }
+        // A native mod is compiled into the game: its source `.hnmod` alone is not installed;
+        // it is built only when the chosen build carries it.
+        if source_only_mod(project) {
+            return self
+                .native_built
+                .contains(&project.id)
+                .then(|| "Built".into());
+        }
         if self
             .downloaded
             .iter()
             .any(|(source, id)| *source == project.source && *id == project.id)
-            || (source_only_mod(project) && self.native_ids.contains(&project.id))
             || (project.kind == Kind::Mod
                 && self.local.iter().any(|item| {
                     item.kind == horizon_client::content_files::Kind::Mods

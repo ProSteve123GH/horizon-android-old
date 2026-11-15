@@ -11,6 +11,7 @@
 //! and the same `.hnmod` format work: `POST /v1/build?version=…&commit=…&via=github` with a body
 //! of `[u32 big-endian length][zip]…`, `GET /v1/job/<key>` while it compiles, and
 //! `GET /v1/job/<key>/lib` (Range resumes) for the library.
+use crate::native_built::{COMPILED, CURRENT, build_mods, chosen, dir, plain_build};
 use horizon_client::mod_list::{self, ModList};
 use sha2::{Digest, Sha256};
 use std::{
@@ -23,21 +24,17 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// The service's default address. Empty until this fork publishes one: a player points the
-/// launcher at their own (`Settings > Native mods > Build server`), which is also how a build
-/// server on a PC is reached from a phone on the same network.
-pub const DEFAULT_SERVER: &str = "";
+/// This fork's build Worker (`packaging/android/mod-build-worker`): the launcher sends the mods a
+/// player turns on here unless they set a server of their own (`Settings > Native mods > Build
+/// server`), which is also how a build server on a PC is reached from a phone on the same network.
+pub const DEFAULT_SERVER: &str =
+    "https://horizon-mod-builds.steve-horizon-android-hnmod.workers.dev";
 /// The most the service takes in one request (`mod_build_server.py`'s `MAX_BODY`).
 const LARGEST_REQUEST: usize = 32 << 20;
-/// Where the builds are, under the launcher's home (`filesDir`): the game process reads it too.
-const DIR: &str = "native";
 /// The library's name in a build's folder, as `HorizonActivity` loads it.
 const LIBRARY: &str = "libhorizon_android.so";
-/// The build chosen for the next start, and the install of the APK it was made under.
-const CURRENT: &str = "current";
+/// The install of the APK the build was made under.
 const APK: &str = "apk";
-/// A build's folder starts with this; a new build takes the place of the last.
-const COMPILED: &str = "compiled-";
 /// How often a job is looked at, and how long it may take at all: a machine of the player's own
 /// reports its own failures long before this, and GitHub's runs are the slow ones.
 const POLL: Duration = Duration::from_secs(2);
@@ -76,24 +73,6 @@ pub fn build_commit() -> Option<&'static str> {
                 .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
     });
     full.or(option_env!("HORIZON_ANDROID_BUILD_COMMIT"))
-}
-
-fn dir(home: &Path) -> PathBuf {
-    home.join(DIR)
-}
-
-fn chosen(home: &Path) -> Option<String> {
-    let name = std::fs::read_to_string(dir(home).join(CURRENT)).ok()?;
-    let name = name.trim();
-    (!name.is_empty() && plain_build(name)).then(|| name.to_owned())
-}
-
-fn plain_build(name: &str) -> bool {
-    name.starts_with(COMPILED)
-        && name.len() <= 80
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'_'))
 }
 
 fn plain_job(key: &str) -> bool {
@@ -145,29 +124,6 @@ fn loads(home: &Path, name: &str, version: &str, stamp: Option<&str>) -> bool {
     folder.join(LIBRARY).is_file()
         && build_text(&folder, "for").as_deref() == Some(version)
         && stamp.is_some_and(|stamp| build_text(&folder, APK).as_deref() == Some(stamp))
-}
-
-/// The mods a build was made with, from its `build.json`.
-fn build_mods(folder: &Path) -> Vec<(String, String)> {
-    let Ok(text) = std::fs::read_to_string(folder.join("build.json")) else {
-        return Vec::new();
-    };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return Vec::new();
-    };
-    value["mods"]
-        .as_array()
-        .map(|mods| {
-            mods.iter()
-                .filter_map(|m| {
-                    Some((
-                        m["id"].as_str()?.to_owned(),
-                        m["version"].as_str().unwrap_or_default().to_owned(),
-                    ))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 /// The `.hnmod`s in an instance's folder, read. An unreadable one keeps its file name and no

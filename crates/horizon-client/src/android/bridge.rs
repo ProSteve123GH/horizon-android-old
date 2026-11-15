@@ -979,7 +979,14 @@ impl Controller {
                     }
                     "client_id" => self.catalog.config.microsoft_client_id = value,
                     "native_server" => {
-                        if !value.is_empty() && !crate::native_builds::plain_server(&value) {
+                        // Clearing the row restores the fork's Worker rather than leaving every
+                        // build with "Set the native mod build server first".
+                        let value = if value.is_empty() {
+                            crate::native_builds::DEFAULT_SERVER.to_owned()
+                        } else {
+                            value
+                        };
+                        if !crate::native_builds::plain_server(&value) {
                             return Err(
                                 "Enter the build server as https://host or http://host:port".into(),
                             );

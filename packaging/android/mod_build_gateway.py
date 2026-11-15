@@ -576,7 +576,7 @@ def github_ask(address, request, version, body, commit):
     """This request's job on GitHub, asked for before or now: (job, None), or (None, why not)."""
     if not github_open():
         return None, "Building on GitHub isn't available right now."
-    if not re.fullmatch(r"\d+(\.\d+){1,3}(-dev\.[A-Za-z0-9]+)?", version):
+    if not re.fullmatch(r"\d+(\.\d+){1,3}(-dev(\.[A-Za-z0-9]+)+)?", version):
         return None, "That is not a version of the game."
     job = request[:24]
     now = time.time()

@@ -8,35 +8,129 @@ phone's download at the release the run published. Free plan, no card.
 It speaks the same protocol as `mod_build_gateway.py` (`docs/android-native-mods.md`), so the launcher
 can't tell them apart: **Settings → Native mods → Build server** = the Worker's URL.
 
-## Once
+## What you need
 
-1. Make the builds repository from `packaging/android/mod-builds/` (public), and run its **base**
-   workflow once for the game's commit.
-2. Make a fine-grained token for that repository: **Actions: write**. (Reading contents is not
-   needed; the workflow reads its own repository with its own token.)
-3. Deploy the Worker, from this folder:
+- A GitHub account and a Cloudflare account, both free, and about 15 minutes.
+- This repository (or a fork of it with the same `packaging/android/` layout) at the commit the app
+  was built from: `ProSteve123GH/horizon-android-old`.
+
+The Worker needs a builds repository before it can be useful, so start there.
+
+## 1. Make the builds repository (GitHub's runners)
+
+The compile happens in a separate **public** repository made from `packaging/android/mod-builds/`.
+Public matters: the phone downloads the finished library from that repository's release assets
+without a token, and the Worker never reads the game repository.
+
+1. On GitHub, create a new **public** repository, for example `you/horizon-mod-builds`.
+2. Copy everything in `packaging/android/mod-builds/` into it, including the hidden `.github/`
+   folder, and commit it to `main`.
+3. In `.github/workflows/base.yml` and `build.yml`, set `HORIZON_REPO` to the game repository's
+   URL and `HORIZON_REPO_PATH` to its `owner/name`. The template already names this
+   fork (`ProSteve123GH/horizon-android-old`); change both only if you build from another fork.
+4. Add the release you run to `versions.json`, for example `{"0.7.7": "<full commit>"}`. The
+   launcher usually sends the commit it was built from, so only a launcher that cannot name one
+   falls back to this file.
+5. Make the clean build cache once: **Actions → base → Run workflow**, `version` = the game version
+   (`0.7.7`), `commit` = the release's full commit, or empty to use `versions.json`. It takes about
+   15 minutes. Every player's build starts from this cache; without it the build job stops on the
+   cache restore.
+6. Make a fine-grained GitHub token for **that repository only**, with **Actions: write**. Nothing
+   else is needed: the workflow reads the builds repository with its own token.
+
+Keep the token for step 2.
+
+## 2. Deploy this Worker
+
+Run these from this folder (`packaging/android/mod-build-worker/`).
+
+1. Install `wrangler` and sign in:
 
    ```sh
-   npx wrangler kv namespace create STORE          # put the id in wrangler.toml
-   npx wrangler secret put GITHUB_TOKEN            # paste the token
-   # wrangler.toml: GITHUB_REPO = "you/horizon-mod-builds"
-   npx wrangler deploy
+   wrangler login
    ```
 
-   `wrangler` also takes `CLOUDFLARE_API_TOKEN` in the environment instead of logging in, which is how
-   it runs from a phone. If `wrangler` can't run at all (on Termux it fails with "Unsupported
-   platform: android arm64 LE", because it carries the `workerd` runtime, which has no Android
-   build), use the plain-curl deployer instead:
+   On Termux, the `wrangler` in `PATH` handles `login` and `deploy`; its local `dev` server needs
+   `workerd`, which has no Android build. `wrangler` also takes `CLOUDFLARE_API_TOKEN` in the
+   environment instead of a login.
+
+2. Make the KV store:
 
    ```sh
-   CLOUDFLARE_API_TOKEN=… GITHUB_TOKEN=… bash deploy.sh
+   wrangler kv namespace create STORE
    ```
 
-   It finds or makes the `STORE` namespace, puts its id in `wrangler.toml`, uploads `src/index.js`,
-   sets the `GITHUB_TOKEN` secret and enables `workers.dev`, then prints the URL. It needs a token
-   with **Workers Scripts: Edit** and **Workers KV Storage: Edit**; set `CLOUDFLARE_ACCOUNT_ID` if
-   the token sees more than one account.
-4. In Horizon, set the Build server to the `https://….workers.dev` URL `wrangler` (or `deploy.sh`) prints.
+   Copy the printed `id` into `wrangler.toml` under `[[kv_namespaces]]` (binding `STORE`).
+
+3. In `[vars]`, set `GITHUB_REPO = "<you>/horizon-mod-builds"`. `GITHUB_WORKFLOW` and `GITHUB_REF`
+   already name `build.yml` on `main`.
+
+4. Store the token from step 1:
+
+   ```sh
+   wrangler secret put GITHUB_TOKEN
+   ```
+
+   Paste the fine-grained token at the prompt. It stays a secret: it never goes into
+   `wrangler.toml`.
+
+5. Deploy:
+
+   ```sh
+   wrangler deploy
+   ```
+
+   The last line prints the URL, `https://<worker>.<account>.workers.dev`. That is the build server.
+
+6. Check that it answers the protocol without starting a build:
+
+   ```sh
+   curl -sS -X POST 'https://<worker>.<account>.workers.dev/v1/build?version=bad'
+   ```
+
+   It should answer HTTP 400 with `{"error":"That is not a version of the game."}`.
+
+If `wrangler` cannot run at all, `deploy.sh` does the same over Cloudflare's API with curl and
+python3:
+
+```sh
+CLOUDFLARE_API_TOKEN=… GITHUB_TOKEN=… bash deploy.sh
+```
+
+It finds or makes the `STORE` namespace, puts its id in `wrangler.toml`, uploads `src/index.js`,
+sets the `GITHUB_TOKEN` secret and enables `workers.dev`, then prints the URL. It needs a token with
+**Workers Scripts: Edit** and **Workers KV Storage: Edit**; set `CLOUDFLARE_ACCOUNT_ID` if the token
+sees more than one account.
+
+## 3. Point Horizon at it
+
+1. In the launcher, set **Settings → Native mods → Build server** to the URL from step 2.
+2. Leave **Compile on GitHub** on. The Worker always uses GitHub's runners; the switch only steers a
+   gateway that can build by itself.
+3. Open **Mods**, find a native (`.hnmod`) mod, and press **Build**. The launcher uploads the mods
+   that are on, waits for the run (up to 90 minutes), and downloads the library.
+4. The result appears in **Settings → Native mods → Builds**; press **Use** to play it. Select
+   several native mods before pressing **Build** to compile them all in one run.
+
+This fork's launcher already names its own Worker
+(`https://horizon-mod-builds.steve-horizon-android-hnmod.workers.dev`), so steps 1–2 are only needed
+when you deploy your own.
+
+## Troubleshooting
+
+- **`400 {"error":"That is not a version of the game."}`** — the launcher sent a version name that
+  is neither a release (`0.7.7`) nor a dev build (`0.7.7-dev.<run>.<commit>`). Check the app's
+  version name; the build server rejects what it cannot name.
+- **`429 {"error":"GitHub refused the build."}`** — the `GITHUB_TOKEN` lacks **Actions: write** on
+  `GITHUB_REPO`, or `GITHUB_REPO` names another repository.
+- **`429 {"error":"GitHub did not start the build."}`** — Actions are disabled on the builds
+  repository, or `GITHUB_REF` is not the branch that holds `build.yml`.
+- **The build job stops on the cache restore** — run **base** once for that commit (step 1.5), then
+  ask for the build again.
+- **`403` from Cloudflare before the Worker runs** — the URL is not the one `wrangler deploy`
+  printed (or that deployment was removed). Opening the URL in a browser should answer
+  `{"error":"No such thing here."}` with 404; anything else is the wrong host.
+- **`Set the native mod build server first`** — the Build server row is empty; paste the URL again.
 
 ## What it does
 
