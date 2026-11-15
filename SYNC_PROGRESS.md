@@ -225,3 +225,13 @@ Branch `sync/horizon-main-2026-11-14`: `git merge upstream/main` (b396fcfe01) br
 ### Status of the merge commit
 
 Amended into `sync/horizon-main-2026-11-14` with Android-specific messages preserved; history preserved, no force-push. The branch will open a PR against `android`.
+
+### Post-CI-fix followups (2026-11-15, commit a48739ab6d..7d0869ada7)
+
+- `.github/workflows/`: moved upstream deployment workflows (`cargo-horizon-mod`, `mojang-republish`, `pack-bench`, `perf-wasm`, `runner-watch`) to `.github/upstream-workflows/*.disabled` so they are inactive in the fork.
+- `crates/horizon-client/Cargo.toml`: drop duplicate `controllers` feature line (the merge had concatenated upstream's entry with the fork's); `cargo` refused to load the workspace.
+- `crates/horizon-client-render/src/spans.rs`: Span initialisers now set `depth: 0` (new required field from upstream's ticking work).
+- `crates/horizon-client/src/android/performance.rs`: spans::Span initializer in the perf-recorder tests sets `depth: 0`.
+- `tools/test_android_gpu.py`: overlay.rs resolved from the repo root (path was a hard-coded Windows dev path).
+- `tools/test_android_performance.py`: harness stub bundles `block_entity_render.rs` locally; harness Cargo.toml gains `getrandom` and `horizon-server-files`.
+- `tools/test_android_appearance.py`: `skins` module path moved to `crates/horizon-client-render/src/skins.rs` (upstream refactor).
