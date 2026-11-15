@@ -25,7 +25,19 @@ horizon-server-files = { path = "../../../crates/horizon-server-files" }
     (harness / 'src/lib.rs').write_text('''#![allow(dead_code)]
 extern crate self as horizon_client;
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
-#[path = "../../../../crates/horizon-client-render/src/block_entity_render.rs"] pub mod block_entity_render;
+// The real block_entity_render.rs transitively imports the entire engine; the
+// harness needs only the small stats struct control.rs reads.
+pub mod block_entity_render {
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct StaticCacheFrameStats {
+        pub snapshot_rebuilds: u64,
+        pub snapshot_bytes_built: u64,
+        pub snapshot_revision: u64,
+        pub static_bytes_uploaded: u64,
+        pub static_entities_drawn: u64,
+        pub dynamic_entities_drawn: u64,
+    }
+}
 #[path = "../../../../crates/horizon-client/src/control.rs"] pub mod control;
 #[path = "../../../../crates/horizon-client-render/src/spans.rs"] pub mod spans;
 mod backend { pub const VERSION: &str = "0.7.2-test"; }
