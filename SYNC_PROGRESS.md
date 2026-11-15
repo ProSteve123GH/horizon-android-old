@@ -414,3 +414,13 @@ passes locally: the 17 Python tests, all 12 harnesses, the 8 Worker tests and th
 The merge head `efc1f9136c` is green in CI: PR #13's source checks (run 43734768054) pass, and the
 branch's source plus arm64 native check (run 43734793582, `android_build.py --check --public` in
 3m26s) passes. The PR body carries the run links; no on-device behaviour is claimed beyond them.
+
+### Relaunch fix (2026-11-16)
+
+Play on the Compose launcher started a second `HorizonActivity` when a game was still alive in
+the `:game` process. winit keeps a process-wide `EVENT_LOOP_CREATED` flag, so that second
+`NativeActivity` failed with `EventLoop can't be recreated` and wrote it to `android-error.txt`,
+which the launcher displayed. `HorizonActivity` is now `launchMode="singleTask"`, so Play brings
+the paused game back instead of building a second event loop; it also absorbs the configuration
+changes that used to recreate the activity. `tests/test_android_game_activity.py` pins the launch
+mode. The 18 Android unit tests and `tools/check_public_tree.py` pass.

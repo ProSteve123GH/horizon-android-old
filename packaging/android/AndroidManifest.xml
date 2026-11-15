@@ -17,7 +17,10 @@
         <provider android:name="dev.horizon.android.ScreenshotProvider" android:authorities="${applicationId}.screenshots" android:exported="false" android:grantUriPermissions="true" />
         <!-- The Compose launcher. The game runs in its own process, which exits when the game closes. -->
         <activity android:name="dev.horizon.android.launcher.LauncherActivity" android:exported="false" android:theme="@style/HorizonLauncherTheme" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|density" android:windowSoftInputMode="adjustResize" />
-        <activity android:name="dev.horizon.android.HorizonActivity" android:process=":game" android:exported="false" android:screenOrientation="sensorLandscape" android:configChanges="orientation|screenSize|keyboardHidden|keyboard|density|screenLayout" android:windowSoftInputMode="adjustResize" android:theme="@style/HorizonGameTheme">
+        <!-- singleTask: Play reuses a game that is still alive. A second NativeActivity in the
+             same :game process would ask winit for a second EventLoop, which it refuses
+             ("EventLoop can't be recreated"). -->
+        <activity android:name="dev.horizon.android.HorizonActivity" android:process=":game" android:exported="false" android:launchMode="singleTask" android:screenOrientation="sensorLandscape" android:configChanges="orientation|screenSize|smallestScreenSize|keyboardHidden|keyboard|density|screenLayout|navigation|touchscreen|uiMode|fontScale|locale|layoutDirection" android:windowSoftInputMode="adjustResize" android:theme="@style/HorizonGameTheme">
             <meta-data android:name="android.app.lib_name" android:value="horizon_android" />
             <!-- Loads the native-mod build when one is chosen, else the APK's own library
                  (HorizonActivity.loadGame, crates/horizon-client/src/android_main.rs). -->
