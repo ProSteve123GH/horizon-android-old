@@ -215,6 +215,7 @@ mod tests {
                     name: "tick_blocks",
                     ms: 70.0,
                     cpu_ms: 65.0,
+                    depth: 0,
                 }],
             );
             RECORDER.lock().unwrap().as_mut().unwrap().interval =
