@@ -496,6 +496,7 @@ fn splitscreen_gets_the_other_accounts_that_still_hold() {
     let store = MemoryStore::default();
     let mut accounts = signed_in(&store, &secrets("mc-token", true));
     let other = |name: &str, uuid: &str| Account {
+        provider: Default::default(),
         uuid: uuid.into(),
         name: name.into(),
         skin: None,
@@ -578,6 +579,7 @@ fn splitscreen_never_hands_over_an_account_sent_back_to_sign_in() {
         ..secrets("other-profile-token", true)
     };
     let eve = Account {
+        provider: Default::default(),
         uuid: "e".into(),
         name: "Eve".into(),
         skin: None,

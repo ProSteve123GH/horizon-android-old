@@ -46,6 +46,16 @@ mod backend {
     pub fn data_dir() -> std::path::PathBuf {
         std::env::temp_dir().join("horizon-appearance-harness")
     }
+    #[derive(Default, serde::Serialize, serde::Deserialize)]
+    pub struct Settings {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub keep_versions: Option<usize>,
+    }
+    impl Settings {
+        pub fn parse(source: &str) -> Self {
+            serde_json::from_str::<Self>(source).unwrap_or_default()
+        }
+    }
 }
 mod proxy {
     pub fn agent(builder: ureq::AgentBuilder, _: &str) -> ureq::AgentBuilder { builder }
