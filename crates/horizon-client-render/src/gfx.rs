@@ -2935,6 +2935,13 @@ impl Renderer {
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &debug_line_attributes,
         })];
+        // `hud`: the debug crosshair, drawn with the HUD in the overlays' format, with its
+        // coverage or without.
+        let plain_constants = [
+            sprite_constants[0],
+            sprite_constants[1],
+            ("HDR_LIGHTING", 0.0),
+        ];
         let pipeline_with = |constants: &[(&str, f64)],
                              layout: &wgpu::PipelineLayout,
                              label: &str,
@@ -3003,43 +3010,6 @@ impl Renderer {
                 cache: None,
             };
 
-            let specialized_pipeline = |layout: &wgpu::PipelineLayout,
-                                        label: &str,
-                                        vertex: &str,
-                                        fragment: &str,
-                                        buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
-                                        topology: wgpu::PrimitiveTopology,
-                                        cull: Option<wgpu::Face>,
-                                        depth_write: bool,
-                                        depth_test: bool,
-                                        blend: Option<wgpu::BlendState>,
-                                        settled: bool| {
-                let mut constants = sprite_constants.to_vec();
-                if settled {
-                    constants.extend([("TERRAIN_FILTERING", 0.0), ("TERRAIN_FULLY_VISIBLE", 1.0)]);
-                }
-                pipeline_with(
-                    &constants,
-                    layout,
-                    label,
-                    vertex,
-                    fragment,
-                    buffers,
-                    topology,
-                    cull,
-                    depth_write,
-                    depth_test,
-                    blend,
-                    None,
-                )
-            };
-            // The solid terrain's fragment constants without HDR output's lighting, for the
-            // frames HDR is off (`SolidPipeline`).
-            let plain_constants = [
-                sprite_constants[0],
-                sprite_constants[1],
-                ("HDR_LIGHTING", 0.0),
-            ];
             // `hud`: the debug crosshair, drawn with the HUD in the overlays' format, with its
             // coverage or without.
             if hud == Some(true) {
@@ -3057,6 +3027,36 @@ impl Renderer {
             } else {
                 kept.create_render_pipeline(&desc)
             }
+        };
+        let specialized_pipeline = |layout: &wgpu::PipelineLayout,
+                                    label: &str,
+                                    vertex: &str,
+                                    fragment: &str,
+                                    buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
+                                    topology: wgpu::PrimitiveTopology,
+                                    cull: Option<wgpu::Face>,
+                                    depth_write: bool,
+                                    depth_test: bool,
+                                    blend: Option<wgpu::BlendState>,
+                                    settled: bool| {
+            let mut constants = sprite_constants.to_vec();
+            if settled {
+                constants.extend([("TERRAIN_FILTERING", 0.0), ("TERRAIN_FULLY_VISIBLE", 1.0)]);
+            }
+            pipeline_with(
+                &constants,
+                layout,
+                label,
+                vertex,
+                fragment,
+                buffers,
+                topology,
+                cull,
+                depth_write,
+                depth_test,
+                blend,
+                None,
+            )
         };
         // A solid terrain pipeline (back faces culled, depth written, no blend) without HDR
         // output's lighting, and with it where the display offers HDR output.
