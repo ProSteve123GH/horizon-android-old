@@ -61,17 +61,39 @@ log = "0.4"
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs", "runtime_detection"] }
 horizon-theme = { path = "../horizon-theme" }
+# The launcher files the JNI bridge shares (launcher/src/android_shared.rs):
+# the pinned version in worlds/server lists, the encrypted secrets file, the
+# desktop launcher's build pipeline (native mods, updates) and its translations.
+horizon-platform = { path = "../horizon-platform", features = ["prepare", "protocol", "world"] }
+horizon-release-sign = { path = "../horizon-release-sign" }
+horizon-mod-api-gen = { path = "../horizon-mod-api-gen" }
+chacha20poly1305 = "0.10"
+toml = "1.1"
+syn = { version = "2", features = ["full", "visit"] }
+# The launcher's trait-injection generator writes Rust with these.
+quote = "1"
+# `byte_range` (native mod diagnostics) needs the span locations.
+proc-macro2 = { version = "1", features = ["span-locations"] }
+semver = "1"
+# The registry pages render their Markdown (`covered_by`/`details`).
+pulldown-cmark = { version = "0.12", default-features = false }
+dirs = "5"
+tar = { version = "0.4", default-features = false }
+sys-locale = "0.3"
 # Opt-in data collection: the game keeps, the launcher sends (docs/telemetry.md); `live` is
 # the anonymous "I'm playing" ping the game sends itself (`heartbeat.rs`).
 horizon-telemetry = { path = "../horizon-telemetry", default-features = false, features = ["live"] }
 horizon-bench = { path = "../horizon-bench" }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+# The launcher reads pack/jar entries; its lock and API (file_names) is zip 9.
+zip = { version = "9.1.3", default-features = false, features = ["deflate"] }
 # Controllers (evdev + libudev on Linux, IOKit on macOS, Windows.Gaming.Input); the `controllers` feature.
 # The DualSense's rumble, adaptive triggers and lights over HID (gilrs only reads it).
 # HTTPS to the Minecraft services (online-mode session join).
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", default-features = false, features = ["std", "time", "fs"] }
+# The launcher's low-priority native builds and its uninstaller.
+libc = "0.2"
 
 [features]
 default = ["mods", "audio"]

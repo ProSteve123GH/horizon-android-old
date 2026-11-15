@@ -94,7 +94,9 @@ fn id_of(space: Space, name: &str, verify: bool) -> u16 {
         return 0;
     }
     let (names, key) = (&NAMES[space as usize], name.as_ptr() as usize);
-    let slot = (key >> 3).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (usize::BITS - 10);
+    // 64-bit multiplication the same width on every target, so the constant fits
+    // `usize` on 32-bit builds too; `SLOTS` is 2^10.
+    let slot = ((key as u64 >> 3).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (u64::BITS - 10)) as usize;
     let hit = CACHE.with(|c| c[space as usize][slot].get());
     if hit.0 == key && hit.1 != 0 && (!verify || names.name(hit.1) == Some(name)) {
         return hit.1;

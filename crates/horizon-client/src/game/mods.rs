@@ -19,14 +19,11 @@ use std::{path::PathBuf, time::Duration};
 #[cfg(feature = "mods")]
 use {
     super::Screen,
-    super::{execution_role::ExecutionRole, lan::LanHost, server_mods::ModEvent},
+    super::{lan::LanHost, server_mods::ModEvent},
     horizon_client::{
         extras::Corner, extras_hud, items::ItemStack, keybinds, options_ui::Page, ui,
     },
-    horizon_mods::{
-        Clock, ModKey, Mods, Output, Player, Runs, ServerPlayer, Snapshot, Status, UiScreen,
-        UiWidget,
-    },
+    horizon_mods::{ModKey, Mods, ServerPlayer, Snapshot, UiScreen, UiWidget},
     std::time::Instant,
     winit::{event::MouseButton, keyboard::KeyCode},
 };
@@ -506,17 +503,6 @@ fn register_mob_effects(mods: &[horizon_client::mod_content::ContentMod]) {
 /// A build without the `mods` feature: no mod runs.
 #[cfg(not(feature = "mods"))]
 impl Game<'_> {
-    /// Says why the installed and dev mods don't run.
-    pub(super) fn start_mods(&mut self) {
-        let dir = Self::options_path().with_file_name(mod_list::DIR);
-        let found = horizon_mods::find(&dir).len() + self.mods.dev.len();
-        if found > 0 {
-            log::warn!(
-                "Horizon: {found} mod(s) not started: this build has no mod runtime (build with --features mods)"
-            );
-        }
-        self.list_native_mods();
-    }
     pub(super) fn merge_remote_tree(&mut self) {}
     pub(super) fn sync_mods(&mut self) {}
     pub(super) fn tick_mods(&mut self) {}
@@ -527,7 +513,6 @@ impl Game<'_> {
     pub(super) fn mods_chat(&mut self, _line: &str) {}
     pub(super) fn draw_mod_panels(&self, _batch: &mut HudBatch, _corners: &mut Corners) {}
     pub(super) fn open_mod_screen(&mut self, _owner: usize, _settings: bool) {}
-    pub(super) fn close_mod_screen(&mut self, _tell: bool) {}
     pub(super) fn draw_mod_screen(&mut self, _batch: &mut HudBatch) {}
     pub(super) fn mod_screen_click(&mut self, _button: winit::event::MouseButton) {}
     pub(super) fn mod_screen_key(&mut self, _key: winit::keyboard::KeyCode) -> bool {
@@ -706,6 +691,59 @@ fn live_switch_of(
 /// yet. The page said "No mods" before, and players copied the files into `horizon-mods` (#4770).
 /// Its toggle is the `mod.<id>` line the launcher's next build follows.
 fn not_built(dir: &std::path::Path, built: &str, rows: &[Installed]) -> Vec<Installed> {
+    let info: serde_json::Value = serde_json::from_str(built).unwrap_or_default();
+    let in_build = |id: &str| {
+        info["mods"]
+            .as_array()
+            .is_some_and(|mods| mods.iter().any(|m| m["id"] == id))
+    };
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|d| d.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    paths.retain(|p| p.extension().is_some_and(|e| e == "hnmod"));
+    paths.sort();
+    let mut out: Vec<Installed> = Vec::new();
+    for path in paths {
+        let Ok(bundle) = horizon_mods::index::native::Bundle::read(&path) else {
+            continue;
+        };
+        let m = bundle.manifest;
+        let listed = rows.iter().chain(&out).any(|row| row.id == m.id);
+        if !listed && !in_build(&m.id) {
+            out.push(Installed {
+                title: format!("{} {}", m.id, m.version),
+                id: m.id,
+                description: String::new(),
+                problem: Some(mod_list::NOT_BUILT.to_owned()),
+                dev: false,
+                has_settings: false,
+                native: None,
+            });
+        }
+    }
+    out
+}
+
+#[cfg(feature = "mods")]
+impl Game<'_> {
+    // The WebAssembly mod runtime's hooks: upstream stopped running
+    // WebAssembly mods (their rows say so on the Mods page, `start_mods`), so
+    // the game's calls reach these no-ops. The fork keeps the hooks because
+    // its Android mod menu and server-mod events still call them.
+    pub(super) fn tick_mods(&mut self) {}
+    pub(super) fn mods_frame(&mut self, _elapsed: Duration) {}
+    pub(super) fn mods_chat(&mut self, _line: &str) {}
+    pub(super) fn show_mod_output(&mut self) {}
+    pub(super) fn route_mod_output(&mut self, _host: Option<&mut LanHost>) {}
+    pub(super) fn mod_snapshot_with(&mut self, _players: Vec<ServerPlayer>) -> Snapshot {
+        Snapshot::default()
+    }
+    pub(super) fn reload_dev_mods(&mut self) {}
+    pub(super) fn merge_remote_tree(&mut self) {}
+    pub(super) fn sync_mods(&mut self) {}
+    pub(super) fn mod_command(&mut self, _command: &str) -> bool {
+        false
+    }
     /// A mod's line in the window's chat; not through system_message: a mod
     /// must not hear its own lines.
     /// Written by this client, so the Chat option doesn't hide it.
@@ -894,7 +932,7 @@ fn not_built(dir: &std::path::Path, built: &str, rows: &[Installed]) -> Vec<Inst
     }
     /// Leaves the mod screen: back to Options for a settings page, to what
     /// it covered for a mod's own. `tell` is Esc/Done, heard as `closed`.
-    pub(super) fn close_mod_screen(&mut self, tell: bool) {
+    pub(super) fn close_wasm_mod_screen(&mut self, tell: bool) {
         let Some(ms) = self.mods.screen.take() else {
             return;
         };
@@ -926,7 +964,7 @@ fn not_built(dir: &std::path::Path, built: &str, rows: &[Installed]) -> Vec<Inst
         let Some((title, widgets)) = Self::mod_ui_view(&self.mods.mods, ms) else {
             // The mod's surface is gone (it stopped or cleared it): leave
             // the screen like Done did, without `closed` â€” the mod ended it.
-            self.close_mod_screen(false);
+            self.close_wasm_mod_screen(false);
             return;
         };
         // Item icons draw in a second pass: `draw_item` needs `&mut self`,
@@ -1093,7 +1131,7 @@ fn not_built(dir: &std::path::Path, built: &str, rows: &[Installed]) -> Vec<Inst
         let cursor = self.cursor;
         if ui::hovered(cursor, (w / 2.0).floor() - 100.0, h - 27.0, 200.0, 20.0) {
             self.audio.play_button_click();
-            self.close_mod_screen(true);
+            self.close_wasm_mod_screen(true);
             return;
         }
         let Some(ms) = self.mods.screen.as_ref() else {
@@ -1276,40 +1314,6 @@ mod tests {
     }
 }
 
-fn not_built(dir: &std::path::Path, built: &str, rows: &[Installed]) -> Vec<Installed> {
-    let info: serde_json::Value = serde_json::from_str(built).unwrap_or_default();
-    let in_build = |id: &str| {
-        info["mods"]
-            .as_array()
-            .is_some_and(|mods| mods.iter().any(|m| m["id"] == id))
-    };
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map(|d| d.flatten().map(|e| e.path()).collect())
-        .unwrap_or_default();
-    paths.retain(|p| p.extension().is_some_and(|e| e == "hnmod"));
-    paths.sort();
-    let mut out: Vec<mod_list::Installed> = Vec::new();
-    for path in paths {
-        let Ok(bundle) = horizon_mods::index::native::Bundle::read(&path) else {
-            continue;
-        };
-        let m = bundle.manifest;
-        let listed = rows.iter().chain(&out).any(|row| row.id == m.id);
-        if !listed && !in_build(&m.id) {
-            out.push(mod_list::Installed {
-                title: format!("{} {}", m.id, m.version),
-                id: m.id,
-                description: String::new(),
-                problem: Some(mod_list::NOT_BUILT.to_owned()),
-                dev: false,
-                native: None,
-                has_settings: false,
-            });
-        }
-    }
-    out
-}
-
 /// A mod gave `block` block entity `id`, but the block's template has none,
 /// so breaking it would never remove it: the block gets none.
 pub(super) fn warn_no_block_entity(block: &str, id: &str) {
@@ -1345,6 +1349,7 @@ impl Game<'_> {
                             description: String::new(),
                             problem: Some(format!("Can't be read: {e}")),
                             dev: false,
+                            has_settings: false,
                             native: None,
                         };
                     }
@@ -1359,6 +1364,7 @@ impl Game<'_> {
                     description: m.description.clone(),
                     problem,
                     dev,
+                    has_settings: false,
                     native: None,
                 }
             })

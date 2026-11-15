@@ -98,7 +98,9 @@ impl Panel {
     /// Whether `owner`'s panel draws the viewer's page buttons and search box:
     /// Horizon's own Recipes panel, or a mod that asked for them.
     fn viewer_style(&self, owner: &Owner) -> bool {
-        let id = owner.native_id();
+        let Some(id) = owner.native_id() else {
+            return false;
+        };
         id == "recipes" || self.viewer_styled.contains(id)
     }
     /// What the panel shows: a native mod's (one `on`), else a
@@ -240,7 +242,7 @@ impl Game<'_> {
             return None;
         };
         let of = (shown.owner.clone(), shown.version);
-        if self.screen == Screen::Creative && of.0.native_id() != "recipes" {
+        if self.screen == Screen::Creative && of.0.native_id() != Some("recipes") {
             return None;
         }
         if self.panel.of.as_ref() != Some(&of) {
@@ -260,7 +262,7 @@ impl Game<'_> {
                     self.res.providers(),
                     shown,
                     old,
-                    of.0.native_id() == "recipes",
+                    of.0.native_id() == Some("recipes"),
                 )
             });
             self.panel.of = Some(of.clone());
@@ -291,7 +293,7 @@ impl Game<'_> {
             .panel
             .of
             .as_ref()
-            .is_some_and(|(owner, _)| owner.native_id() == "recipes");
+            .is_some_and(|(owner, _)| owner.native_id() == Some("recipes"));
         let left = if self.screen == Screen::Creative {
             Self::creative_origin(batch).0 + 198.0 + MARGIN
         } else {
@@ -728,7 +730,7 @@ impl Game<'_> {
         let Some(owner) = self.browser_sync() else {
             return false;
         };
-        if owner.native_id() != "recipes" || self.panel.recipes.is_none() {
+        if owner.native_id() != Some("recipes") || self.panel.recipes.is_none() {
             return false;
         }
         self.mod_browser_closed();
@@ -737,7 +739,7 @@ impl Game<'_> {
     }
     pub(super) fn close_transferred_recipe(&mut self) {
         if let Some(owner) = self.browser_sync()
-            && owner.native_id() == "recipes"
+            && owner.native_id() == Some("recipes")
             && self.panel.recipes.is_some()
         {
             self.mod_browser_closed();

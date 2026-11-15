@@ -913,12 +913,13 @@ impl Loading {
                         t.backspace();
                     }
                 }
-                Output::Enter | Output::Close => {
+                Output::Enter | Output::Close | Output::Done => {
                     crate::platform::hide();
                     if let Some(t) = &mut self.menu.title {
                         t.confirm_edit();
                     }
                 }
+                Output::Complete | Output::Previous | Output::Next => {}
             }
             self.save_menu_address();
         }

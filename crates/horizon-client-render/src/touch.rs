@@ -662,5 +662,61 @@ impl TouchControls {
     }
 }
 
+/// Original optional resource-pack artwork for the touch buttons. Missing
+/// states keep the default UI (the caller draws it when this returns false).
+#[allow(clippy::too_many_arguments)]
+pub fn theme_button(
+    b: &mut HudBatch,
+    a: &HudAtlas,
+    name: &str,
+    bounds: [f32; 4],
+    pressed: bool,
+    color: u32,
+    frame: bool,
+) -> bool {
+    let (base, active) = match name {
+        "chat" => (
+            "gui/horizon/touch/chat_normal",
+            "gui/horizon/touch/chat_pressed",
+        ),
+        "pause" => (
+            "gui/horizon/touch/pause_normal",
+            "gui/horizon/touch/pause_pressed",
+        ),
+        "settings" => (
+            "gui/horizon/touch/settings_normal",
+            "gui/horizon/touch/settings_pressed",
+        ),
+        "debug" => (
+            "gui/horizon/touch/debug_normal",
+            "gui/horizon/touch/debug_pressed",
+        ),
+        "perspective" => (
+            "gui/horizon/touch/perspective_normal",
+            "gui/horizon/touch/perspective_pressed",
+        ),
+        "button" => (
+            "gui/horizon/touch/button_normal",
+            "gui/horizon/touch/button_pressed",
+        ),
+        _ => return false,
+    };
+    let key = if pressed && a.sprites.contains_key(active) {
+        active
+    } else {
+        base
+    };
+    let Some(rect) = a.sprites.get(key).copied() else {
+        return false;
+    };
+    let [x, y, w, h] = bounds;
+    if frame {
+        crate::ui::nine_slice(b, a, key, x, y, w, h, color);
+    } else {
+        draw::control_quad(b, a, x, y, w, h, rect, color);
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests;

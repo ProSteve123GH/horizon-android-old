@@ -91,7 +91,7 @@ fn query(env: &mut JNIEnv<'_>, activity: &JObject<'_>, dir: &Path) -> jni::error
             device[field.to_lowercase()] = value.into();
         }
     }
-    let mut report = json!({"schema":2,"version":crate::backend::VERSION,
+    let mut report = json!({"schema":2,"version":horizon_client::backend::VERSION,
         "source_commit":option_env!("HORIZON_ANDROID_BUILD_COMMIT"),"collected_at_ms":crate::diagnostics::timestamp(),
         "device":device,"memory_note":"PSS/RSS are last OS samples in KiB; zero may mean no sample, not zero memory use.","collection_status":"unsupported_before_android_11","exits":[],
         "note":"Exit reasons are OS observations, not proof of the root cause. No trace can mean the OS did not retain one. Trace files are bounded raw system data; review before sharing."});

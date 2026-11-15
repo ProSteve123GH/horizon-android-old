@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Frames, round};
+use crate::{round, Frames};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -427,10 +427,8 @@ mod tests {
         assert_eq!(r.for_upload().ab, r.ab);
         let mut few = paired(&[(1.0, 2.0); 3]);
         few.noise = None;
-        assert!(
-            serde_json::to_string(&few)
-                .unwrap()
-                .contains("\"ci95\":null,\"confidence\":null")
-        );
+        assert!(serde_json::to_string(&few)
+            .unwrap()
+            .contains("\"ci95\":null,\"confidence\":null"));
     }
 }

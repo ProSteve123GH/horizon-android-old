@@ -412,12 +412,12 @@ pub fn request_body(game: &Path) -> Result<Vec<u8>, String> {
             continue;
         }
         if let Some(hooks) = bundle.manifest.hooks
-            && hooks > crate::game::NATIVE_HOOKS_API
+            && hooks > horizon_client::game::native_hooks_api()
         {
             return Err(format!(
                 "{} needs native hooks API {hooks}; this Horizon has {}.",
                 bundle.manifest.id,
-                crate::game::NATIVE_HOOKS_API
+                horizon_client::game::native_hooks_api()
             ));
         }
         mods.push(

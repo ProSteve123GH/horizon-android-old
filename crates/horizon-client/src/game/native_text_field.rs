@@ -97,7 +97,7 @@ impl Game<'_> {
             Screen::Chat | Screen::CommandBlock => {
                 let measure = Measure(&self.gui.atlas.font);
                 let commands = horizon_client::chat::Commands {
-                    dispatcher: chat::chat_tree(&self.remote),
+                    dispatcher: chat::chat_tree(&self.remote, &self.mods),
                     registries: &self.ui.registries,
                 };
                 let screen = if self.screen == Screen::Chat {

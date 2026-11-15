@@ -6,7 +6,7 @@
 //! Android provider and bridge turn the resolved path into a scoped content URI;
 //! no private path is ever handed to a sharing app.
 
-use crate::instances;
+use crate::android_instances as instances;
 use std::{
     fs::{self, File},
     io,

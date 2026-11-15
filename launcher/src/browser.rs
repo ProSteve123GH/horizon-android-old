@@ -20,7 +20,6 @@ pub mod images;
 pub mod installed;
 #[path = "browser/java.rs"]
 pub mod java;
-#[cfg(not(target_os = "android"))]
 #[path = "browser/java_instance.rs"]
 pub mod java_instance;
 pub mod lock;

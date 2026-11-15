@@ -130,6 +130,11 @@ impl Loading {
         let glint_armor = gui.atlas.glint_armor.clone();
         let prepared = loaded.renderer_cpu.take();
         let api = rendering_api(&self.settings);
+        // The worker owns what it needs: the display reading and the pack's
+        // frame come from the renderer still drawing the menu.
+        let display = previous.display_reading();
+        let picked = shader_packs::picked_pack_shape(&self.settings);
+        let graphics = self.settings.horizon.clone();
         self.renderer_job = Some(
             std::thread::Builder::new()
                 .name("Renderer preparation".into())
@@ -138,7 +143,7 @@ impl Loading {
                     let result = pollster::block_on(Renderer::new_with_context(
                         window,
                         true,
-                        &assets.pixels,
+                        &assets.pixels.get()[..],
                         assets.sprite_size,
                         assets.sprite_minimum_size,
                         assets.texture_layers,
@@ -148,10 +153,15 @@ impl Loading {
                         (&glint.0, glint.1, glint.2),
                         (&glint_armor.0, glint_armor.1, glint_armor.2),
                         (&forcefield.2, forcefield.0),
-                        &panorama,
+                        panorama,
                         prepared,
                         Some(context),
                         api,
+                        graphics.translucent_batching,
+                        picked.draws_flat,
+                        &graphics,
+                        picked.frame(),
+                        display,
                     ))
                     .map_err(|error| error.to_string());
                     log::info!(

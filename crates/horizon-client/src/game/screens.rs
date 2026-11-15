@@ -108,7 +108,6 @@ impl Screen {
             | Self::Dead
             | Self::CommandBlock
             | Self::BlockEditor
-            | Self::Mod
             // The HUD editor shows the HUD it moves.
             | Self::HudEditor
             | Self::Studio => false,

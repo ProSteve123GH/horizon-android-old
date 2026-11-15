@@ -25,6 +25,8 @@ struct Runtime {
     target: i64,
     adpf_reports: u64,
     adpf_status: i32,
+    frame_start: Instant,
+    frame_enabled: bool,
 }
 impl Default for Runtime {
     fn default() -> Self {
@@ -39,6 +41,8 @@ impl Default for Runtime {
             target: 0,
             adpf_reports: 0,
             adpf_status: 0,
+            frame_start: Instant::now(),
+            frame_enabled: false,
         }
     }
 }
@@ -69,9 +73,30 @@ impl Runtime {
         }
     }
 }
-pub struct Frame {
-    start: Instant,
-    enabled: bool,
+/// The library's frame token; `end_frame` below runs when it drops.
+pub use horizon_client::device_runtime::Frame;
+
+/// The game is between `frame` and its token's drop on this thread.
+fn end_frame() {
+    STATE.with(|s| {
+        let mut r = s.borrow_mut();
+        if !r.frame_enabled {
+            return;
+        }
+        if !r.session.is_null() {
+            unsafe {
+                let p = r.symbol(c"APerformanceHint_reportActualWorkDuration");
+                if !p.is_null() {
+                    let f: unsafe extern "C" fn(*mut c_void, i64) -> i32 = std::mem::transmute(p);
+                    r.adpf_status = f(
+                        r.session,
+                        r.frame_start.elapsed().as_nanos().min(i64::MAX as u128) as i64,
+                    );
+                    r.adpf_reports += 1;
+                }
+            }
+        }
+    });
 }
 /// The actual duration is CPU-side frame work including submission waits, not GPU execution time.
 pub fn frame(enabled: bool, hz: u16, active: bool) -> Frame {
@@ -134,33 +159,12 @@ pub fn frame(enabled: bool, hz: u16, active: bool) -> Frame {
             }
         }
     });
-    Frame {
-        start: Instant::now(),
-        enabled: enabled && active,
-    }
-}
-impl Drop for Frame {
-    fn drop(&mut self) {
-        if self.enabled {
-            STATE.with(|s| {
-                let mut r = s.borrow_mut();
-                if !r.session.is_null() {
-                    unsafe {
-                        let p = r.symbol(c"APerformanceHint_reportActualWorkDuration");
-                        if !p.is_null() {
-                            let f: unsafe extern "C" fn(*mut c_void, i64) -> i32 =
-                                std::mem::transmute(p);
-                            r.adpf_status = f(
-                                r.session,
-                                self.start.elapsed().as_nanos().min(i64::MAX as u128) as i64,
-                            );
-                            r.adpf_reports += 1;
-                        }
-                    }
-                }
-            });
-        }
-    }
+    STATE.with(|slot| {
+        let mut r = slot.borrow_mut();
+        r.frame_start = Instant::now();
+        r.frame_enabled = enabled && active;
+    });
+    Frame::new(end_frame)
 }
 /// Gyro uses Android device axes, remapped by current display rotation.
 pub fn gyro(enabled: bool, sensitivity: f32, rotation: i32) -> [f32; 2] {

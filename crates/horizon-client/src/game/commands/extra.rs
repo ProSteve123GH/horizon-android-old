@@ -1440,3 +1440,19 @@ mod waypoint_icon_save_tests {
         assert_eq!(WaypointIcon::from_saved(Some(&no_style)), None);
     }
 }
+
+impl Game<'_> {
+    /// The player's profile id: the saved id, else the offline id of the
+    /// player's name.
+    pub(in crate::game) fn player_uuid(&self) -> u128 {
+        self.level.player_uuid.map_or_else(
+            || horizon_protocol::crypto::offline_uuid(crate::game::chat::PLAYER_NAME),
+            |[a, b, c, d]| {
+                (u128::from(a as u32) << 96)
+                    | (u128::from(b as u32) << 64)
+                    | (u128::from(c as u32) << 32)
+                    | u128::from(d as u32)
+            },
+        )
+    }
+}

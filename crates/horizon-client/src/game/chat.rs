@@ -13,7 +13,7 @@ use horizon_client::{
     gamerules::GameRules,
     hud::HudBatch,
     screen_draw::Measure,
-    text::{ClickEvent, Style, Text},
+    text::{ClickEvent, Text},
 };
 use horizon_world::registry::{BlockRegistry, BlockStateId};
 use std::{
@@ -1087,7 +1087,7 @@ impl Game<'_> {
     ) -> Result<(), String> {
         let m = Measure(&self.gui.atlas.font);
         let c = Commands {
-            dispatcher: chat_tree(&self.remote),
+            dispatcher: chat_tree(&self.remote, &self.mods),
             registries: &self.ui.registries,
         };
         let Some(screen) = self.ui.chat_screen.as_mut() else {
@@ -1736,7 +1736,7 @@ impl Game<'_> {
         self.pvp.chat_search = !self.pvp.chat_search;
         let m = Measure(&self.gui.atlas.font);
         let c = Commands {
-            dispatcher: chat_tree(&self.remote),
+            dispatcher: chat_tree(&self.remote, &self.mods),
             registries: &self.ui.registries,
         };
         if let Some(screen) = self.ui.chat_screen.as_mut() {
@@ -2149,32 +2149,35 @@ impl Game<'_> {
             }
             return;
         }
-        let path = self.ui.screenshot_messages.remove(at);
-        let message = match &saved.result {
-            Ok(_) => {
-                log::info!("Saved screenshot to {}", path.display());
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
-                let link = Text::styled(
-                    name,
-                    Style {
-                        underlined: Some(true),
-                        click: Some(ClickEvent::OpenFile(path.to_string_lossy().into_owned())),
-                        ..Style::default()
-                    },
-                );
-                Text::translate("screenshot.success", &[link])
-            }
-            Err(e) => Text::translate("screenshot.failure", &[Text::literal(e.clone())]),
-        };
-        let focused = self.screen == Screen::Chat;
-        self.ui.chat.add(
-            &self.gui.atlas,
-            message,
-            None,
-            ChatSource::Client,
-            self.visual_ticks(),
-            focused,
-        );
+        #[cfg(not(target_os = "android"))]
+        {
+            let path = self.ui.screenshot_messages.remove(at);
+            let message = match &saved.result {
+                Ok(_) => {
+                    log::info!("Saved screenshot to {}", path.display());
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    let link = Text::styled(
+                        name,
+                        horizon_client::text::Style {
+                            underlined: Some(true),
+                            click: Some(ClickEvent::OpenFile(path.to_string_lossy().into_owned())),
+                            ..Style::default()
+                        },
+                    );
+                    Text::translate("screenshot.success", &[link])
+                }
+                Err(e) => Text::translate("screenshot.failure", &[Text::literal(e.clone())]),
+            };
+            let focused = self.screen == Screen::Chat;
+            self.ui.chat.add(
+                &self.gui.atlas,
+                message,
+                None,
+                ChatSource::Client,
+                self.visual_ticks(),
+                focused,
+            );
+        }
     }
 }
 /// `yyyy-MM-dd_HH.mm.ss[_n].png` (Util.getFilenameFormattedDateTime, in local time).

@@ -812,7 +812,7 @@ impl Catalog {
             Output::Backspace => {
                 field.pop();
             }
-            Output::Enter | Output::Close => {
+            Output::Enter | Output::Close | Output::Done => {
                 if self.editing == Some("render_scale") {
                     match crate::display::RenderScale::parse(&self.render_scale_text) {
                         Ok(scale) => {
@@ -832,6 +832,7 @@ impl Catalog {
                     self.search(home);
                 }
             }
+            Output::Complete | Output::Previous | Output::Next => {}
         }
     }
 }

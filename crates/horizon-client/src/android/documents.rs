@@ -29,12 +29,8 @@ struct Conflict {
     staged: PathBuf,
     target: PathBuf,
 }
-#[derive(Clone)]
-pub struct Notice {
-    pub text: String,
-    pub changed: bool,
-    pub kind: Option<Kind>,
-}
+/// What the game's `crate::documents::poll` reports (the library's type).
+pub use horizon_client::documents::Notice;
 #[derive(Default)]
 struct State {
     request: Option<Request>,

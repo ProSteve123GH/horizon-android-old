@@ -303,7 +303,7 @@ pub(crate) fn loading_app(
 }
 
 #[cfg(target_os = "android")]
-pub(crate) fn android_game(arguments: Vec<String>) -> Result<Box<dyn ApplicationHandler>> {
+pub fn android_game(arguments: Vec<String>) -> Result<Box<dyn ApplicationHandler>> {
     horizon_client::auth::clear_current();
     let mut options = Options::read_arguments(arguments)?.ok_or("missing Android options")?;
     if crate::performance::active() {

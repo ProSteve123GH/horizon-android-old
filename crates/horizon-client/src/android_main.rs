@@ -1,9 +1,6 @@
 //! Android's native entry point. The simulation and renderer are shared with desktop.
 #![cfg(target_os = "android")]
 
-#[allow(dead_code, clippy::collapsible_match)]
-// Shared vanilla match structure and desktop harnesses.
-mod game;
 #[path = "android/game_launch.rs"]
 mod game_launch;
 #[path = "android/launcher.rs"]
@@ -11,58 +8,45 @@ mod launcher;
 // Share the desktop launcher's actual search, compatibility checks, downloads,
 // dependency resolution and Java content porting; GPUI itself is desktop-only.
 // These files are formatted in the launcher's separate Rust 2021 workspace.
+// The launcher's backend modules the JNI bridge shares, in one place: the
+// list lives in `launcher/src/` so its modules resolve their own submodules
+// (`browser/…`, `skins/…`) as they do in the launcher (that crate needs GPUI,
+// which does not build for Android). rustfmt skips the shared files: they are
+// formatted in the launcher's own edition-2021 workspace.
 #[rustfmt::skip]
-#[allow(dead_code)]
-#[path = "../../../launcher/src/account.rs"]
-mod account;
-#[rustfmt::skip]
-#[allow(dead_code)]
-#[path = "../../../launcher/src/browser.rs"]
-mod browser;
+#[path = "../../../launcher/src/android_shared.rs"]
+mod launcher_shared;
+pub(crate) use launcher_shared::*;
 #[path = "android/dns.rs"]
 mod android_dns;
+#[path = "android/instances.rs"]
+mod android_instances;
 #[path = "android/appearance.rs"]
 mod appearance;
 #[path = "android/bridge.rs"]
 mod bridge;
 #[path = "android/catalog.rs"]
 mod catalog;
-#[path = "android/device_preferences.rs"]
-mod device_preferences;
 #[path = "android/device_runtime.rs"]
 mod device_runtime;
-#[path = "android/diagnostics.rs"]
-mod diagnostics;
-#[path = "android/display.rs"]
-mod display;
 #[path = "android/document_bridge.rs"]
 mod document_bridge;
 #[path = "android/document_provider.rs"]
 mod document_provider;
-#[path = "android/document_store.rs"]
-mod document_store;
 #[path = "android/documents.rs"]
 mod documents;
 #[path = "android/exit_reports.rs"]
 mod exit_reports;
 #[path = "android/gallery.rs"]
 mod gallery;
-#[path = "android/instances.rs"]
-mod instances;
 // The desktop launcher's world model: discovery, metadata, copying, renaming
 // and deletion. The Android world manager adds only its UI and launch request.
-#[rustfmt::skip]
-#[allow(dead_code)]
-#[path = "../../../launcher/src/worlds.rs"]
-mod worlds;
 #[path = "android/minecraft_import.rs"]
 mod minecraft_import;
 #[path = "android/native_builds.rs"]
 mod native_builds;
 #[path = "android/native_ime.rs"]
 mod native_ime;
-#[path = "android/performance.rs"]
-mod performance;
 #[path = "android/performance_presets.rs"]
 mod performance_presets;
 #[path = "android/platform.rs"]
@@ -73,10 +57,6 @@ mod platform;
 mod proxy;
 // The desktop launcher's servers.dat model: vanilla NBT, pictures and the fields the launcher
 // does not use. The Android Server Manager adds its UI, favorites and groups.
-#[rustfmt::skip]
-#[allow(dead_code)]
-#[path = "../../../launcher/src/server_list.rs"]
-mod server_list;
 #[path = "android/screenshots.rs"]
 mod screenshots;
 #[path = "android/search_queue.rs"]
@@ -89,53 +69,20 @@ mod servers;
 mod shader_catalog;
 #[path = "android/touch_layouts.rs"]
 mod touch_layouts;
-#[rustfmt::skip]
-#[allow(dead_code)]
-#[path = "../../../launcher/src/skins.rs"]
-mod skins;
 // The shared account protocol needs only the launcher's version and data path.
-mod backend {
-    pub const VERSION: &str = if crate::PUBLIC_BUILD {
-        "0.7.7"
-    } else {
-        "0.7.7-dev"
-    };
-    static HOME: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-    pub fn initialize(home: std::path::PathBuf) {
-        let _ = HOME.set(home);
-    }
-    pub fn game_home() -> std::path::PathBuf {
-        data_dir()
-    }
-    pub fn game_mod_api_level() -> Option<u32> {
-        Some(horizon_mods::api_level::LEVEL)
-    }
-    pub fn data_dir() -> std::path::PathBuf {
-        HOME.get().expect("android_main sets account home").clone()
-    }
-    pub fn try_data_dir() -> Option<std::path::PathBuf> {
-        HOME.get().cloned()
-    }
-}
+// Modules without JNI or the activity moved into the library, so the game it
+// runs uses the same state as the launcher around it.
+pub(crate) use horizon_client::{
+    device_preferences, diagnostics, display, document_store, performance,
+};
 
+pub(crate) use horizon_client::{keyboard_mouse_input, touch_input, touch_visible};
 use std::cell::RefCell;
-pub(crate) fn keyboard_mouse_input() -> bool {
-    horizon_client::android_runtime::active_input() == catalog::InputHost::KeyboardMouse
-}
 pub(crate) fn configure_input_mode(mode: catalog::InputHost) {
     horizon_client::android_runtime::configure_input(mode);
 }
-pub(crate) fn touch_visible() -> bool {
-    horizon_client::android_runtime::active_input() == catalog::InputHost::Touch
-}
-pub(crate) fn touch_input(touch: bool) {
-    horizon_client::android_runtime::note_input(if touch {
-        catalog::InputHost::Touch
-    } else {
-        catalog::InputHost::KeyboardMouse
-    });
-}
-pub(crate) fn save_input_mode() {
+/// The library's `crate::save_input_mode`, kept for the launcher's next start.
+fn save_input_mode() {
     APP.with(|app| {
         if let Some(home) = app.borrow().as_ref().and_then(|a| a.internal_data_path()) {
             let mut config = catalog::Config::load(&home);
@@ -149,10 +96,7 @@ pub(crate) fn save_input_mode() {
         }
     });
 }
-pub(crate) const PUBLIC_BUILD: bool = match option_env!("HORIZON_ANDROID_PUBLIC") {
-    Some(value) => value.len() == 1 && value.as_bytes()[0] == b'1',
-    None => false,
-};
+pub(crate) use horizon_client::PUBLIC_BUILD;
 
 #[unsafe(no_mangle)]
 fn android_on_create(state: &winit::platform::android::activity::OnCreateState<'_>) {
@@ -184,6 +128,42 @@ pub(crate) fn android_event_loop() -> Result<EventLoop<()>, winit::error::EventL
             )
             .build()
     })
+}
+
+/// Fill the table the gameplay library calls through `crate::platform`,
+/// `crate::documents`, `crate::gallery`, `crate::native_ime` and
+/// `crate::device_runtime` (`horizon_client::android_host`).
+fn install_host() {
+    horizon_client::android_host::install(horizon_client::android_host::Host {
+        platform_active: platform::active,
+        platform_show: platform::show,
+        platform_show_multiline: platform::show_multiline,
+        platform_hide: platform::hide,
+        platform_poll: platform::poll,
+        platform_field_at: platform::field_at,
+        platform_cancel_vibration: platform::cancel_vibration,
+        platform_vibrate: platform::vibrate,
+        platform_poll_gamepad_connections: platform::poll_gamepad_connections,
+        platform_capture_mouse: platform::capture_mouse,
+        platform_performance_power: platform::performance_power,
+        platform_open_url: platform::open_url,
+        platform_open_documents: platform::open_documents,
+        platform_first_frame: platform::first_frame,
+        platform_display_rotation: platform::display_rotation,
+        documents_poll: documents::poll,
+        documents_draw: documents::draw,
+        gallery_save: gallery::save,
+        gallery_poll: gallery::poll,
+        native_ime_viewport_bottom: native_ime::viewport_bottom,
+        native_ime_refresh_bounds: native_ime::refresh_bounds,
+        device_runtime_frame: device_runtime::frame,
+        device_runtime_gyro: device_runtime::gyro,
+        device_runtime_diagnostics: device_runtime::diagnostics,
+        device_runtime_suspend: device_runtime::suspend,
+        device_runtime_preferences: device_runtime::preferences,
+        save_input_mode,
+        android_event_loop,
+    });
 }
 
 pub(crate) fn init_logging() {
@@ -245,7 +225,7 @@ fn android_main(app: AndroidApp) {
         log::error!("Android supplied no application data directory");
         return;
     };
-    backend::initialize(home.clone());
+    horizon_client::backend::initialize(home.clone());
     if let Err(error) = diagnostics::initialize(&home, serde_json::json!({})) {
         log::error!("Cannot initialize local diagnostics: {error}");
     }
@@ -254,6 +234,7 @@ fn android_main(app: AndroidApp) {
     }
     let engine_data = app.asset_manager().open(c"engine-data.zip");
     APP.with(|slot| *slot.borrow_mut() = Some(app));
+    install_host();
     let Some(cache) = platform::cache_dir() else {
         log::error!("Android supplied no application cache directory");
         return;

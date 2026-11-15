@@ -59,6 +59,15 @@ impl Game<'_> {
         let overdue = r
             .backlog_since
             .is_some_and(|since| since.elapsed() >= BACKLOG_LIMIT);
+        // A mobile frame must not drain an arbitrarily large overdue burst:
+        // a decoder that needed >50 ms otherwise turns its whole queue into
+        // one long main-thread stall. Boost progress without changing order.
+        let bounded = cfg!(target_os = "android") || !overdue;
+        let chunk_budget = if cfg!(target_os = "android") && overdue {
+            Duration::from_millis(4)
+        } else {
+            CHUNK_PACKETS_PER_FRAME
+        };
         let mut chunks = Duration::ZERO;
         // A run of ForgetLevelChunk (thousands when the server's view moves far: a
         // teleport at 32 chunks) is forgotten at once, before whatever follows it.
@@ -73,7 +82,7 @@ impl Game<'_> {
             }
             horizon_client::spans::time("pr_forget", || self.forget_remote_columns(&mut forgotten));
             let chunk = matches!(item, Received::Chunk(_));
-            if chunk && !overdue && chunks >= CHUNK_PACKETS_PER_FRAME {
+            if chunk && bounded && chunks >= chunk_budget {
                 events.push_front(item);
                 break;
             }

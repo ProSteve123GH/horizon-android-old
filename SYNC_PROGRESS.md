@@ -289,3 +289,72 @@ Amended into `sync/horizon-main-2026-11-14` with Android-specific messages prese
 - CI run 43685440996 (source checks) showed 1 failing step: `tools/test_android_worlds.py`. That harness line was fixed at 3d2df5ed76.
 - CI run 43685443418 (dev APK fast profile) failed with 12 errors, all addressed at commit dafd836c6e / in this update.
 - Local tablet still cannot run `cargo check`; rustfmt is the only local compile gate.
+
+
+### Deep sync continuation (2026-11-15, second session)
+
+Scope: arm64 only. The native CI matrix in both copies of the source checks
+(`.github/workflows/android-source.yml` and `packaging/android/source-checks.yml`, kept
+byte-identical for the `cmp` step) lists one entry, `arm64-v8a` / `aarch64-linux-android`;
+32-bit-only breakage no longer gates the sync. `crates/horizon-threads/src/work.rs` computes its
+slot hash in `u64` so `overflowing_literals` is gone on 32-bit hosts while 64-bit results are
+identical.
+
+Gameplay in the library, JNI in the binary. Because gameplay moved into `horizon-client`'s
+library, the Android code that needs JNI, the native activity or `dlopen` stayed in the
+`horizon-android` cdylib (`crates/horizon-client/src/android_main.rs` and `android/`), and the
+library declares the paths gameplay calls over a host table installed once at startup
+(`crates/horizon-client/src/android_host.rs`: `platform`, `documents`, `gallery`, `native_ime`,
+`device_runtime`, plus `save_input_mode` and `android_event_loop`). `device_runtime::Frame` runs
+`end_frame` when it drops; the perf-hint/gyro state stays in the binary. Gameplay items the binary
+uses (`loading_frame`, `loading_renderer`, `native_hooks_api`, `android_game`,
+`android_reset_bundled_mods`) are `pub`, and `resource_loader::android_game` is a `pub use`.
+
+Launcher sharing. The JNI bridge shares the desktop launcher's backend files, which cannot be a
+crate dependency (the launcher needs GPUI, desktop-only). `launcher/src/android_shared.rs` mirrors
+`launcher/src/lib.rs` (with its Windows/macOS gates, plus the fork's `skins`) and is the module
+list the Android binary includes with `#[path]`; because it lives in `launcher/src/`, every `mod`
+in it resolves to the file it resolves to in the launcher, and their own submodules
+(`browser/…`, `skins/…`, `browser/horizon/…`) resolve as regular modules — the direct `#[path]`
+includes broke once upstream moved those children into same-named folders (`browser/horizon.rs`
+now names its `auto`/`pack` children with `#[path]`, which also fixes the desktop launcher).
+The shared files' `crate::backend` is the launcher's backend (its `version_dir`, `build_dir`,
+`Settings`, `installed`, `CLIENT`…), not the game-side one; on Android its `data_dir`/`game_home`
+answer with the app home the library's Android backend holds. The binary's own game-version and
+home calls stay `horizon_client::backend`. `launcher/src/desktop_seams.rs` keeps a trash folder
+under that home instead of the `trash` crate (which has no Android platform), `account.rs`'s
+`request_to` is `pub(crate)`, `browser.rs` also compiles `java_instance` (plain data),
+`backend::java_game` is desktop-only, and `horizon-android` depends on the launcher's set:
+`chacha20poly1305`, `horizon-platform`, `horizon-release-sign`, `horizon-mod-api-gen`, `toml`,
+`syn`/`quote`/`proc-macro2` (span locations), `semver`, `dirs`, `tar`, `sys-locale`,
+`pulldown-cmark`, `libc` and `zip` 9. The Android profile model is `android_instances` now,
+leaving `instances` to the launcher's model the shared mod browser reads. One merge loss was
+restored: upstream's `NEEDS_PORT`/`needs_port` (the registry's WebAssembly rows) had been dropped
+while the call sites that use them stayed.
+
+WebAssembly mods. Upstream stopped running WASM code mods (their Mods-page rows say "Doesn't run
+any more: needs a native port"). The fork's Android mod-menu glue that has no upstream counterpart
+now compiles to no-ops (`tick_mods`, `mods_frame`, `mods_chat`, `show_mod_output`,
+`route_mod_output`, `mod_snapshot_with`, `reload_dev_mods`, `merge_remote_tree`, `sync_mods`,
+`mod_command`), and the fork's `close_mod_screen(tell)` became `close_wasm_mod_screen` so it no
+longer collides with upstream's no-argument screen close. The runtime is never started, so the
+`.hmod` WASM docs claim (`docs/android-features.md`, `docs/android-direction.md`) are a follow-up
+regression, not restored here.
+
+Other merge repairs: `title_input_active` (debug options over the title), the fork's obsolete
+level-loading branch dropped (the server-thread client shows loading through `remote_overlay`),
+`chat_tree(remote, mods)`, `native_panel`'s `native_id()` as `Option<&str>`, `mob_hit`'s third
+field, `mapped_key(..., raw, source)` and `key_pressed(key, raw)` call sites, `handle_window_event`'s
+`InputOrigin`, `open_chat(draft)`, `place_state(command)`, `player_uuid` for server mods,
+`pad_style` removed (pad glyphs only), `SpritePixels::get()` and the panorama `Arc` in the loading
+screen, the OSK's `Done`/`Complete`/`Previous`/`Next` outputs, `regex` for the Android diagnostics
+report, and the fork's themed touch-button art restored in `horizon-client-render/src/touch.rs`.
+
+Status (2026-11-15, second session). `cargo check -p horizon-android` (aarch64 Android host,
+`CARGO_BUILD_JOBS=1`, no debuginfo, no incremental) finishes with 0 errors; `cargo metadata
+--locked` and `cargo fmt --all --check` are clean; the 17 Python Android tests
+(`python3 -m unittest discover -s tests -p 'test_android*.py'`) and
+`python3 tools/check_public_tree.py` pass. Next: commit and push
+`sync/horizon-main-2026-11-14` to `origin`, dispatch `android-source.yml`
+(`native_checks=true`) and `android-dev.yml` (`profile=fast`, `all_abis=false`), then open the PR
+against `android`. No on-device behaviour is claimed until that CI is green.

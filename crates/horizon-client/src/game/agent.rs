@@ -489,7 +489,6 @@ impl Game<'_> {
             Screen::Win => "win",
             Screen::Mod => "mod",
             Screen::DebugOptions => "debug-options",
-            Screen::Mod => "mod",
             Screen::HudEditor => "hud-editor",
             Screen::Studio => "studio",
         }

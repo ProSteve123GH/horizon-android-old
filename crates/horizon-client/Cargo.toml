@@ -98,6 +98,8 @@ arboard = { version = "3.6.1", default-features = false, features = ["wayland-da
 
 [target.'cfg(target_os = "android")'.dependencies]
 rustix = { version = "1", default-features = false, features = ["std", "fs"] }
+# android/diagnostics.rs redacts tokens and paths from the report it hands the launcher.
+regex = { version = "1", default-features = false, features = ["std", "perf"] }
 
 [target.'cfg(windows)'.dependencies]
 # DirectX 12, where Vulkan has no adapter or device, or by choice (`graphicsApi`, graphics.rs).

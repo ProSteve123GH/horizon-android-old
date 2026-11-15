@@ -101,7 +101,12 @@ impl Options {
     /// The command line, then what it asks of the process: the game folder, the account.
     /// A bad command line is a [`launch_api::UsageError`] (exit code 2, no crash report).
     pub(super) fn read() -> Result<Option<Self>> {
-        let Some(mut o) = Self::parse(std::env::args().skip(1))
+        Self::read_arguments(std::env::args().skip(1).collect())
+    }
+    /// The same for a command line handed in rather than read from the
+    /// process (the Android launcher passes its game its own).
+    pub(super) fn read_arguments(arguments: Vec<String>) -> Result<Option<Self>> {
+        let Some(mut o) = Self::parse(arguments.into_iter())
             .map_err(|e| launch_api::UsageError(e.to_string()))?
         else {
             return Ok(None);

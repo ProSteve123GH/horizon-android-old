@@ -2,7 +2,7 @@
 //! a sunset at the bottom, plates over it only where text needs them, one violet for the main
 //! action, focus and progress, and Bricolage Grotesque (SIL OFL 1.1, `fonts/OFL-BricolageGrotesque.txt`).
 //! Light players get the same look at dawn ([`DAWN`]). The game's menus don't use it.
-use crate::{Blocks, Step, Web, step};
+use crate::{step, Blocks, Step, Web};
 
 /// The UI family (optical size 14: Regular, Medium, SemiBold, Bold) and the display family
 /// (Bold at optical size 72, for page and instance names). Mono stays [`crate::MONO`].

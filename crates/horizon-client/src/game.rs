@@ -309,6 +309,11 @@ use android_bundled::{
 /// The native hook points' version (`game/native_hooks.rs`): a `.hnmod` that names `hooks` above
 /// it can't build on this game (the launcher checks it before sending the mod).
 pub(crate) use native_hooks::NATIVE_HOOKS_API;
+/// The native hooks API this build serves (the launcher checks a bundle's need).
+#[cfg(target_os = "android")]
+pub fn native_hooks_api() -> u32 {
+    NATIVE_HOOKS_API
+}
 mod native_host_bridge;
 mod native_inventories;
 mod native_item_container;
@@ -590,9 +595,8 @@ use launch_options::Options;
 use loading_screen::{
     App, Loading, leave_fullscreen_after, missing_resources, run_event_loop, unclean_start_recovery,
 };
-use loading_window::{
-    build_renderer, loading_frame, loading_renderer, prepare_renderer_textures, start_game,
-};
+use loading_window::{build_renderer, prepare_renderer_textures, start_game};
+pub use loading_window::{loading_frame, loading_renderer};
 pub use machines::native_fluids::NativeFluidTank;
 pub use maps::{NativeMapDecoration, NativeMapInfo};
 pub use native_block_entity_draw::BlockEntityDraw;
@@ -687,13 +691,11 @@ enum Screen {
     /// WinScreen: the end poem and the credits (game/win.rs).
     Win,
     /// A `ui` mod's own screen, or its settings page from Options > Mods
-    /// (game/mods.rs).
+    /// (game/mods.rs); a native mod's own screen is the same variant
+    /// (`native_mod_screen_open`), drawn and given input through the hooks.
     Mod,
     /// DebugOptionsScreen, F3+F6 (game/debug_options.rs).
     DebugOptions,
-    /// A screen of a native mod's own (`native_mod_screen_open`): it draws and
-    /// takes its input through the screen hooks.
-    Mod,
     /// PvP & HUD's widget editor (game/hud_editor.rs).
     HudEditor,
     /// Horizon Studio script screen (`studio_screen_open`): canvas draws
@@ -5915,6 +5917,11 @@ impl Game<'_> {
             [0.0; 2]
         }
     }
+    /// The title remains the no-level sentinel while debug options covers it.
+    /// Only UI dispatch ignores it; world loading and simulation still see it.
+    fn title_input_active(&self) -> bool {
+        self.title.is_some() && self.screen != Screen::DebugOptions
+    }
     fn hud(&mut self, size: [u32; 2]) -> HudBatch {
         #[cfg(target_os = "android")]
         if let Some(batch) = self.smartf3_hud(size) {
@@ -6061,14 +6068,6 @@ impl Game<'_> {
         // The ToastManager draws over every screen: a server's packs
         // download while the connection screen shows.
         if self.remote_overlay(&mut batch) {
-            horizon_client::hud::inset_overlay(&mut batch, margins, |b| {
-                self.draw_pack_toasts(b, false);
-                self.draw_music_toast(b, false);
-            });
-            return batch;
-        }
-        if let Some(reason) = self.loading_reason() {
-            self.draw_level_loading(&mut batch, reason);
             horizon_client::hud::inset_overlay(&mut batch, margins, |b| {
                 self.draw_pack_toasts(b, false);
                 self.draw_music_toast(b, false);
@@ -6407,7 +6406,6 @@ impl Game<'_> {
                 self.draw_pad_menu_guide(&mut batch, from);
             }
             Screen::Chat => self.draw_chat_screen(&mut batch),
-            Screen::Mod => self.draw_mod_screen(&mut batch),
             Screen::Playing | Screen::Options | Screen::Win => {}
         }
         self.fire_screen_render_post(&mut batch);
@@ -9441,16 +9439,6 @@ impl Game<'_> {
         // LevelExtractor.extractBlockOutline: model translucency controls draw order;
         // no outline when an entity is targeted (Minecraft.hitResult an EntityHitResult).
         let mut outline_after_terrain = false;
-        let touch_target_visible = self.interaction_crosshair() || {
-            #[cfg(target_os = "android")]
-            {
-                self.pad.touch.aim.or(self.pad.touch_aim).is_some()
-            }
-            #[cfg(not(target_os = "android"))]
-            {
-                true
-            }
-        };
         // GameRenderer.shouldRenderBlockOutline: not with the HUD hidden (F1), and only for a
         // player who may build. Adventure players only get one with a CAN_BREAK or
         // CAN_PLACE_ON item matching the block, and spectators with a menu block; Horizon
@@ -11134,7 +11122,7 @@ impl Game<'_> {
                     if event.state == ElementState::Pressed
                         && let PhysicalKey::Code(key) = event.physical_key
                     {
-                        self.key_pressed(key)?;
+                        self.key_pressed(key, key)?;
                     }
                 }
                 WindowEvent::KeyboardInput { event, .. }
@@ -12889,7 +12877,7 @@ fn write_level_for_role(
 }
 
 #[cfg(target_os = "android")]
-pub(crate) fn android_reset_bundled_mods() {
+pub fn android_reset_bundled_mods() {
     android_bundled::reset();
 }
 /// A landing's block game event, once the write it belongs to is applied.
@@ -12969,7 +12957,7 @@ mod vibration_source_tests;
 mod vibration_tests;
 
 #[cfg(target_os = "android")]
-pub(crate) use resource_loader::android_game;
+pub use resource_loader::android_game;
 /// Game API selection stays separate from the installer's recovery UI.
 pub(crate) fn rendering_api(
     settings: &horizon_client::settings::Settings,

@@ -5281,3 +5281,13 @@ mod merchant_packet_tests {
         assert_eq!(content.carried.as_ref().unwrap().count, 3);
     }
 }
+
+impl Game<'_> {
+    /// A chat line the host typed, for the guests.
+    pub(super) fn lan_host_chat(&mut self, message: &str) {
+        let name = self.player_display_name().plain();
+        if let Some(host) = &self.lan {
+            host.hub.chat(&name, message);
+        }
+    }
+}

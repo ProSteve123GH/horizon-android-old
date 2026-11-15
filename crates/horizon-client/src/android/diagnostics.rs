@@ -88,7 +88,7 @@ pub fn initialize(home: &Path, device: Value) -> io::Result<()> {
         }
     }
     let session = json!({"schema":1,"pid":std::process::id(),"start_ms":timestamp(),
-        "version":crate::backend::VERSION,"source_commit":option_env!("HORIZON_ANDROID_BUILD_COMMIT"),
+        "version":horizon_client::backend::VERSION,"source_commit":option_env!("HORIZON_ANDROID_BUILD_COMMIT"),
         "source_dirty":option_env!("HORIZON_ANDROID_BUILD_DIRTY"),"abi":std::env::consts::ARCH,
         "phase":"native_start","clean_exit":false,"device":device});
     atomic_json(&dir.join("current-session.json"), &session)?;
@@ -387,7 +387,7 @@ pub fn export(home: &Path) -> Result<PathBuf, String> {
             included.push(name);
         }
         archive.start_file("manifest.json", options)?;
-        archive.write_all(&serde_json::to_vec_pretty(&json!({"schema":1,"version":crate::backend::VERSION,"source_commit":option_env!("HORIZON_ANDROID_BUILD_COMMIT"),"included":included,"files":details,"omitted":omitted,"note":"Logs are bounded tails with best-effort redaction. Review before sharing. Binary Android tombstones contribute a bounded crashed-thread summary; original memory/register dumps are excluded and remain private on device. No account files, worlds or configuration are included."}))?)?;
+        archive.write_all(&serde_json::to_vec_pretty(&json!({"schema":1,"version":horizon_client::backend::VERSION,"source_commit":option_env!("HORIZON_ANDROID_BUILD_COMMIT"),"included":included,"files":details,"omitted":omitted,"note":"Logs are bounded tails with best-effort redaction. Review before sharing. Binary Android tombstones contribute a bounded crashed-thread summary; original memory/register dumps are excluded and remain private on device. No account files, worlds or configuration are included."}))?)?;
         archive.finish()?;
         fs::rename(&stage, &path)?;
         Ok(())

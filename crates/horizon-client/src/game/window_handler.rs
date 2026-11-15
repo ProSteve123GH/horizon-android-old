@@ -333,7 +333,7 @@ impl Game<'_> {
                 if self.pad.touch.chat_requested {
                     self.audio.play_button_click();
                     self.pad.touch.clear();
-                    if let Err(error) = self.key_pressed(KeyCode::KeyT) {
+                    if let Err(error) = self.key_pressed(KeyCode::KeyT, KeyCode::KeyT) {
                         log::warn!("Touch chat: {error}");
                     }
                     self.android_show_keyboard();
@@ -350,7 +350,7 @@ impl Game<'_> {
                     }
                 } else if std::mem::take(&mut self.pad.touch.perspective_requested) {
                     self.audio.play_button_click();
-                    if let Err(error) = self.key_pressed(KeyCode::F5) {
+                    if let Err(error) = self.key_pressed(KeyCode::F5, KeyCode::F5) {
                         log::warn!("Touch perspective: {error}");
                     }
                 }
@@ -373,6 +373,7 @@ impl Game<'_> {
                         device_id: touch.device_id,
                         position: touch.location,
                     },
+                    input_trace::InputOrigin::User,
                 );
                 if touch.phase != TouchPhase::Moved {
                     self.handle_window_event(
@@ -387,6 +388,7 @@ impl Game<'_> {
                                 ElementState::Released
                             },
                         },
+                        input_trace::InputOrigin::User,
                     );
                 }
                 if touch.phase == TouchPhase::Ended {

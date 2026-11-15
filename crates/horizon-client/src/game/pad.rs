@@ -513,11 +513,11 @@ impl Game<'_> {
             self.pad_connection_notice(change);
         }
         self.ui.options.pad_glyphs = Glyphs::of(&self.settings.controller, self.pad.style);
-        self.ui.options.pad_style = self.settings.controller.glyphs.resolve(self.pad.style);
         self.ui.options.pad_driving = self.pad.in_use && self.pad_focus_mode();
+        #[cfg_attr(target_os = "android", allow(unused_mut))]
         let mut state = hardware.merge(&self.pad.injected);
         #[cfg(target_os = "android")]
-        let state = {
+        let mut state = {
             self.pad.touch.shield_available = self.touch_shield_available();
             // #71: a crouch toggled on land would keep sinking, descending or
             // dismounting once the player swims, flies or rides; there the
@@ -798,7 +798,7 @@ impl Game<'_> {
     }
 
     #[cfg(target_os = "android")]
-    pub(super) fn touch_entity_accepts_use(&self) -> bool {
+    pub(super) fn touch_entity_accepts_use(&mut self) -> bool {
         if [
             self.boat_hit().map(|h| h.1),
             self.cart_hit().map(|h| h.1),
@@ -812,15 +812,15 @@ impl Game<'_> {
             return true;
         }
         self.mob_hit()
-            .filter(|(_, distance)| self.before_block(*distance))
-            .is_some_and(|(i, _)| {
+            .filter(|(_, distance, _)| self.before_block(*distance))
+            .is_some_and(|(i, _, _)| {
                 self.remote_mob_takes(i, horizon_client::first_person::Hand::Main)
                     || self.remote_mob_takes(i, horizon_client::first_person::Hand::Off)
             })
     }
 
     #[cfg(target_os = "android")]
-    pub(super) fn touch_context_use(&self) -> bool {
+    pub(super) fn touch_context_use(&mut self) -> bool {
         if self.touch_entity_accepts_use()
             || [
                 self.boat_hit().map(|h| h.1),

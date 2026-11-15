@@ -43,7 +43,7 @@ pub fn start(home: &Path, metadata: Value) -> horizon_client::Result<()> {
     let (sender, receiver) = mpsc::sync_channel::<Value>(8);
     let worker = std::thread::Builder::new().name("Performance report".into()).spawn(move || {
         let mut file = std::io::BufWriter::new(file);
-        let header = json!({"type":"header", "schema":1, "version":crate::backend::VERSION,
+        let header = json!({"type":"header", "schema":1, "version":horizon_client::backend::VERSION,
             "max_seconds":MAX_SECONDS, "metadata":metadata,
             "timing_notes":"CPU spans are nested and must not be summed. Worker totals span concurrent jobs. GPU timestamps are delayed and may be unavailable. Wall minus thread CPU includes waiting and scheduling; it is not proof of lock contention."});
         let mut bytes = write_line(&mut file, &header)?;

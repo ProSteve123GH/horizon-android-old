@@ -916,6 +916,10 @@ pub fn links() -> Links {
 
 /// The launcher's data folder; `HORIZON_LAUNCHER_HOME` overrides it (for tests and scripts).
 pub fn data_dir() -> PathBuf {
+    // In the Android app the launcher shares the game's app home, held by the
+    // library's Android backend; there is no desktop data folder to use.
+    #[cfg(target_os = "android")]
+    return horizon_client::backend::data_dir();
     if let Some(home) = std::env::var_os("HORIZON_LAUNCHER_HOME").filter(|h| !h.is_empty()) {
         return PathBuf::from(home);
     }
@@ -2152,6 +2156,7 @@ pub fn download_version_for_owner(
 /// (the instance's own, else one found here, else Mojang's, downloaded), and the game in the
 /// instance's folder. The caller wraps it (`launch::wrap`) and never logs it: it holds the token.
 /// A Java instance's game, ready to start; `server` (`host[:port]`) is joined once it has.
+#[cfg(not(target_os = "android"))]
 pub fn java_game(
     instance: &crate::instances::Instance,
     server: Option<&str>,
@@ -2647,6 +2652,8 @@ pub fn prepare_in_process(options: &prepare::Options, log: &dyn Fn(String)) -> R
 /// data folder (~/.local/share/horizon on Linux, as the release folders' horizon.sh uses). It is
 /// never inside a version folder, so installing, updating or removing a version keeps the saves.
 pub fn game_home() -> PathBuf {
+    #[cfg(target_os = "android")]
+    return horizon_client::backend::game_home();
     if let Some(home) = std::env::var_os("HORIZON_HOME").filter(|h| !h.is_empty()) {
         return PathBuf::from(home);
     }

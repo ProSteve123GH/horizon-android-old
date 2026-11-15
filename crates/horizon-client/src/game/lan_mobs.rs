@@ -683,3 +683,21 @@ mod tests {
         assert_eq!(player_for(&golem, None, &guests, Some(7)), Some(8));
     }
 }
+
+impl Game<'_> {
+    /// How far the guest under the crosshair is, within reach, as the game's
+    /// own hit tests find it (`Minecraft.crosshairPickEntity`); the F3 target
+    /// readout names `minecraft:player` from it.
+    #[cfg(target_os = "android")]
+    pub(super) fn lan_guest_hit(&self) -> Option<f64> {
+        let host = self.lan.as_ref()?;
+        let (eye, dir) = self.aim()?;
+        let reach = self.entity_reach;
+        host.hub
+            .guests
+            .iter()
+            .filter(|g| host.hub.here(g) && g.loaded && !g.dead && !g.spectator())
+            .filter_map(|g| super::ray_box(eye, dir, reach, guest_bounds(g)))
+            .min_by(f64::total_cmp)
+    }
+}

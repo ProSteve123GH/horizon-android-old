@@ -109,7 +109,7 @@ pub(super) fn build_renderer(
 /// The loading screen's renderer: one atlas (the boot screen's until the
 /// pack's GUI atlas is ready) over one opaque white block-sprite layer, an
 /// empty border texture and the title panorama once the menu bundle is ready.
-pub(super) fn loading_renderer(
+pub fn loading_renderer(
     window: Arc<Window>,
     offscreen: bool,
     atlas: Option<&horizon_client::hud::HudAtlas>,
@@ -171,7 +171,7 @@ pub(super) fn loading_renderer(
     Ok(renderer)
 }
 
-pub(super) fn loading_frame(hud: &HudBatch) -> Frame<'_> {
+pub fn loading_frame(hud: &HudBatch) -> Frame<'_> {
     Frame {
         weather: &[],
         weather_time: horizon_client::weather::Time::new(0, 0.0),

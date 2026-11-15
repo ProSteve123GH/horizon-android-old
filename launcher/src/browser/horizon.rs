@@ -424,6 +424,7 @@ fn version_of(
         blocked: index
             .revoked(&p.id, &v.file.sha256)
             .map(|r| format!("taken down: {}", r.reason))
+            .or_else(|| needs_port(v).then(|| NEEDS_PORT.to_string()))
             .or_else(|| needs_newer(v, level).then(|| NEEDS_NEWER.to_string())),
     }
 }
@@ -1231,6 +1232,17 @@ fn newest<'a>(
 }
 
 const NEEDS_NEWER: &str = "needs a newer Horizon than the game you play";
+const NEEDS_PORT: &str = "needs a native port: Horizon doesn't run WebAssembly mods any more";
+
+/// Whether version `v` is a WebAssembly mod with code: a `.hmod` that may do more than add
+/// content. The registry keeps it for the modpacks that need it; a modpack installs it with its
+/// code left out (the game doesn't run it), and the browser neither lists nor installs it.
+pub fn needs_port(v: &index::Version) -> bool {
+    v.file.name.ends_with(".hmod")
+        && v.capabilities
+            .iter()
+            .any(|c| *c != horizon_mods::Capability::Registries)
+}
 
 /// Whether version `v` calls mod API functions a game serving `level` doesn't have.
 fn needs_newer(v: &index::Version, level: Option<u32>) -> bool {
@@ -1356,7 +1368,10 @@ fn install_version_guarded(
         page: project.page.clone(),
         dependency: false,
         verdict: Some(trust_label(trust).into()),
-        skipped: Vec::new(),
+        skipped: match needs_port(v) {
+            true => vec![format!("its code ({NEEDS_PORT})")],
+            false => Vec::new(),
+        },
         namespaces: Vec::new(),
     };
     list.entries.retain(|e| !ours(e));
@@ -1455,7 +1470,9 @@ pub fn before_play(home: &Path) {
     });
 }
 
+#[path = "horizon/auto.rs"]
 pub mod auto;
+#[path = "horizon/pack.rs"]
 pub mod pack;
 #[cfg(test)]
 #[path = "horizon/tests.rs"]

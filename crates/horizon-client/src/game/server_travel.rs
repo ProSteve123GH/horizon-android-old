@@ -206,6 +206,7 @@ impl Game<'_> {
             vehicle: None,
             gateway: None,
             respawn: None,
+            consume: false,
             world_spawn: false,
             finder: None,
             placed: false,
