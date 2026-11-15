@@ -2664,6 +2664,11 @@ impl Renderer {
             .then(crate::android_runtime::graphics_startup::begin)
             .flatten();
 
+        let from_previous = previous.is_some();
+        let reuse_pre = previous
+            .as_ref()
+            .map_or_else(Default::default, |r| r.reuse.clone());
+        let configured_present_mode = previous.as_ref().map(|r| r.config.present_mode);
         let Opened {
             instance,
             surface,
@@ -2676,7 +2681,7 @@ impl Renderer {
             // Reload resources on the same device; replacing live Vulkan
             // devices can invalidate the driver's swapchain state on the same
             // window.
-            Some(renderer) => {
+            Some(mut renderer) => {
                 describe_adapter(&renderer.adapter);
                 check_layers(&renderer.adapter, layers)?;
                 Opened {
@@ -2724,14 +2729,14 @@ impl Renderer {
                 &device_lost,
                 surface.get_capabilities(&adapter),
                 size,
-                previous.map(|renderer| renderer.config.present_mode),
-                previous.is_none(),
+                configured_present_mode,
+                !from_previous,
             )?),
             (None, _) => None,
         };
         let (config, present_modes, hdr_output) = if let Some((config, caps)) = configured {
             let hdr_output = hdr::output(&caps);
-            if previous.is_none() {
+            if !from_previous {
                 log::info!(
                     "Horizon renderer: HDR output {}",
                     hdr_output.map_or("not offered by this display", hdr::Output::name)
@@ -2756,7 +2761,7 @@ impl Renderer {
             let hdr_output = hdr::offscreen_output();
             // Only where one is named: splitscreen's views draw offscreen too.
             if let Some(output) = hdr_output
-                && previous.is_none()
+                && !from_previous
             {
                 log::info!(
                     "Horizon renderer: HDR output {} offscreen (HORIZON_HDR_OUTPUT)",
@@ -2795,12 +2800,12 @@ impl Renderer {
         let (frame_format, hud_coverage, overlay_format) =
             (frame.format, frame.hud_layer, frame.overlay_format);
         let linear_light = frame.linear_light;
-        if previous.is_none() {
+        if !from_previous {
             startup_step(format_args!("creating the pipelines"));
         }
         // A renderer on the same device takes the previous one's shader
         // modules, layouts and pipelines where they come out the same.
-        let reuse = previous.map_or_else(Default::default, |r| r.reuse.clone());
+        let reuse = reuse_pre;
         let generation = reuse.begin();
         let kept = reuse.on(&device);
         let pipelines_step = crate::spans::startup::step("renderer.pipelines_textures");
@@ -5142,13 +5147,13 @@ impl Renderer {
         let panorama = panorama::Panorama::new(&device, frame_format, panorama_faces);
         drop(pipelines_step);
         reuse.finish(generation);
-        if previous.is_some() {
+        if from_previous {
             log::info!(
                 "Horizon renderer: rebuilt on the same device ({} shader modules, layouts and pipelines kept)",
                 reuse.len()
             );
         }
-        if previous.is_none() {
+        if !from_previous {
             startup_step(format_args!(
                 "pipelines ready (multi-draw {}, occlusion culling {}, GPU culling {}, GPU timer {})",
                 on_off(multi_draw),
@@ -5175,7 +5180,7 @@ impl Renderer {
             offscreen,
             in_flight: std::collections::VecDeque::new(),
             paced_elsewhere: false,
-            first_frame: if previous.is_none() {
+            first_frame: if !from_previous {
                 FirstFrame::Acquire
             } else {
                 FirstFrame::Drawn
