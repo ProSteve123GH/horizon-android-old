@@ -235,3 +235,57 @@ Amended into `sync/horizon-main-2026-11-14` with Android-specific messages prese
 - `tools/test_android_gpu.py`: overlay.rs resolved from the repo root (path was a hard-coded Windows dev path).
 - `tools/test_android_performance.py`: harness stub bundles `block_entity_render.rs` locally; harness Cargo.toml gains `getrandom` and `horizon-server-files`.
 - `tools/test_android_appearance.py`: `skins` module path moved to `crates/horizon-client-render/src/skins.rs` (upstream refactor).
+
+### Post-CI-fix followups 2 (2026-11-15, through commit 3d2df5ed76)
+
+- `crates/horizon-client-render/src/gfx.rs` (draw_frame rewrite, commit db5801ce96):
+  the first deep merge broke the `pub async fn new_with_context` / `Self::draw_frame`
+  boundaries — duplicate definitions, mismatched signatures, blocking identifiers
+  (`pass`, `cutout_end`, `settings` used at the wrong scope). The fix re-cut
+  `Self::draw_frame` to upstream's body, and re-attached the Android-specific
+  pieces (gpu_timer, frame_timing begin_world/screen/begin_prepare/end, the
+  android opaque/cutout pipeline split, `terrain_pass_draws`, instance STORAGE
+  usage for Adreno where possible) on the fork paths. Rustfmt clean.
+- Remaining rustc errors across the crate (12, down from 335) tracked in a single commit each.
+- Harness test dep fix-outs: `tools/test_android_servers.py`,
+  `tools/test_android_worlds.py`, `tools/test_android_content.py` brought up to date
+  with `horizon-platform`'s public facade (`horizon_platform::world::nbt` instead of
+  `horizon_world::nbt`) and the new `rustix` dependency for Android document_store's
+  flock/renameat_with calls.
+- `crates/horizon-client-render/src/touch/custom.rs`: duplicate `key_events` removed.
+- `crates/horizon-client-render/src/hud_layout.rs`: `opaque()` inlined (called through `Option::map_or`).
+- `crates/horizon-client-render/src/options_ui.rs`: `Act::PadKey`/`ResetPadKey`/`ResetPadKeys` not bound to any widget; match arms added as no-ops to satisfy non-exhaustive match lint, with the variants retained for the fork's plan to wire them.
+- `crates/horizon-client-render/src/graphics.rs`: `Graphics::set_key` added as a no-op returning false (the corresponding extras check lives in extras.rs; the binding flow stays correct).
+
+### Status
+
+- CI run 43685440996 (source checks) showed 1 failing step: `tools/test_android_worlds.py`. That harness line was fixed at 3d2df5ed76.
+- CI run 43685443418 (dev APK fast profile) failed with 12 errors, all addressed at commit dafd836c6e / in this update.
+- Local tablet still cannot run `cargo check`; rustfmt is the only local compile gate.
+
+### Post-CI-fix followups 2 (2026-11-15, through commit dafd836c6e)
+
+- `crates/horizon-client-render/src/gfx.rs` (draw_frame rewrite, commit db5801ce96):
+  the first deep merge broke the `pub async fn new_with_context` / `Self::draw_frame`
+  boundaries — duplicate definitions, mismatched signatures, blocking identifiers
+  (`pass`, `cutout_end`, `settings` used at the wrong scope). The fix re-cut
+  `Self::draw_frame` to upstream's body, and re-attached the Android-specific
+  pieces (gpu_timer, frame_timing begin_world/screen/begin_prepare/end, the
+  android opaque/cutout pipeline split, `terrain_pass_draws`, instance STORAGE
+  usage for Adreno where possible) on the fork paths. Rustfmt clean.
+- Remaining rustc errors across the crate (12, down from 335) fixed in db5801ce96..dafd836c6e.
+- Harness test dep fix-outs: `tools/test_android_servers.py`,
+  `tools/test_android_worlds.py`, `tools/test_android_content.py` brought up to date
+  with `horizon-platform`'s public facade (`horizon_platform::world::nbt` instead of
+  `horizon_world::nbt`) and the new `rustix` dependency for Android document_store's
+  flock/renameat_with calls.
+- `crates/horizon-client-render/src/touch/custom.rs`: duplicate `key_events` removed.
+- `crates/horizon-client-render/src/hud_layout.rs`: `opaque()` inlined (called through `Option::map_or`).
+- `crates/horizon-client-render/src/options_ui.rs`: `Act::PadKey`/`ResetPadKey`/`ResetPadKeys` not bound to any widget; match arms added as no-ops with the variants retained.
+- `crates/horizon-client-render/src/graphics.rs`: `Graphics::set_key` no-op returning false.
+
+### Status
+
+- CI run 43685440996 (source checks) showed 1 failing step: `tools/test_android_worlds.py`. That harness line was fixed at 3d2df5ed76.
+- CI run 43685443418 (dev APK fast profile) failed with 12 errors, all addressed at commit dafd836c6e / in this update.
+- Local tablet still cannot run `cargo check`; rustfmt is the only local compile gate.
