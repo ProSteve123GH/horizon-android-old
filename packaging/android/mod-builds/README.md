@@ -27,7 +27,10 @@ while it compiles, can read only that repository's contents, never the game's.
    ```
 
    The launcher sends its own commit for builds made by `tools/android_build.py`, so a dev build
-   does not need an entry; this is the fallback for a launcher that cannot name one.
+   does not need an entry; this is the fallback for a launcher that cannot name one. This fork's
+   signed-APK workflow can keep dev entries and the base cache in step automatically: see
+   [Automatic base preparation](#automatic-base-preparation) below. A release build should write its
+   own `0.7.7` entry (or call the same script with `--version 0.7.7`).
 
 ## 2. Make the clean cache (once per commit)
 
@@ -41,6 +44,27 @@ Every player's build starts from a cache of a clean build of the game at one com
 
 Run it again for a new game commit. `build.yml`'s cache key is the commit the launcher was built
 from (a dev build's short commit is resolved to the full one first).
+
+### Automatic base preparation
+
+The signed-APK workflow in **this** repository (`.github/workflows/android-dev.yml`) prepares the
+base after every successful dev APK, so a tester does not have to dispatch it by hand:
+
+1. It reads the APK's version name (`0.7.7-dev.<run>.<commit>`) and upserts
+   `versions.json[version] = <full commit>`.
+2. It checks this repository's Actions caches for `base-<full commit>`.
+3. If the cache is absent, it dispatches **base** on `main` with that version and commit.
+
+To enable it, create a fine-grained token on **this builds repository** with
+**Contents: read and write** and **Actions: read and write**, and add it to the game repository
+(`ProSteve123GH/horizon-android-old`) as the `MOD_BUILDS_TOKEN` Actions secret. The token is used
+only by the workflow; it is never shipped in the APK. If the secret is absent, the job prints a
+warning and the APK still builds.
+
+Set the game repository's `MOD_BUILDS_REPO` Actions variable if the builds repository is not
+`ProSteve123GH/horizon-mod-builds`. The release's `0.7.7` entry is not touched by a dev build; a
+release workflow should call the same `packaging/android/mod_builds_announce.py` with
+`--version 0.7.7`.
 
 ## 3. Put a gateway in front
 
@@ -74,7 +98,8 @@ be public.
   random name, compile in a sandbox with no network, and the library goes back as a release asset
   (`build-<ask>`) the phone downloads — a public asset needs no token, where a run's artifact does.
 - `.github/workflows/base.yml` makes the clean build cache for one commit of the game. It only runs
-  trusted code, and it is the only job that writes the cache.
+  trusted code, and it is the only job that writes the cache. The game's APK workflow can dispatch
+  it automatically; see [Automatic base preparation](#automatic-base-preparation).
 - `.github/workflows/cleanup.yml` deletes build releases older than four days; the gateway forgets a
   job after three, so a phone that asks again builds again anyway.
 - `scripts/prepare.sh` fetches the commit, its build scripts and the mod sandbox.

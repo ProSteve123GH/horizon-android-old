@@ -193,6 +193,13 @@ downloads, and tells the gateway. A `failed` job tells the gateway when the run 
 `cleanup` deletes releases older than four days. A mod's code runs while it compiles, so the token
 only reads that repository, and the player's build never writes the base cache.
 
+This fork's signed-APK workflow keeps that repository's fallback current: when the
+`MOD_BUILDS_TOKEN` secret is set, each successful dev APK adds its version label and full commit to
+`versions.json`, then dispatches **base** for the commit unless `base-<commit>` is already cached.
+The token needs **Contents: read and write** and **Actions: read and write** on the builds
+repository. Setup and the manual fallback are in
+[`packaging/android/mod-builds/README.md`](../packaging/android/mod-builds/README.md#automatic-base-preparation).
+
 ## Safety
 
 A native mod is native code with the app's rights on the phone: it is not sandboxed there. Import only

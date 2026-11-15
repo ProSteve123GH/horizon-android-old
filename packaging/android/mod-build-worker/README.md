@@ -34,7 +34,8 @@ without a token, and the Worker never reads the game repository.
 5. Make the clean build cache once: **Actions → base → Run workflow**, `version` = the game version
    (`0.7.7`), `commit` = the release's full commit, or empty to use `versions.json`. It takes about
    15 minutes. Every player's build starts from this cache; without it the build job stops on the
-   cache restore.
+   cache restore. This fork's signed-APK workflow can do this and update `versions.json` after each
+   dev APK when `MOD_BUILDS_TOKEN` is set; see `packaging/android/mod-builds/README.md`.
 6. Make a fine-grained GitHub token for **that repository only**, with **Actions: write**. Nothing
    else is needed: the workflow reads the builds repository with its own token.
 

@@ -424,3 +424,17 @@ which the launcher displayed. `HorizonActivity` is now `launchMode="singleTask"`
 the paused game back instead of building a second event loop; it also absorbs the configuration
 changes that used to recreate the activity. `tests/test_android_game_activity.py` pins the launch
 mode. The 18 Android unit tests and `tools/check_public_tree.py` pass.
+
+### Automatic builds-repo base (2026-11-16)
+
+The signed-APK workflow now prepares the native-mod build cache after a successful APK, instead of
+a maintainer dispatching it by hand. `prepare-base` reads the APK's own version name from
+`aapt2`, upserts `versions.json[version] = <full commit>` in the builds repository, checks for a
+`base-<commit>` Actions cache, and dispatches `base.yml` only when that cache is absent. A dev APK
+writes its `0.7.7-dev.<run>.<commit>` key and leaves the release's `0.7.7` entry alone. The job is
+skipped with a warning when the `MOD_BUILDS_TOKEN` secret (Contents and Actions: read/write on the
+builds repository) is missing, so the APK still builds; the repository variable `MOD_BUILDS_REPO`
+can name another builds repository. The workflow copy `packaging/android/dev-builds.yml` stays
+byte-identical. `packaging/android/mod_builds_announce.py` is tested by
+`tests/test_android_mod_builds_announce.py` (mapping upsert, exact cache key), and the Android
+suite now has 21 tests.

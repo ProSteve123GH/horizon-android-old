@@ -43,6 +43,8 @@ concurrency:
 jobs:
   build:
     name: Signed dev APK · ${{ matrix.abi }} · ${{ inputs.profile || 'release' }} profile
+    outputs:
+      version_name: ${{ steps.collect.outputs.version_name }}
     # Pull requests never receive the maintainer's signing secret. Branch builds
     # and dispatches do; an absent secret falls back to a cached dev key.
     if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/android' || startsWith(github.ref, 'refs/heads/dev/android-') || startsWith(github.ref, 'refs/heads/android-dev')
@@ -222,14 +224,14 @@ jobs:
             --dev-version-code "$((1000 + GITHUB_RUN_NUMBER))"
 
       - name: Collect the signed APK, SHA-256 checksum and BUILD.json
+        id: collect
         env:
           ABI: ${{ matrix.abi }}
           SIGNING: ${{ steps.signing.outputs.source }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import hashlib, json, os, shutil
-          from datetime import datetime, timezone
+          import hashlib, os, shutil
           from pathlib import Path
 
           out = Path('dist')
@@ -242,12 +244,32 @@ jobs:
           (out / 'SHA256SUMS.txt').write_text(f'{digest}  {name}\n')
           for source, dest in [('LICENSE', 'LICENSE.txt'), ('THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_NOTICES.md')]:
               shutil.copyfile(source, out / dest)
+          PY
+          # Read the APK's own version name; the builds-repo automation keys versions.json by it.
+          badging="$("$ANDROID_HOME/build-tools/${BUILD_TOOLS_VERSION}/aapt2" dump badging "dist/$(ls dist | grep '\.apk$')")"
+          version_name="$(printf '%s\n' "$badging" | sed -n "s/^package: name='[^']*' versionCode='[^']*' versionName='\([^']*\)'.*/\1/p")"
+          if [ -z "$version_name" ]; then
+            echo "Cannot read the APK version name" >&2
+            exit 1
+          fi
+          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
+          export VERSION_NAME="$version_name"
+          python3 - <<'PY'
+          import hashlib, json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          out = Path('dist')
+          sha, abi = os.environ['GITHUB_SHA'], os.environ['ABI']
+          apk = next(out.glob('*.apk'))
+          digest = hashlib.sha256(apk.read_bytes()).hexdigest()
           (out / 'BUILD.json').write_text(json.dumps({
               'commit': sha,
               'branch': os.environ['GITHUB_REF_NAME'],
               'abi': abi,
               'profile': os.environ['PROFILE'],
               'package': 'dev.horizon.android.dev',
+              'version_name': os.environ['VERSION_NAME'],
               'version_code': 1000 + int(os.environ['GITHUB_RUN_NUMBER']),
               'experimental': True,
               'signing': os.environ['SIGNING'],
@@ -257,15 +279,13 @@ jobs:
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
               summary.write(
                   f'### Dev APK: {abi}\n\n'
-                  f'Commit: `{sha[:12]}` on `{os.environ["GITHUB_REF_NAME"]}`. '
+                  f'Version: `{os.environ["VERSION_NAME"]}`. Commit: `{sha[:12]}` on `{os.environ["GITHUB_REF_NAME"]}`. '
                   f'Profile: `{os.environ["PROFILE"]}`. Signing: {os.environ["SIGNING"]}.\n\n'
                   f'SHA-256: `{digest}`\n\n'
                   'Download the APK artifact below. It installs separately from the release app '
                   'as `dev.horizon.android.dev`; worlds and accounts are not copied automatically.\n')
           PY
-          # Convert the version code to the exact APK identity for the log.
-          "$ANDROID_HOME/build-tools/${BUILD_TOOLS_VERSION}/aapt2" dump badging \
-            "dist/$(ls dist | grep '\.apk$')" | head -3
+          printf '%s\n' "$badging" | head -3
 
       - name: Upload the signed Horizon Android dev APK artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -310,3 +330,46 @@ jobs:
         run: |
           rm -f .local/android/debug.keystore
           rm -rf .local/dev-signing
+
+  prepare-base:
+    name: Point the builds repo at this APK and prepare its base
+    needs: build
+    # The fork's own builds repository. A fork without the token skips this job; see
+    # packaging/android/mod-builds/README.md#automatic-base-preparation.
+    if: github.repository == 'ProSteve123GH/horizon-android-old'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          persist-credentials: false
+
+      - name: Check the builds-repo token
+        id: token
+        env:
+          TOKEN: ${{ secrets.MOD_BUILDS_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::warning::MOD_BUILDS_TOKEN is not set; versions.json and base-<commit> were not prepared. See packaging/android/mod-builds/README.md#automatic-base-preparation."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update versions.json and dispatch the base build
+        if: steps.token.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.MOD_BUILDS_TOKEN }}
+          MOD_BUILDS_REPO: ${{ vars.MOD_BUILDS_REPO }}
+          VERSION_NAME: ${{ needs.build.outputs.version_name }}
+        run: |
+          if [ -z "$VERSION_NAME" ]; then
+            echo "The build did not report its APK version name." >&2
+            exit 1
+          fi
+          python3 packaging/android/mod_builds_announce.py \
+            --repo "${MOD_BUILDS_REPO:-ProSteve123GH/horizon-mod-builds}" \
+            --version "$VERSION_NAME" \
+            --commit "$GITHUB_SHA"
