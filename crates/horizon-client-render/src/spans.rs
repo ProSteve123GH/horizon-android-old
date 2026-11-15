@@ -57,7 +57,15 @@ pub fn job<T>(name: &'static str, f: impl FnOnce() -> T) -> T {
     } else {
         "worker"
     };
-    collect(role, Span { name, ms, cpu_ms, depth: 0 });
+    collect(
+        role,
+        Span {
+            name,
+            ms,
+            cpu_ms,
+            depth: 0,
+        },
+    );
     value
 }
 thread_local! {
