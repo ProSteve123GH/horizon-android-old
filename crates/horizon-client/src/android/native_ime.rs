@@ -32,7 +32,6 @@ enum Command {
     Poll,
     Capture(bool),
     Bounds,
-    ImportDocument,
     Screen(bool, bool),
 }
 struct Ui {
@@ -325,50 +324,6 @@ impl Ui {
                     log::warn!("Android screen preferences: {error}");
                 }
                 self.enqueue(Command::Bounds);
-            }
-            Command::ImportDocument => {
-                let result = (|| -> jni::errors::Result<()> {
-                    let action =
-                        JObject::from(env.new_string("android.intent.action.OPEN_DOCUMENT")?);
-                    let intent = env.new_object(
-                        "android/content/Intent",
-                        "(Ljava/lang/String;)V",
-                        &[JValue::Object(&action)],
-                    )?;
-                    let category =
-                        JObject::from(env.new_string("android.intent.category.OPENABLE")?);
-                    env.call_method(
-                        &intent,
-                        "addCategory",
-                        "(Ljava/lang/String;)Landroid/content/Intent;",
-                        &[JValue::Object(&category)],
-                    )?;
-                    let mime = JObject::from(env.new_string("*/*")?);
-                    env.call_method(
-                        &intent,
-                        "setType",
-                        "(Ljava/lang/String;)Landroid/content/Intent;",
-                        &[JValue::Object(&mime)],
-                    )?;
-                    env.call_method(
-                        &intent,
-                        "addFlags",
-                        "(I)Landroid/content/Intent;",
-                        &[JValue::Int(1)],
-                    )?;
-                    env.call_method(
-                        &self.activity,
-                        "startActivityForResult",
-                        "(Landroid/content/Intent;I)V",
-                        &[JValue::Object(&intent), JValue::Int(4101)],
-                    )?;
-                    Ok(())
-                })();
-                if let Err(error) = result {
-                    let _ = env.exception_clear();
-                    log::warn!("Document picker: {error}");
-                    crate::documents::picker_failed("No Android document picker is available");
-                }
             }
             Command::Show(text, secret) => {
                 env.call_method(
@@ -715,14 +670,6 @@ pub fn viewport_bottom() -> Option<u32> {
             .round() as u32
     })
 }
-pub fn pick_document() -> bool {
-    let Some(ui) = UI.get().filter(|ui| !ui.failed.load(Ordering::Acquire)) else {
-        return false;
-    };
-    ui.enqueue(Command::ImportDocument);
-    true
-}
-
 pub fn configure_screen(immersive: bool, avoid_cutout: bool) {
     if let Some(ui) = UI.get() {
         ui.enqueue(Command::Screen(immersive, avoid_cutout));

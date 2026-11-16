@@ -12,6 +12,52 @@ use jni::{
     JNIEnv,
     objects::{JObject, JString, JValue},
 };
+/// Launch the system document picker and report the result with request code 4101.
+/// The production app opens its picker from Compose now; this probe launches its
+/// own so the 4101 callback path stays exercised end to end.
+fn open_picker(app: &AndroidApp) {
+    let result = (|| -> jni::errors::Result<()> {
+        let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
+        let mut env = vm.attach_current_thread()?;
+        let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+        let action = JObject::from(env.new_string("android.intent.action.OPEN_DOCUMENT")?);
+        let intent = env.new_object(
+            "android/content/Intent",
+            "(Ljava/lang/String;)V",
+            &[JValue::Object(&action)],
+        )?;
+        let category = JObject::from(env.new_string("android.intent.category.OPENABLE")?);
+        env.call_method(
+            &intent,
+            "addCategory",
+            "(Ljava/lang/String;)Landroid/content/Intent;",
+            &[JValue::Object(&category)],
+        )?;
+        let mime = JObject::from(env.new_string("*/*")?);
+        env.call_method(
+            &intent,
+            "setType",
+            "(Ljava/lang/String;)Landroid/content/Intent;",
+            &[JValue::Object(&mime)],
+        )?;
+        env.call_method(
+            &intent,
+            "addFlags",
+            "(I)Landroid/content/Intent;",
+            &[JValue::Int(1)],
+        )?;
+        env.call_method(
+            &activity,
+            "startActivityForResult",
+            "(Landroid/content/Intent;I)V",
+            &[JValue::Object(&intent), JValue::Int(4101)],
+        )?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        log::warn!("Document picker: {error}");
+    }
+}
 mod documents {
     use super::*;
     pub fn picker_failed(e: &str) {
@@ -138,7 +184,7 @@ fn android_main(app: AndroidApp) {
                     }
                     if !picked {
                         picked = true;
-                        ime::pick_document();
+                        open_picker(app);
                     }
                 }
                 PollEvent::Main(MainEvent::InputAvailable) => {

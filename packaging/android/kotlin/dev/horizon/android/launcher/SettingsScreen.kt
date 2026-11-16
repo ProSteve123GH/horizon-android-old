@@ -778,7 +778,6 @@ private fun LinearWavyProgressIndicatorCompat() {
 
 
 /** True when this install can read and write the shared storage folder. */
-@Composable
 private fun hasSharedStorageAccess(context: android.content.Context): Boolean =
     if (Build.VERSION.SDK_INT >= 30) {
         Environment.isExternalStorageManager()

@@ -105,31 +105,6 @@ pub fn poll() -> Option<Notice> {
         .notice
         .take()
 }
-pub fn begin(kind: Kind, home: PathBuf) -> std::result::Result<(), String> {
-    if busy() {
-        return Err("Finish or cancel the current import first".into());
-    }
-    CANCEL.store(false, Ordering::Relaxed);
-    crate::platform::hide();
-    let cache = crate::platform::cache_dir()
-        .ok_or("Could not access the Android import cache")?
-        .join("content-imports");
-    STATE.lock().unwrap_or_else(|e| e.into_inner()).request = Some(Request {
-        kind,
-        home,
-        cache,
-    });
-    if !crate::native_ime::pick_document() {
-        picker_failed("Android document picker is unavailable");
-        return Err("Android document picker is unavailable".into());
-    }
-    notice(format!("Choose a {} file", kind.label()), false);
-    Ok(())
-}
-pub fn picker_failed(error: &str) {
-    STATE.lock().unwrap_or_else(|e| e.into_inner()).request = None;
-    notice(error, false);
-}
 /// Called by the approved Activity result bridge, never from a game tick.
 /// Keep a conventional JNI export as well as explicit registration: Android
 /// may restore a picker result before the IME bridge has been initialized.

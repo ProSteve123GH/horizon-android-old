@@ -12,7 +12,8 @@ that activity as its launcher, and `android.app.lib_name=horizon_document_probe`
 Do not replace the installed game. Keep generated classes, DEX and APKs in `.local/`.
 
 On startup the probe invokes both native-method signatures through Java dispatch,
-then opens the production system picker. Select a small valid resource ZIP,
+then opens the system picker with the same intent the production app used before
+its Compose migration. Select a small valid resource ZIP,
 `.hmod`, or `.hshader`; the probe reads it through ContentResolver, copies it to
 its own cache, validates it and deletes the temporary copy. Restart the probe and
 press Back in the picker to test real cancellation. Look for:
