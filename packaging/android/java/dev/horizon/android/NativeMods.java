@@ -51,6 +51,13 @@ final class NativeMods {
             } catch (java.io.IOException error) {
                 Log.w(TAG, "Cannot mark pending_crash: " + error);
             }
+        } else {
+            // A stale marker from a crashed modded start must not count as a
+            // crash against a future build.
+            //noinspection ResultOfMethodCallIgnored
+            new File(nativeDir, "pending_crash").delete();
+            //noinspection ResultOfMethodCallIgnored
+            new File(nativeDir, "crash_streak").delete();
         }
         System.load(chosen == null ? stock : chosen);
     }
