@@ -31,15 +31,16 @@ key supplied through the secret.
 1. Open **Actions → Horizon Android — Signed Dev APK Build, Audit & Artifact**
    in the fork.
 2. Open the successful run for the branch and commit you want.
-3. Download the artifact for the ABI, for example
-   `horizon-dev-123-arm64-v8a`.
-4. Unpack the artifact ZIP and install the APK. Android may require allowing
-   installs from the browser or file manager used to open it.
+3. Open the run's **Publish the signed dev APK as a raw release asset** step.
+   The workflow uploads the raw assets (the APK, `SHA256SUMS.txt`, `LICENSE.txt`,
+   `THIRD_PARTY_NOTICES.md` and `BUILD.json`) to the prerelease tag `dev-latest`,
+   replacing whatever is there.
+4. Download `Horizon-Android-dev-*.apk` from the `dev-latest` release page and
+   install it. Android may require allowing installs from the browser or the
+   chosen file manager.
 
-Each artifact contains the APK, `SHA256SUMS.txt`, `LICENSE.txt`,
-`THIRD_PARTY_NOTICES.md` and `BUILD.json`. `BUILD.json` records the exact commit,
-branch, ABI, Rust profile, package, version code, signing source and workflow run.
-Artifacts expire after 14 days. GitHub requires sign-in to download them.
+`BUILD.json` records the exact commit, branch, ABI, Rust profile, package,
+version code, signing source and workflow run.
 
 These are experimental builds. They have not automatically passed gameplay,
 graphics-driver or performance testing. Emulator frame rates are not phone
@@ -51,9 +52,9 @@ results.
   & Artifact**, then the **Signed dev APK · …** job.
   Each workflow step is named after the stage that failed; open it for the
   command and compiler output.
-- The artifact name ends in the ABI, for example
-  `horizon-dev-123-arm64-v8a`; `BUILD.json` repeats `abi`, `commit`, `package`,
-  `version_code`, `profile` and the signing source.
+- The release asset name carries the package flavor and ABI; `BUILD.json`
+  repeats `abi`, `commit`, `package`, `version_code`, `profile` and the
+  signing source.
 - On a machine with Android build tools, `aapt2 dump badging file.apk` shows the
   package, version code and native ABI. On any machine, `unzip -l file.apk` shows
   `lib/<abi>/libhorizon_android.so`.
