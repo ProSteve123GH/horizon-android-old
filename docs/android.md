@@ -250,18 +250,20 @@ already published to Pictures.
 ## Game files location
 
 Horizon keeps the player's worlds, mods, packs, shader packs, options, saved
-servers, screenshots, instances and the shareable reports in app storage by
-default. They are reachable from a file manager through the
+servers, screenshots, instances and the shareable reports in app storage
+until you move them; they are reachable from a file manager through the
 **Files → Horizon Android** entry, backed by Horizon's documents provider.
 
-**Settings → Storage → Game files location** moves those files into
-`/storage/emulated/0/Horizon-Android` (release builds; dev builds use
-`Horizon-Android Dev`), a normal folder every file manager can open directly.
-The move happens only after you grant the access Android shows in system
-settings: All files access on Android 11 and newer, or the legacy storage
-permission on Android 9 and 10. Denying keeps the files in app storage, where
-the SAF entry keeps working as before. **Move back to app storage** reverses
-the move.
+**Settings → Storage → Game files location** is a two-option chooser:
+**Internal storage** (recommended) keeps those files in
+`/storage/emulated/0/Horizon-Android`, a normal folder every file manager can
+open directly, while **App storage (SAF)** keeps them in app storage. On first
+launch — or while the files are still in app storage — Horizon asks once
+whether to move them; the prompt never shows again after either choice, and
+denying it keeps the SAF entry fully working as before. The move happens only
+after you grant the access Android shows in system settings: All files access
+on Android 11 and newer, or the legacy storage permission on Android 9 and 10.
+**Move back to app storage** reverses the move from the same chooser.
 
 | Moves to shared storage | Stays private |
 | --- | --- |
@@ -272,12 +274,14 @@ the move.
 | Shareable reports (`horizon-diagnostics-*.zip`, `horizon-performance-*.jsonl`) | Raw diagnostics (logs, traces, exit reports) |
 | Instance folders and their `android-profile-*.txt` | Launcher state (instances you had running stay put), accounts |
 
-The move copies everything, verifies sizes, and only then deletes the originals;
-nothing is overwritten and the destination must be empty. The marker that records
-the choice lives in app storage, so if the folder is deleted the game
-reports it instead of opening an empty world list. Revoking the access makes the
-shared files unreadable; grant it again in system settings to keep playing, or
-use **Move back to app storage**.
+The move copies everything, re-reads and compares it byte for byte, and only
+then deletes the originals; an interrupted move is rolled back or completed on
+the next start. Nothing is overwritten and the destination must be empty. The
+marker that records the choice lives in app storage, so if the folder is
+deleted the game reports it instead of opening an empty world list, and the
+chooser offers re-creating the folder or moving back to app storage. Revoking
+the access makes the shared files unreadable; grant it again in system
+settings to keep playing, or use **Move back to app storage**.
 
 See [Game files location](android-game-files.md) for details and recovery.
 
