@@ -87,7 +87,7 @@ object HorizonHome {
         // A process death mid-copy must not leave a truncated world file that the next
         // migration then mistakes for a complete copy. The temporary file is renamed only
         // after its bytes have all been written.
-        val partial = File(parent, destination.name + ".partial")
+        val partial = File(parent ?: File("."), destination.name + ".partial")
         partial.delete()
         try {
             FileInputStream(source).use { input ->
