@@ -144,6 +144,7 @@ saying the build is installed. `aapt2 dump badging file.apk` shows the
 | "the selected mods add up to more than 30 MiB" / "build archive is larger than 32 MiB" | Disable some bundles or split the set; the service caps request size. |
 | "cannot reach the build service" / "the build service answered HTTP 413/429" / "…HTTP 503" | Network or service capacity problem. 413 = too large (see above). 429/503 = busy or rate-limited; wait a few minutes. |
 | "the build service did not return a job id" | The service rejected the request body. Keep the APK and the service's pinned commit in sync. |
+| "cache not found" / "base not found" | The build cache for the pinned commit does not exist (it is rebuilt after every re-pin of `versions.json`). Wait for the base rebuild to finish; pressing **Compile** again before then hits the same wall. This is not fixable on the phone. |
 | "Waiting for a free build slot (N ahead)" for a long time | All build runners are busy. On a warm base cache an idle slot finishes in minutes; the line disappears when the job starts. |
 | **Building…** runs for a very long time | A cold build cache runs longest; typical no-op builds are ~5–15 minutes. 45 minutes is the client-side timeout, after which the job is forgotten and you can compile again. |
 | "lost contact with the build service" | Eight consecutive polls failed. Check the network, keep the launcher open, or compile again. |
