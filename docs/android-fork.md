@@ -16,6 +16,7 @@ upstream repository and does not publish GitHub Releases automatically.
 | Repair | A **Repair missing files** action on the installed state verifies the prepared resources and redownloads missing or damaged Minecraft files. |
 | Dev identity | CI builds use `dev.horizon.android.steve.dev` and the label **Horizon Android Dev**, separate from a release install. |
 | Dev builds | `.github/workflows/android-dev.yml` builds an arm64 APK on fork branches and can build all ABIs on dispatch. |
+| Native mods | Import-only `.hnmod` machinery: bundles are validated, stored, listed and removed in the launcher, and the APK ships a trampoline loader that picks the stock or a modded game library on every start (with a crash guard). No build service exists for this fork, so nothing compiles or runs a native mod yet; see [docs/android-native-mods.md](android-native-mods.md). |
 | Docs | Import, fork, upstream-sync and dev-build notes are in this directory. |
 
 ## PR #56 status
