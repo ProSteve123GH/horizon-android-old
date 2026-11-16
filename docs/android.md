@@ -29,7 +29,8 @@ use **Download** in that case.
 Worlds, profiles, configuration, mods, packs, reports and account files use the
 app-specific external folder (`Android/data/dev.horizon.android/files`); temporary
 caches stay in app-private/cache storage. The first launch after updating copies
-old internal game data to the external folder. Updating with the same signing
+old internal game data to the external folder; a large installation can take a
+while to copy once. Updating with the same signing
 certificate preserves both; uninstalling the app or clearing its storage removes
 them.
 

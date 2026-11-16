@@ -13,6 +13,8 @@ not in app-private internal storage. On the first launch after updating, the old
 internal game data is copied there once; the old copy is left in place so a failed
 migration never loses a world. External storage is also used by the game process
 and by the Files provider. No `MANAGE_EXTERNAL_STORAGE` permission is needed.
+Android 11+ may hide `Android/data` from some file managers; Horizon Android in
+the system Files app remains the supported view and can delete or move reports.
 
 The provider contains **Mods**, **Resource Packs**, **Shader Packs**, **Worlds**,
 and **Configuration** for the selected launcher profile, and **Reports**. Android
@@ -86,8 +88,9 @@ The allowlisted DocumentsProvider supports browsing, copying files in and out,
 editing, renaming, moving and deleting files and child folders. Fixed directories
 (Mods, Resource Packs, Shader Packs, Worlds, Configuration and Reports) cannot be
 removed or moved; report files can be deleted, renamed or moved. Configuration
-files can be written; report contents stay read-only. The Configuration root exposes only `options.txt`,
-`horizon-graphics.txt`, `horizon-touch.json` and `horizon-keypad.json`; those
+files can be written; report contents stay read-only. The Configuration root
+exposes only `options.txt`, `horizon-graphics.txt`, `horizon-touch.json` and
+`horizon-keypad.json`; those
 files can be written, renamed, moved or deleted, while account data and other
 private files stay outside the provider. Deleting a child folder (a world or
 add-on folder) after the system confirmation removes its contents. The provider
