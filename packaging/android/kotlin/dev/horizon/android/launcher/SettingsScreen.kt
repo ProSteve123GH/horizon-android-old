@@ -923,7 +923,7 @@ private fun StorageDialog(storage: StorageState, onDismiss: () -> Unit) {
                     StorageOption(
                         title = "Internal storage (recommended)",
                         detail = "$recorded — any file manager can open the worlds, mods, packs, shaders, options and shareable reports directly.",
-                        selected = state == "shared",
+                        selected = state == "shared" || state == "missing",
                         error = if (state == "missing") "Folder missing or not readable. The game cannot open your worlds until this is resolved." else null,
                         onClick = { if (state == "private") grant.request() },
                     )
