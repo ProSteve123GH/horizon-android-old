@@ -778,7 +778,7 @@ private fun LinearWavyProgressIndicatorCompat() {
 
 
 /** True when this install can read and write the shared storage folder. */
-private fun hasSharedStorageAccess(context: android.content.Context): Boolean =
+private fun hasStorageAccess(context: android.content.Context): Boolean =
     if (Build.VERSION.SDK_INT >= 30) {
         Environment.isExternalStorageManager()
     } else {
@@ -788,35 +788,36 @@ private fun hasSharedStorageAccess(context: android.content.Context): Boolean =
         ) == PackageManager.PERMISSION_GRANTED
     }
 
+/** The one shared folder, for every build: the dev/release distinction is gone. */
+private fun sharedStorageDir(): File = File(Environment.getExternalStorageDirectory(), "Horizon-Android")
+
+/** The request lambda and whether the last attempt failed to open settings. */
+private class StorageGrant(val request: () -> Unit, val error: Boolean)
+
 /**
- * The game files location: move the worlds, mods, packs, shaders, options and
- * shareable reports into `Horizon-Android` on shared storage, where every file
- * manager can open them — or back to app storage. The move needs the all-files
- * access the user grants in system settings; granted access starts the move
- * from the resumed activity automatically.
+ * The shared all-files-access flow used by the storage dialog and the first-run
+ * prompt: on Android 11+ it sends the user to the system page for this app;
+ * coming back with the access granted starts [onGranted]. Android 9 and 10 ask
+ * for the legacy storage permission instead.
  */
 @Composable
-private fun StorageDialog(storage: StorageState, onDismiss: () -> Unit) {
+private fun rememberStorageGrant(onGranted: () -> Unit): StorageGrant {
     val context = LocalContext.current
-    val dev = remember { context.packageName.endsWith(".dev") }
-    val sharedDir = remember {
-        File(Environment.getExternalStorageDirectory(), if (dev) "Horizon-Android Dev" else "Horizon-Android")
-    }
     var awaitingGrant by rememberSaveable { mutableStateOf(false) }
     val requestPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) act("storage_migrate", sharedDir.absolutePath)
+        if (granted) onGranted()
         awaitingGrant = false
     }
     // Coming back from the system's all-files-access page: if it was granted,
     // start the move without making the user hunt for the button again.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        if (awaitingGrant && hasSharedStorageAccess(context)) {
+        if (awaitingGrant && hasStorageAccess(context)) {
             awaitingGrant = false
-            act("storage_migrate", sharedDir.absolutePath)
+            onGranted()
         }
     }
     var grantError by remember { mutableStateOf(false) }
-    val requestAccess = {
+    val request = {
         awaitingGrant = true
         grantError = false
         if (Build.VERSION.SDK_INT >= 30) {
@@ -833,80 +834,195 @@ private fun StorageDialog(storage: StorageState, onDismiss: () -> Unit) {
             requestPermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
     }
+    return StorageGrant(request, grantError)
+}
+
+@Composable
+private fun StorageOption(
+    title: String,
+    detail: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    error: String? = null,
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            RadioButton(selected = selected, onClick = null)
+            Column(Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(title, fontWeight = FontWeight.SemiBold)
+                    if (selected) {
+                        Text(
+                            "Current",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (error != null) {
+                    Text(
+                        error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The game files location, as a two-option chooser. Internal storage
+ * (`/storage/emulated/0/Horizon-Android`) is the recommended default; app
+ * storage keeps the files private and opens through system Files (SAF) only.
+ * The move needs the all-files access Android grants in system settings.
+ * The SAF mode keeps working fully when that grant never happens. Private
+ * files (logs, accounts, downloaded engine files, caches) stay in app
+ * storage either way.
+ */
+@Composable
+private fun StorageDialog(storage: StorageState, onDismiss: () -> Unit) {
+    val sharedDir = remember { sharedStorageDir() }
+    val grant = rememberStorageGrant(onGranted = { act("storage_migrate", sharedDir.absolutePath) })
+    val state = storage.state
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Game files location", fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                when (storage.state) {
-                    "shared" -> {
-                        Text(
-                            "Worlds, mods, packs, shaders, options and shareable reports live in Horizon-Android on shared storage. Any file manager can open them.",
+                if (state == "moving") {
+                    Text("Moving the game files… keep Horizon open.")
+                    val fraction = if (storage.total > 0) (storage.done.toFloat() / storage.total) else null
+                    if (fraction != null) {
+                        LinearWavyProgressIndicator(
+                            progress = { fraction.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
                         )
-                        Text(
-                            storage.dir ?: sharedDir.absolutePath,
+                    } else {
+                        LinearWavyProgressIndicator(Modifier.fillMaxWidth())
+                    }
+                } else {
+                    val recorded = storage.dir ?: sharedDir.absolutePath
+                    StorageOption(
+                        title = "Internal storage (recommended)",
+                        detail = "$recorded — any file manager can open the worlds, mods, packs, shaders, options and shareable reports directly.",
+                        selected = state == "shared",
+                        error = if (state == "missing") "Folder missing or not readable. The game cannot open your worlds until this is resolved." else null,
+                        onClick = { if (state == "private") grant.request() },
+                    )
+                    StorageOption(
+                        title = "App storage (SAF)",
+                        detail = "Kept inside Horizon. Reach the worlds, mods, packs, shaders and options through system Files as Horizon Android; nothing moves without the grant below.",
+                        selected = state == "private",
+                        onClick = { if (state == "shared" || state == "missing") act("storage_restore") },
+                    )
+                    when (state) {
+                        "missing" -> Text(
+                            "If the folder was deleted by accident, restore its contents from your file manager's Trash first. Re-creating it makes an empty folder.",
                             style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        Text(
-                            "Logs, downloaded Minecraft files, accounts and caches stay private.",
+                        else -> Text(
+                            "Logs, downloaded Minecraft files, accounts and caches always stay private.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    "missing" -> {
+                    if (grant.error) {
                         Text(
-                            "Horizon-Android is missing or not readable, so the game has no worlds to open. Re-create the folder from a file manager, then reopen this dialog.",
-                        )
-                    }
-                    "moving" -> {
-                        Text("Moving the game files… keep Horizon open.")
-                        val fraction = if (storage.total > 0) (storage.done.toFloat() / storage.total) else null
-                        if (fraction != null) {
-                            LinearWavyProgressIndicator(
-                                progress = { fraction.coerceIn(0f, 1f) },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        } else {
-                            LinearWavyProgressIndicator(Modifier.fillMaxWidth())
-                        }
-                    }
-                    else -> {
-                        Text(
-                            "Move worlds, mods, packs, shaders, options and shareable reports into Horizon-Android on shared storage, where any file manager can open them?",
-                        )
-                        Text(
-                            "Horizon needs the all-files access you grant in system settings to move the files and use the folder afterwards. Logs, downloaded Minecraft files, accounts and caches stay private.",
+                            "Could not open the settings page. Open Settings → Apps → Horizon Android (dev builds: Horizon Android Dev) → All files access instead.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.error,
                         )
-                        if (grantError) {
-                            Text(
-                                "Could not open the settings page. Open Settings → Apps → Horizon → All files access instead.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
                     }
                 }
             }
         },
         confirmButton = {
-            when (storage.state) {
-                "shared" -> FilledTonalButton(onClick = { act("storage_restore"); onDismiss() }) {
+            when (state) {
+                "private" -> FilledTonalButton(onClick = grant.request) {
+                    Text("Move to internal storage")
+                }
+                "shared" -> FilledTonalButton(onClick = { act("storage_restore") }) {
                     Text("Move back to app storage")
                 }
-                "private" -> FilledTonalButton(onClick = requestAccess) {
-                    Text("Allow and move")
+                "missing" -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { act("storage_recreate") }) {
+                        Text("Re-create empty folder")
+                    }
+                    FilledTonalButton(onClick = { act("storage_restore") }) {
+                        Text("Move back to app storage")
+                    }
                 }
                 else -> {}
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(if (storage.state == "private") "Not now" else "Close")
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+}
+
+/**
+ * One-shot offer shown on launch while the game files are still in app
+ * storage: move to the shared folder once the user grants the access Android
+ * shows. "Not now" records the choice and keeps the SAF mode fully working;
+ * it never shows again after either button.
+ */
+@Composable
+fun StoragePromptDialog(onDismiss: () -> Unit) {
+    val sharedDir = remember { sharedStorageDir() }
+    val grant = rememberStorageGrant(onGranted = {
+        act("storage_prompt_done")
+        act("storage_migrate", sharedDir.absolutePath)
+    })
+    AlertDialog(
+        onDismissRequest = {
+            act("storage_prompt_done")
+            onDismiss()
+        },
+        icon = { Icon(Icons.Rounded.FolderOpen, null) },
+        title = { Text("Game files on internal storage?", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Horizon can keep worlds, mods, packs, shaders, options and shareable reports in /storage/emulated/0/Horizon-Android, so any file manager can open them directly.",
+                )
+                Text(
+                    "Grant the access Android shows and the files move right away. Nothing moves without that grant. Logs, downloaded Minecraft files, accounts and caches stay private, and you can move back in Settings → Storage → Game files location.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (grant.error) {
+                    Text(
+                        "Could not open the settings page. Open Settings → Apps → Horizon Android (dev builds: Horizon Android Dev) → All files access instead.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
+        },
+        confirmButton = { Button(onClick = grant.request) { Text("Grant access and move") } },
+        dismissButton = {
+            TextButton(onClick = {
+                act("storage_prompt_done")
+                onDismiss()
+            }) { Text("Not now") }
         },
     )
 }

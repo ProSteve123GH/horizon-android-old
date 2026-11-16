@@ -117,7 +117,14 @@ data class CatalogState(
 
 /** Where the player's game files live: `private` (app storage), `shared`
  * (the Horizon-Android folder), `missing` (folder gone) or `moving`. */
-data class StorageState(val state: String, val dir: String?, val done: Long, val total: Long)
+data class StorageState(
+    val state: String,
+    val dir: String?,
+    val done: Long,
+    val total: Long,
+    /** True once the first-run internal-storage prompt was dismissed or answered. */
+    val prompted: Boolean,
+)
 
 data class LocalItem(
     val index: Int,
@@ -230,8 +237,9 @@ data class Snapshot(
                         dir = s2.text("dir"),
                         done = s2.optLong("done"),
                         total = s2.optLong("total"),
+                        prompted = s2.optBoolean("prompted", false),
                     )
-                } ?: StorageState("private", null, 0, 0),
+                } ?: StorageState("private", null, 0, 0, prompted = true),
                 wardrobe = root.optJSONObject("wardrobe")?.let { w ->
                     WardrobeState(
                         provider = w.text("provider"),

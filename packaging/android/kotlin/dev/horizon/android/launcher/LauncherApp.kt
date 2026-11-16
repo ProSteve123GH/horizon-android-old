@@ -173,6 +173,7 @@ private fun LauncherContent(
     var destination by rememberSaveable { mutableStateOf(Destination.Play) }
     // Settings is a layer over the current page, not a destination: closing it reveals that page as it was.
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    var storagePromptDismissed by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(destination, settingsOpen) {
         // The gallery is a launcher view, not one of the catalog pages.
         if (!settingsOpen && destination == Destination.Screenshots) return@LaunchedEffect
@@ -347,6 +348,11 @@ private fun LauncherContent(
             null -> {}
         }
         ImportDialogs(state.documents)
+        // First run, or still on SAF: offer internal storage once. "Not now"
+        // keeps the SAF mode fully working and never shows again.
+        if (state.storage.state == "private" && !state.storage.prompted && !storagePromptDismissed) {
+            StoragePromptDialog(onDismiss = { storagePromptDismissed = true })
+        }
     }
 }
 
