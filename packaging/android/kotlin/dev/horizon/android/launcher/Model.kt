@@ -135,6 +135,31 @@ data class LocalItem(
     val toggle: Boolean,
 )
 
+/** One stored `.hnmod` bundle in the active instance. */
+data class NativeMod(
+    val id: String,
+    val version: String,
+    val name: String,
+    val size: Long,
+    /** `imported`, `selected` (runs next start), `rejected` (set aside) or `invalid`. */
+    val enabledState: String,
+)
+
+/** The modded build chosen for the next start, or the one that was set aside. */
+data class NativeCurrent(
+    val id: String,
+    val version: String,
+    val versionCode: Long,
+    val abi: String,
+    val rejected: Boolean,
+    val rejectReason: String?,
+)
+
+data class NativeMods(
+    val mods: List<NativeMod>,
+    val current: NativeCurrent?,
+)
+
 data class Conflict(val name: String, val keepBoth: Boolean)
 
 data class Documents(val working: Boolean, val text: String?, val conflict: Conflict?)
@@ -153,6 +178,7 @@ data class Snapshot(
     val catalog: CatalogState,
     val local: List<LocalItem>,
     val documents: Documents,
+    val nativeMods: NativeMods,
 ) {
     companion object {
         fun parse(text: String): Snapshot? {
@@ -306,6 +332,29 @@ data class Snapshot(
                         Conflict(it.optString("name"), it.optBoolean("keep_both"))
                     },
                 ),
+                nativeMods = root.optJSONObject("native")?.let { n ->
+                    NativeMods(
+                        mods = n.optJSONArray("mods").list {
+                            NativeMod(
+                                id = it.optString("id"),
+                                version = it.optString("version"),
+                                name = it.optString("name"),
+                                size = it.optLong("size"),
+                                enabledState = it.optString("enabled_state"),
+                            )
+                        },
+                        current = n.optJSONObject("current")?.let { c2 ->
+                            NativeCurrent(
+                                id = c2.optString("id"),
+                                version = c2.optString("version"),
+                                versionCode = c2.optLong("versionCode"),
+                                abi = c2.optString("abi"),
+                                rejected = c2.optBoolean("rejected"),
+                                rejectReason = c2.text("reject_reason"),
+                            )
+                        },
+                    )
+                } ?: NativeMods(emptyList(), null),
             )
         }
     }

@@ -60,6 +60,25 @@ static STATE: Mutex<State> = Mutex::new(State {
     cursor: (0.0, 0.0),
 });
 static CANCEL: AtomicBool = AtomicBool::new(false);
+
+/// Restart the shared import overlay for a new import (native bundles use it too).
+pub(crate) fn begin_import() {
+    CANCEL.store(false, Ordering::Relaxed);
+    let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    state.working = true;
+    state.conflict = None;
+    state.request = None;
+}
+/// Replace the overlay's text; the same overlay shows for every import.
+pub(crate) fn note(text: impl Into<String>, changed: bool) {
+    notice(text, changed);
+}
+pub(crate) fn set_working(working: bool) {
+    STATE.lock().unwrap_or_else(|e| e.into_inner()).working = working;
+}
+pub(crate) fn cancel_requested() -> bool {
+    CANCEL.load(Ordering::Relaxed)
+}
 pub fn busy() -> bool {
     let s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     s.request.is_some() || s.working || s.conflict.is_some()

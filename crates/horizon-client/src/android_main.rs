@@ -65,6 +65,8 @@ mod worlds;
 mod minecraft_import;
 #[path = "android/native_ime.rs"]
 mod native_ime;
+#[path = "android/native_mods.rs"]
+mod native_mods;
 #[path = "android/performance.rs"]
 mod performance;
 #[path = "android/performance_presets.rs"]

@@ -119,11 +119,16 @@ sealed interface Overlay {
     data class Choose(val id: String, val options: Options) : Overlay
     data class Edit(val id: String, val title: String, val value: String, val hint: String) : Overlay
     data class Remove(val item: LocalItem) : Overlay
+    data class RemoveNative(val id: String) : Overlay
     data object RemoveInstallation : Overlay
 }
 
 @Composable
-fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit) {
+fun LauncherApp(
+    onPlay: () -> Unit,
+    onImport: (String, String?) -> Unit,
+    onImportNative: (String?) -> Unit,
+) {
     var appearance by remember { mutableStateOf(LauncherAppearance.load()) }
     // Fade and grow in over the splash window so opening the app is a transition, not a cut.
     val appear = remember { Animatable(0f) }
@@ -143,6 +148,7 @@ fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit) {
                 onAppearance = { appearance = it },
                 onPlay = onPlay,
                 onImport = onImport,
+                onImportNative = onImportNative,
             )
         }
     }
@@ -155,6 +161,7 @@ private fun LauncherContent(
     onAppearance: (LauncherAppearance) -> Unit,
     onPlay: () -> Unit,
     onImport: (String, String?) -> Unit,
+    onImportNative: (String?) -> Unit,
 ) {
     var snapshot by remember { mutableStateOf<Snapshot?>(null) }
     // Poll only while the launcher is on screen: never while the game runs.
@@ -210,6 +217,9 @@ private fun LauncherContent(
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         onImport(importKind, uri?.toString())
+    }
+    val nativePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        onImportNative(uri?.toString())
     }
     var wardrobeKind by rememberSaveable { mutableStateOf("skin") }
     val wardrobePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -297,6 +307,9 @@ private fun LauncherContent(
             importKind = kind
             picker.launch(arrayOf("*/*"))
         },
+        importNative = { nativePicker.launch(arrayOf("application/octet-stream", "application/zip", "application/x-zip-compressed", "*/*")) },
+        removeNative = { id -> overlay = Overlay.RemoveNative(id) },
+        disableNative = { act("native_disable") },
         importWardrobe = { kind ->
             wardrobeKind = kind
             wardrobePicker.launch(arrayOf("image/png"))
@@ -344,6 +357,7 @@ private fun LauncherContent(
             )
             is Overlay.Edit -> EditDialog(o, onDismiss = { overlay = null })
             is Overlay.Remove -> RemoveDialog(o.item, onDismiss = { overlay = null })
+            is Overlay.RemoveNative -> RemoveNativeDialog(o.id, onDismiss = { overlay = null })
             Overlay.RemoveInstallation -> RemoveInstallationDialog(state.install, onDismiss = { overlay = null })
             null -> {}
         }
@@ -450,6 +464,9 @@ fun LauncherScaffold(
 class LauncherActions(
     val play: () -> Unit,
     val openAccount: () -> Unit,
+    val importNative: () -> Unit,
+    val removeNative: (String) -> Unit,
+    val disableNative: () -> Unit,
     val openWorlds: () -> Unit,
     val openPerformance: () -> Unit,
     val openTouchLayouts: () -> Unit,

@@ -153,6 +153,11 @@ fun CatalogScreen(page: Destination, state: Snapshot, wide: Boolean, actions: La
                 Text(hint, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+        if (page == Destination.Mods) {
+            item(key = "native-mods") {
+                NativeModsSection(state.nativeMods, actions)
+            }
+        }
         when {
             catalog.busy && catalog.results.isEmpty() -> item(key = "loading") {
                 Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) { LoadingIndicator() }

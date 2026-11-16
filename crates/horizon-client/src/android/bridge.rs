@@ -510,6 +510,9 @@ impl Controller {
 
     fn snapshot(&mut self) -> Value {
         use horizon_client::official_install::InstallStage;
+        if let Some(note) = crate::native_mods::take_result() {
+            self.catalog.status = note;
+        }
         self.poll();
         let imported = crate::minecraft_import::snapshot();
         let installed = self.installation.installed;
@@ -728,6 +731,10 @@ impl Controller {
             "local": local,
             "documents": crate::documents::overlay(),
             "is_64_bit": cfg!(target_pointer_width = "64"),
+            "native": crate::native_mods::section(
+                &self.home,
+                &self.catalog.config.game_home(&self.home)
+            ),
         })
     }
 
@@ -1101,6 +1108,22 @@ impl Controller {
                 _ => crate::documents::Choice::Cancel,
             }),
             "import_cancel" => crate::documents::cancel(),
+            "native_list" => {
+                let game_home = self.catalog.config.game_home(&self.home);
+                Ok(crate::native_mods::section(&self.home, &game_home))
+            }
+            "native_disable" => {
+                crate::native_mods::disable(&self.home)?;
+                self.catalog.status =
+                    "Native mods disabled. The stock game runs on the next start.".into();
+                Ok(json!({"disabled": true}))
+            }
+            "native_remove" => {
+                let game_home = self.catalog.config.game_home(&self.home);
+                crate::native_mods::remove(&game_home, arg)?;
+                self.catalog.status = format!("Removed native mod {arg}.");
+                Ok(json!({"removed": arg}))
+            }
             "choose" => {
                 let (id, value) = arg.split_once('=').ok_or("Expected id=value")?;
                 self.choose(id, value)?;
@@ -2073,6 +2096,25 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_importDocument(
         return;
     };
     crate::documents::import_external(&mut env, &activity, kind, home, uri);
+}
+
+/// `NativeBridge.importNativeDocument(Activity, String uri)`: a picked .hnmod bundle.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_horizon_android_NativeBridge_importNativeDocument(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    activity: JObject<'_>,
+    uri: JString<'_>,
+) {
+    let uri = (!uri.is_null()).then(|| string(&mut env, &uri));
+    let Some(home) = CONTROLLER.with(|c| {
+        c.borrow()
+            .as_ref()
+            .map(|c| c.catalog.config.game_home(&c.home))
+    }) else {
+        return;
+    };
+    crate::native_mods::import_external(&mut env, &activity, home, uri);
 }
 
 fn import_minecraft(env: &mut JNIEnv<'_>, kind: crate::minecraft_import::Kind, uri: JString<'_>) {

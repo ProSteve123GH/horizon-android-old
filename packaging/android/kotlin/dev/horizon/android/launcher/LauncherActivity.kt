@@ -23,6 +23,7 @@ class LauncherActivity : ComponentActivity() {
             LauncherApp(
                 onPlay = ::startGame,
                 onImport = { kind, uri -> NativeBridge.importDocument(this, kind, uri) },
+                onImportNative = { uri -> NativeBridge.importNativeDocument(this, uri) },
             )
         }
     }

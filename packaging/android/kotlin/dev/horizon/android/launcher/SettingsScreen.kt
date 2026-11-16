@@ -402,6 +402,22 @@ fun RemoveDialog(item: LocalItem, onDismiss: () -> Unit) {
     )
 }
 
+@Composable
+fun RemoveNativeDialog(id: String, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Remove native mod?") },
+        text = { Text("Deletes only $id.hnmod from this profile. This cannot be undone.") },
+        confirmButton = {
+            Button(onClick = {
+                act("native_remove", id)
+                onDismiss()
+            }) { Text("Remove") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun ImportDialogs(documents: Documents) {
