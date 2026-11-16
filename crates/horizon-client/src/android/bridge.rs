@@ -1110,19 +1110,19 @@ impl Controller {
             "import_cancel" => crate::documents::cancel(),
             "native_list" => {
                 let game_home = self.catalog.config.game_home(&self.home);
-                Ok(crate::native_mods::section(&self.home, &game_home))
+                return Ok(crate::native_mods::section(&self.home, &game_home));
             }
             "native_disable" => {
                 crate::native_mods::disable(&self.home)?;
                 self.catalog.status =
                     "Native mods disabled. The stock game runs on the next start.".into();
-                Ok(json!({"disabled": true}))
+                return Ok(json!({"disabled": true}));
             }
             "native_remove" => {
                 let game_home = self.catalog.config.game_home(&self.home);
                 crate::native_mods::remove(&game_home, arg)?;
                 self.catalog.status = format!("Removed native mod {arg}.");
-                Ok(json!({"removed": arg}))
+                return Ok(json!({"removed": arg}));
             }
             "choose" => {
                 let (id, value) = arg.split_once('=').ok_or("Expected id=value")?;

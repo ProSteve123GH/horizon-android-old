@@ -99,7 +99,7 @@ pub(crate) fn import_external(
 
 fn import_worker(
     vm: &jni::JavaVM,
-    activity: &jni::objects::GlobalRef<jni::objects::JObject<'_>>,
+    activity: &jni::objects::GlobalRef,
     uri: &str,
     game_home: &Path,
 ) -> Result<(String, String), String> {
