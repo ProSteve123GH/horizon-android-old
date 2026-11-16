@@ -174,7 +174,13 @@ final class NativeMods {
     }
 
     private static void writeActive(File nativeDir, String lib) {
-        String json = new JSONObject().put("lib", lib).toString();
+        final String json;
+        try {
+            json = new JSONObject().put("lib", lib).toString();
+        } catch (org.json.JSONException error) {
+            Log.w(TAG, "Cannot encode active.json: " + error);
+            return;
+        }
         File target = new File(nativeDir, "active.json");
         File temp = new File(nativeDir, "active.json.tmp");
         writeFile(temp, json);
