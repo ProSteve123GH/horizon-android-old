@@ -44,13 +44,12 @@ dynamic slots and the separate terrain texture arrays.
 
 ## Skins, capes and Ely.by
 
-The Compose launcher's **Skins** tab and the classic Rust launcher use the same
-shared wardrobe APIs. Import PNG skins/capes, keep a local gallery and preview
-them on a Classic/Slim model. Local choices affect your own view; explicit cloud
-actions change a supported provider's profile. The account chip opens **Saved
-accounts** for switching between saved Microsoft/Ely.by accounts or Offline, and
-**Sign in with Ely.by** is available beside Microsoft sign-in. The classic
-launcher remains under **Settings → Open classic launcher** as a fallback. See
+The Compose launcher's **Skins** tab uses the shared wardrobe APIs. Import
+PNG skins/capes, keep a local gallery and preview them on a Classic/Slim model.
+Local choices affect your own view; explicit cloud actions change a supported
+provider's profile. The account chip opens **Saved accounts** for switching
+between saved Microsoft/Ely.by accounts or Offline, and **Sign in with Ely.by**
+is available beside Microsoft sign-in. See
 [appearance and account capabilities](android-appearance.md) for cloud
 restrictions and the frontend-independent game contract.
 
@@ -58,8 +57,8 @@ restrictions and the frontend-independent game contract.
 
 The first screen is a Jetpack Compose launcher over the Rust controller bridge.
 The game runs in a separate `:game` process as an Android `NativeActivity`. The
-The classic Rust launcher remains available through **Settings → Open classic
-launcher** as a fallback.
+classic Rust launcher pages were removed; the game process starts the world
+directly and returns to the launcher when the player leaves the game.
 
 - **Play:** download or import Minecraft 26.3, repair missing resources, and
   launch a world or server.
@@ -247,6 +246,40 @@ keeps working if the file was already removed outside the app. The list can be
 sorted newest first, oldest first or by name, and grouped by instance when more
 than one instance has screenshots. Removing the original does not remove a copy
 already published to Pictures.
+
+## Game files location
+
+Horizon keeps the player's worlds, mods, packs, shader packs, options, saved
+servers, screenshots, instances and the shareable reports in app storage by
+default. They are reachable from a file manager through the
+**Files → Horizon Android** entry, backed by Horizon's documents provider.
+
+**Settings → Storage → Game files location** moves those files into
+`/storage/emulated/0/Horizon-Android` (release builds; dev builds use
+`Horizon-Android Dev`), a normal folder every file manager can open directly.
+The move happens only after you grant the access Android shows in system
+settings: All files access on Android 11 and newer, or the legacy storage
+permission on Android 9 and 10. Denying keeps the files in app storage, where
+the SAF entry keeps working as before. **Move back to app storage** reverses
+the move.
+
+| Moves to shared storage | Stays private |
+| --- | --- |
+| `saves/` and every instance's worlds | Prepared Minecraft resources and the engine build |
+| `horizon-mods/`, `resourcepacks/`, `shaderpacks/` | Account sign-in and encrypted tokens, session files |
+| `options.txt`, `horizon-graphics.txt`, `horizon-touch.json`, `horizon-keypad.json` and other game settings | Downloaded Minecraft files, download caches |
+| `servers.dat`, `screenshots/` | Logs and crash reports |
+| Shareable reports (`horizon-diagnostics-*.zip`, `horizon-performance-*.jsonl`) | Raw diagnostics (logs, traces, exit reports) |
+| Instance folders and their `android-profile-*.txt` | Launcher state (instances you had running stay put), accounts |
+
+The move copies everything, verifies sizes, and only then deletes the originals;
+nothing is overwritten and the destination must be empty. The marker that records
+the choice lives in app storage, so if the folder is deleted the game
+reports it instead of opening an empty world list. Revoking the access makes the
+shared files unreadable; grant it again in system settings to keep playing, or
+use **Move back to app storage**.
+
+See [Game files location](android-game-files.md) for details and recovery.
 
 ## Rendering, sound and vibration
 

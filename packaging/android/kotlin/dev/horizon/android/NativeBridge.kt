@@ -2,7 +2,7 @@ package dev.horizon.android
 
 import android.app.Activity
 
-/** The Rust launcher's state and actions (`crates/horizon-client/src/android/bridge.rs`). */
+/** The launcher's state and actions (`crates/horizon-client/src/android/bridge.rs`). */
 object NativeBridge {
     init {
         System.loadLibrary("horizon_android")

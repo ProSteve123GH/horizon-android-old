@@ -23,7 +23,6 @@ class LauncherActivity : ComponentActivity() {
             LauncherApp(
                 onPlay = ::startGame,
                 onImport = { kind, uri -> NativeBridge.importDocument(this, kind, uri) },
-                onClassicLauncher = ::startClassicLauncher,
             )
         }
     }
@@ -35,16 +34,6 @@ class LauncherActivity : ComponentActivity() {
     }
 
     private fun startGame() {
-        startActivity(Intent(this, HorizonActivity::class.java))
-    }
-
-    /**
-     * Opens the Rust launcher as a fallback for any page the Compose launcher
-     * cannot reach. Start it without a pending play request so its pages remain
-     * reachable.
-     */
-    private fun startClassicLauncher() {
-        File(filesDir, "launch-request.json").delete()
         startActivity(Intent(this, HorizonActivity::class.java))
     }
 

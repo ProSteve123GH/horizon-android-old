@@ -16,7 +16,9 @@
 - The game (`HorizonActivity`, a NativeActivity) now runs in the `:game` process.
   Play writes `launch-request.json`; the game process starts the world without
   its own launcher pages and closes when the player returns to the launcher.
-  Without that file the Rust launcher pages still work as before.
+- The classic Rust launcher was removed. The Compose launcher is the only
+  launcher UI; starting the game process without a play request finishes the
+  activity back to the Compose launcher.
 - Release APKs are shrunk with R8 (`packaging/android/proguard-rules.pro`).
   Compose adds about 3 MB.
 

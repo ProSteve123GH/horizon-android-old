@@ -5,6 +5,9 @@ use std::path::PathBuf;
 pub(crate) struct LaunchRequest {
     pub resources: PathBuf,
     pub game_home: PathBuf,
+    /// Logs and crash reports stay here (the app-private home) even when the
+    /// player's game files moved to shared storage.
+    pub home_dir: PathBuf,
     pub session_file: Option<PathBuf>,
     pub offline_name: String,
     pub server: String,
@@ -22,6 +25,8 @@ impl LaunchRequest {
             self.resources.to_string_lossy().into_owned(),
             "--game-dir".into(),
             self.game_home.to_string_lossy().into_owned(),
+            "--home".into(),
+            self.home_dir.to_string_lossy().into_owned(),
         ];
         if let Some(socket) = &self.control_socket {
             args.extend([
@@ -73,6 +78,7 @@ mod tests {
         LaunchRequest {
             resources: "resources with spaces".into(),
             game_home: "profile".into(),
+            home_dir: "private home".into(),
             session_file: None,
             offline_name: "Offline".into(),
             server: "example.test".into(),
@@ -102,6 +108,7 @@ mod tests {
         assert_eq!(snapshot[1], "resources with spaces");
         assert!(snapshot.windows(2).any(|a| a == ["--name", "Offline"]));
         assert!(snapshot.windows(2).any(|a| a == ["--game-dir", "profile"]));
+        assert!(snapshot.windows(2).any(|a| a == ["--home", "private home"]));
         assert!(
             snapshot
                 .windows(2)

@@ -149,13 +149,11 @@ impl Config {
         .map_err(|e| e.to_string())?;
         std::fs::rename(part, home.join("android-launcher.json")).map_err(|e| e.to_string())
     }
+    /// The game folder for this instance: the app home, or the `profile-N`
+    /// folder inside it. Both may have moved to the shared storage folder
+    /// (Settings → Storage); every reader goes through the marker.
     pub fn profile_home(&self, home: &Path) -> PathBuf {
-        if self.profile == 0 {
-            home.into()
-        } else {
-            home.join("profiles")
-                .join(format!("profile-{}", self.profile))
-        }
+        crate::shared_storage::profile_dir(home, self.profile)
     }
     pub fn game_home(&self, home: &Path) -> PathBuf {
         // Legacy modpack selections are ignored; their files remain untouched.
@@ -214,10 +212,7 @@ pub struct Catalog {
     pub results: Vec<Project>,
     pub status: String,
     pub offset: usize,
-    pub scroll: f32,
     pub config: Config,
-    pub editing: Option<&'static str>,
-    pub render_scale_text: String,
     worker: Option<mpsc::Receiver<Result<Reply, String>>>,
     search_worker: Option<mpsc::Receiver<Result<Vec<Project>, String>>>,
     searches: crate::search_queue::Queue<(Page, browser::SourceId, String, usize), Vec<Project>>,
@@ -246,10 +241,7 @@ impl Catalog {
             results: vec![],
             status: String::new(),
             offset: 0,
-            scroll: 0.0,
             config,
-            editing: None,
-            render_scale_text: String::new(),
             worker: None,
             search_worker: None,
             searches: crate::search_queue::Queue::new(),
@@ -260,8 +252,6 @@ impl Catalog {
     pub fn show_installed(&mut self, kind: Option<horizon_client::content_files::Kind>) {
         self.searches.cancel_interest();
         self.page = Page::Installed;
-        self.scroll = 0.0;
-        self.editing = None;
         self.sections = [false; 3];
         if let Some(i) = horizon_client::content_files::Kind::ALL
             .iter()
@@ -431,7 +421,6 @@ impl Catalog {
             }
             return;
         }
-        self.scroll = 0.0;
         let source = match self.page {
             Page::Packs => browser::SourceId::Modrinth,
             Page::Shaders => self.config.shader_source.source(),
@@ -691,49 +680,5 @@ impl Catalog {
             Err(e) => e,
         };
         self.refresh(home);
-    }
-    pub fn edit(&mut self, out: horizon_client::osk::Output, home: &Path) {
-        use horizon_client::osk::Output;
-        let is_name = self.editing == Some("name");
-        let field = match self.editing {
-            Some("name") => &mut self.config.name,
-            Some("server") => &mut self.config.server,
-            Some("render_scale") => &mut self.render_scale_text,
-            Some("client_id") => &mut self.config.microsoft_client_id,
-            _ => &mut self.query,
-        };
-        match out {
-            Output::Text(s) => {
-                if is_name {
-                    let combined = format!("{}{}", field, s);
-                    *field = truncate_player_name(&combined);
-                } else {
-                    field.push_str(&s);
-                }
-            }
-            Output::Backspace => {
-                field.pop();
-            }
-            Output::Enter | Output::Close => {
-                if self.editing == Some("render_scale") {
-                    match crate::display::RenderScale::parse(&self.render_scale_text) {
-                        Ok(scale) => {
-                            self.config.render_scale = scale;
-                            crate::display::set_scale(scale);
-                        }
-                        Err(error) => {
-                            self.status = error.into();
-                            return;
-                        }
-                    }
-                }
-                self.editing = None;
-                let _ = self.config.save(home);
-                if self.page.is_catalog() {
-                    self.offset = 0;
-                    self.search(home);
-                }
-            }
-        }
     }
 }

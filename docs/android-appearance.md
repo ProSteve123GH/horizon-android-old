@@ -1,7 +1,7 @@
 # Accounts, skins and capes
 
-The Compose launcher's **Skins** tab and the classic Rust launcher's **Skins**
-page use the same shared Rust wardrobe APIs. Import a 64×64 or legacy 64×32 PNG
+The Compose launcher's **Skins** tab uses the shared Rust wardrobe APIs.
+Import a 64×64 or legacy 64×32 PNG
 skin, or a 64×32 / legacy 22×17 PNG cape.
 Imports are bounded to 1 MiB, validated before decoding and stored as re-encoded
 PNG images. The gallery keeps multiple images. Select an image to apply it locally.

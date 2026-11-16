@@ -26,7 +26,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -48,6 +47,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Gamepad
 import androidx.compose.material.icons.rounded.HighQuality
@@ -100,6 +100,21 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import android.Manifest
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import java.io.File
 
 private fun settingIcon(id: String): ImageVector = when (id) {
     "renderer" -> Icons.Rounded.Monitor
@@ -111,6 +126,7 @@ private fun settingIcon(id: String): ImageVector = when (id) {
     "screenshots" -> Icons.Rounded.PhotoLibrary
     "worker_limit" -> Icons.Rounded.Memory
     "cache_budget_mib" -> Icons.Rounded.Storage
+    "storage" -> Icons.Rounded.FolderOpen
     "game_files" -> Icons.Rounded.Folder
     "world_files" -> Icons.Rounded.Public
     "orientation" -> Icons.Rounded.ScreenRotation
@@ -132,6 +148,7 @@ private fun settingIcon(id: String): ImageVector = when (id) {
 
 @Composable
 fun SettingsScreen(state: Snapshot, wide: Boolean, actions: LauncherActions) {
+    var storageOpen by remember { mutableStateOf(false) }
     // Each group is one block; sideways the blocks sit in two columns instead of one long list.
     LazyVerticalStaggeredGrid(
         columns = StaggeredGridCells.Fixed(if (wide) 2 else 1),
@@ -140,7 +157,7 @@ fun SettingsScreen(state: Snapshot, wide: Boolean, actions: LauncherActions) {
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalItemSpacing = 4.dp,
     ) {
-        items(state.settings, key = { "group-${it.name}" }) { group -> SettingGroup(group, state, actions) }
+        items(state.settings, key = { "group-${it.name}" }) { group -> SettingGroup(group, state, actions, onStorage = { storageOpen = true }) }
         item(key = "source", span = StaggeredGridItemSpan.FullLine) {
             FilledTonalButton(
                 onClick = { act("repository") },
@@ -151,25 +168,14 @@ fun SettingsScreen(state: Snapshot, wide: Boolean, actions: LauncherActions) {
                 Text("Source code")
             }
         }
-        item(key = "classic", span = StaggeredGridItemSpan.FullLine) {
-            OutlinedButton(
-                onClick = actions.openClassicLauncher,
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(min = 48.dp),
-            ) {
-                Icon(Icons.Rounded.History, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "Open classic launcher",
-                    maxLines = 2,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        }
+    }
+    if (storageOpen) {
+        StorageDialog(state.storage, onDismiss = { storageOpen = false })
     }
 }
 
 @Composable
-private fun SettingGroup(group: SettingGroup, state: Snapshot, actions: LauncherActions) {
+private fun SettingGroup(group: SettingGroup, state: Snapshot, actions: LauncherActions, onStorage: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
             group.name,
@@ -197,6 +203,7 @@ private fun SettingGroup(group: SettingGroup, state: Snapshot, actions: Launcher
                             "performance_presets" -> actions.openPerformance()
                             "touch_layouts" -> actions.openTouchLayouts()
                             "servers" -> actions.openServers()
+                            "storage" -> onStorage()
                             "screenshots" -> actions.openScreenshots()
                             "appearance" -> actions.openAppearance()
                             else -> act(row.id)
@@ -766,4 +773,141 @@ private fun AccountSignIn(account: Account, onEly: () -> Unit) {
 @Composable
 private fun LinearWavyProgressIndicatorCompat() {
     LinearWavyProgressIndicator(Modifier.fillMaxWidth())
+}
+
+
+
+/** True when this install can read and write the shared storage folder. */
+@Composable
+private fun hasSharedStorageAccess(context: android.content.Context): Boolean =
+    if (Build.VERSION.SDK_INT >= 30) {
+        Environment.isExternalStorageManager()
+    } else {
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.WRITE_EXTERNAL_STORAGE,
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+/**
+ * The game files location: move the worlds, mods, packs, shaders, options and
+ * shareable reports into `Horizon-Android` on shared storage, where every file
+ * manager can open them — or back to app storage. The move needs the all-files
+ * access the user grants in system settings; granted access starts the move
+ * from the resumed activity automatically.
+ */
+@Composable
+private fun StorageDialog(storage: StorageState, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val dev = remember { context.packageName.endsWith(".dev") }
+    val sharedDir = remember {
+        File(Environment.getExternalStorageDirectory(), if (dev) "Horizon-Android Dev" else "Horizon-Android")
+    }
+    var awaitingGrant by rememberSaveable { mutableStateOf(false) }
+    val requestPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) act("storage_migrate", sharedDir.absolutePath)
+        awaitingGrant = false
+    }
+    // Coming back from the system's all-files-access page: if it was granted,
+    // start the move without making the user hunt for the button again.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (awaitingGrant && hasSharedStorageAccess(context)) {
+            awaitingGrant = false
+            act("storage_migrate", sharedDir.absolutePath)
+        }
+    }
+    var grantError by remember { mutableStateOf(false) }
+    val requestAccess = {
+        awaitingGrant = true
+        grantError = false
+        if (Build.VERSION.SDK_INT >= 30) {
+            // Some OEM skins do not host the per-app all-files page.
+            val intent = Intent(
+                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:${context.packageName}"),
+            )
+            if (runCatching { context.startActivity(intent) }.isFailure) {
+                grantError = true
+                awaitingGrant = false
+            }
+        } else {
+            requestPermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Game files location", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                when (storage.state) {
+                    "shared" -> {
+                        Text(
+                            "Worlds, mods, packs, shaders, options and shareable reports live in Horizon-Android on shared storage. Any file manager can open them.",
+                        )
+                        Text(
+                            storage.dir ?: sharedDir.absolutePath,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            "Logs, downloaded Minecraft files, accounts and caches stay private.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    "missing" -> {
+                        Text(
+                            "Horizon-Android is missing or not readable, so the game has no worlds to open. Re-create the folder from a file manager, then reopen this dialog.",
+                        )
+                    }
+                    "moving" -> {
+                        Text("Moving the game files… keep Horizon open.")
+                        val fraction = if (storage.total > 0) (storage.done.toFloat() / storage.total) else null
+                        if (fraction != null) {
+                            LinearWavyProgressIndicator(
+                                progress = { fraction.coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        } else {
+                            LinearWavyProgressIndicator(Modifier.fillMaxWidth())
+                        }
+                    }
+                    else -> {
+                        Text(
+                            "Move worlds, mods, packs, shaders, options and shareable reports into Horizon-Android on shared storage, where any file manager can open them?",
+                        )
+                        Text(
+                            "Horizon needs the all-files access you grant in system settings to move the files and use the folder afterwards. Logs, downloaded Minecraft files, accounts and caches stay private.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (grantError) {
+                            Text(
+                                "Could not open the settings page. Open Settings → Apps → Horizon → All files access instead.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            when (storage.state) {
+                "shared" -> FilledTonalButton(onClick = { act("storage_restore"); onDismiss() }) {
+                    Text("Move back to app storage")
+                }
+                "private" -> FilledTonalButton(onClick = requestAccess) {
+                    Text("Allow and move")
+                }
+                else -> {}
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(if (storage.state == "private") "Not now" else "Close")
+            }
+        },
+    )
 }

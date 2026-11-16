@@ -10,8 +10,9 @@ upstream repository and does not publish GitHub Releases automatically.
 
 | Area | Change |
 | --- | --- |
-| Launcher | Merged [upstream PR #56](https://github.com/Vasysik/horizon-android/pull/56), the Jetpack Compose launcher and its JNI bridge. The Rust launcher pages remain in the `:game` process. |
+| Launcher | Merged [upstream PR #56](https://github.com/Vasysik/horizon-android/pull/56), the Jetpack Compose launcher and its JNI bridge. The classic Rust launcher pages were removed; the `:game` process starts the world directly. |
 | Minecraft reuse | Import an existing Minecraft 26.3 folder or ZIP through Android's Storage Access Framework, verify it against the engine pins and download only missing files. |
+| Game files location | The player-facing files (worlds, mods, packs, shader packs, options, servers, screenshots, instances and shareable reports) can move from app storage to `Horizon-Android` on shared storage via Settings → Storage → Game files location, after the user grants the storage access Android shows. Everything private stays app-private. |
 | Repair | A **Repair missing files** action on the installed state verifies the prepared resources and redownloads missing or damaged Minecraft files. |
 | Dev identity | CI builds use `dev.horizon.android.dev` and the label **Horizon Android Dev**, separate from a release install. |
 | Dev builds | `.github/workflows/android-dev.yml` builds an arm64 APK on fork branches and can build all ABIs on dispatch. |
@@ -34,10 +35,11 @@ updated PR branch, resolve the Android files again and record the result.
 The Compose launcher covers Play, install/import progress, Skins, settings,
 profiles, saved accounts and Ely.by sign-in, content and diagnostics. The
 skin/cape gallery and account controls use the same shared Rust wardrobe and
-account APIs as the classic Rust launcher. **Settings → Open classic launcher**
-remains a fallback and starts the `:game` process without a pending play request.
+account APIs that the classic Rust launcher used. The classic Rust launcher was
+removed: the game process no longer carries launcher pages, and starting it
+without a play request finishes the activity back to the Compose launcher.
 The game itself always runs as a client of the server thread or a remote server;
-opening the classic launcher does not change that architecture.
+the Compose launcher does not change that architecture.
 
 ## Package and signing identity
 

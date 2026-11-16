@@ -6,8 +6,14 @@
 mod game;
 #[path = "android/game_launch.rs"]
 mod game_launch;
-#[path = "android/launcher.rs"]
-mod launcher;
+#[path = "android/direct.rs"]
+mod direct;
+// The shared account and wardrobe state machines the Compose launcher's JNI
+// bridge drives (`crates/horizon-client/src/android/login.rs`, `wardrobe.rs`).
+#[path = "android/login.rs"]
+pub(crate) mod login;
+#[path = "android/wardrobe.rs"]
+pub(crate) mod wardrobe;
 // Share the desktop launcher's actual search, compatibility checks, downloads,
 // dependency resolution and Java content porting; GPUI itself is desktop-only.
 // These files are formatted in the launcher's separate Rust 2021 workspace.
@@ -81,6 +87,8 @@ mod screenshots;
 mod search_queue;
 #[path = "android/secure_store.rs"]
 mod secure_store;
+#[path = "android/shared_storage.rs"]
+pub(crate) mod shared_storage;
 #[path = "android/servers.rs"]
 mod servers;
 #[path = "android/shader_catalog.rs"]
@@ -291,19 +299,27 @@ fn android_main(app: AndroidApp) {
             log::error!("Cannot unpack engine data: {error}");
         }
     }
-    let mut launcher = launcher::Launcher::new(home.clone());
-    // The Compose launcher (main process) starts this `:game` process to play,
-    // optionally into the world it selected (`{"play":true,"world":"<folder>"}`).
-    if let Ok(bytes) = std::fs::read(home.join(bridge::LAUNCH_REQUEST)) {
-        let _ = std::fs::remove_file(home.join(bridge::LAUNCH_REQUEST));
-        let world = serde_json::from_slice::<serde_json::Value>(&bytes)
-            .ok()
-            .and_then(|request| request.get("world")?.as_str().map(str::to_owned));
-        launcher.play_directly(world);
-    }
+    let request = std::fs::read(home.join(bridge::LAUNCH_REQUEST))
+        .ok()
+        .map(|bytes| {
+            let _ = std::fs::remove_file(home.join(bridge::LAUNCH_REQUEST));
+            serde_json::from_slice::<serde_json::Value>(&bytes)
+                .ok()
+                .and_then(|request| request.get("world")?.as_str().map(str::to_owned))
+        });
+    let Some(world) = request else {
+        // The Compose launcher is the only UI; without a pending play request
+        // this process has nothing to show. Finish and land back in it.
+        log::warn!("The game process started without a play request; returning to the launcher");
+        platform::finish_activity();
+        diagnostics::finish();
+        platform::finish();
+        std::process::exit(0);
+    };
+    let mut host = direct::DirectGame::new(home.clone(), world);
     let result = android_event_loop()
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })
-        .and_then(|events| events.run_app(&mut launcher).map_err(Into::into));
+        .and_then(|events| events.run_app(&mut host).map_err(Into::into));
     if let Err(error) = result {
         log::error!("Horizon: {error}");
         diagnostics::record_error(&error.to_string());
@@ -313,7 +329,7 @@ fn android_main(app: AndroidApp) {
     // Winit permits one EventLoop per process. NativeActivity otherwise keeps
     // this process cached after Quit, making the next launch fail. run_app's
     // exiting callback has completed the world save before we get here.
-    drop(launcher);
+    drop(host);
     diagnostics::finish();
     platform::finish();
     APP.with(|slot| *slot.borrow_mut() = None);

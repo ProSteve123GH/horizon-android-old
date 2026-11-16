@@ -119,7 +119,7 @@ sealed interface Overlay {
 }
 
 @Composable
-fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit, onClassicLauncher: () -> Unit) {
+fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit) {
     var appearance by remember { mutableStateOf(LauncherAppearance.load()) }
     HorizonTheme(appearance) {
         LauncherContent(
@@ -127,7 +127,6 @@ fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit, onClass
             onAppearance = { appearance = it },
             onPlay = onPlay,
             onImport = onImport,
-            onClassicLauncher = onClassicLauncher,
         )
     }
 }
@@ -139,7 +138,6 @@ private fun LauncherContent(
     onAppearance: (LauncherAppearance) -> Unit,
     onPlay: () -> Unit,
     onImport: (String, String?) -> Unit,
-    onClassicLauncher: () -> Unit,
 ) {
     var snapshot by remember { mutableStateOf<Snapshot?>(null) }
     // Poll only while the launcher is on screen: never while the game runs.
@@ -295,7 +293,6 @@ private fun LauncherContent(
         cancelImport = { act("cancel_import") },
         repairInstallation = { act("repair_installation") },
         removeInstallation = { overlay = Overlay.RemoveInstallation },
-        openClassicLauncher = onClassicLauncher,
         toggleSettings = { settingsOpen = !settingsOpen },
     )
 
@@ -446,7 +443,6 @@ class LauncherActions(
     val cancelImport: () -> Unit,
     val repairInstallation: () -> Unit,
     val removeInstallation: () -> Unit,
-    val openClassicLauncher: () -> Unit,
     val toggleSettings: () -> Unit,
 )
 

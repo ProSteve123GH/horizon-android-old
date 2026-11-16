@@ -16,10 +16,14 @@ edition = "2024"
 [workspace]
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+serde_json = "1"
+rustix = { version = "1", features = ["fs"] }
 ''', encoding='utf-8')
     (harness / 'src/lib.rs').write_text('''#![allow(dead_code)]
 #[path = "../../../../crates/horizon-client/src/android/instances.rs"]
 mod instances;
+#[path = "../../../../crates/horizon-client/src/android/shared_storage.rs"]
+mod shared_storage;
 #[path = "../../../../crates/horizon-client/src/android/screenshots.rs"]
 mod screenshots;
 ''', encoding='utf-8')

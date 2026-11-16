@@ -6,7 +6,7 @@
 //! Android provider and bridge turn the resolved path into a scoped content URI;
 //! no private path is ever handed to a sharing app.
 
-use crate::instances;
+use crate::{instances, shared_storage};
 use std::{
     fs::{self, File},
     io,
@@ -92,11 +92,7 @@ pub fn mime(name: &str) -> Option<&'static str> {
 }
 
 fn profile_root(home: &Path, profile: u32) -> PathBuf {
-    if profile == 0 {
-        home.to_owned()
-    } else {
-        home.join("profiles").join(format!("profile-{profile}"))
-    }
+    shared_storage::profile_dir(home, profile)
 }
 
 fn parse_id(id: &str) -> io::Result<(u32, &str)> {
@@ -127,9 +123,10 @@ pub fn id(profile: u32, name: &str) -> String {
 /// Resolves an opaque ID to a real file, rejecting traversal and symlinks.
 pub fn resolve(home: &Path, id: &str) -> io::Result<PathBuf> {
     let (profile, name) = parse_id(id)?;
+    let base = shared_storage::resolve(home);
     let path = profile_root(home, profile).join(DIR).join(name);
-    let relative = path.strip_prefix(home).map_err(|_| invalid())?.to_owned();
-    let mut checked = home.to_owned();
+    let relative = path.strip_prefix(&base).map_err(|_| invalid())?.to_owned();
+    let mut checked = base.to_owned();
     for part in relative.components() {
         checked.push(part);
         match fs::symlink_metadata(&checked) {
@@ -259,8 +256,9 @@ fn screenshots_in(profile: u32, root: &Path, items: &mut Vec<Item>) {
 
 /// Lists every instance's screenshots, newest first unless another order is asked.
 pub fn list(home: &Path, order: Order) -> Vec<Item> {
-    let mut profiles = vec![(0, home.to_owned())];
-    let profiles_dir = home.join("profiles");
+    let base = shared_storage::resolve(home);
+    let mut profiles = vec![(0, base.clone())];
+    let profiles_dir = base.join("profiles");
     if valid_dir(&profiles_dir)
         && let Ok(entries) = fs::read_dir(&profiles_dir)
     {

@@ -1,16 +1,14 @@
 //! The Compose launcher's bridge (`dev.horizon.android.NativeBridge`).
 //!
 //! The launcher Activity runs in the app's main process and the game runs in its
-//! own `:game` process. This bridge gives the Kotlin UI the Rust launcher's state
+//! own `:game` process. This bridge gives the Kotlin UI the launcher's state
 //! as one JSON snapshot and takes its actions by name. Every call comes from the
-//! Android main thread; slow work stays on the same worker threads the native
-//! launcher uses.
+//! Android main thread; slow work stays on the same worker threads the game
+//! process uses.
 use crate::catalog::{Catalog, Page};
 use crate::instances;
-use crate::launcher::{
-    login::Login,
-    wardrobe::{CloudAction, Wardrobe},
-};
+use crate::login::Login;
+use crate::wardrobe::{CloudAction, Wardrobe};
 use horizon_client::content_files::Kind;
 use jni::{
     JNIEnv,
@@ -36,6 +34,7 @@ struct Controller {
     installation: horizon_client::minecraft_import::InstallationInfo,
     worker: Option<mpsc::Receiver<Result<(), String>>>,
     diagnostic_export: Option<mpsc::Receiver<Result<String, String>>>,
+    storage_worker: Option<mpsc::Receiver<Result<String, String>>>,
     /// Manual server status checks, keyed by the address in `servers.dat`. The UI asks for one
     /// check and reads the result; nothing polls the network by itself.
     server_pings: Arc<Mutex<HashMap<String, crate::servers::Ping>>>,
@@ -73,14 +72,6 @@ fn page_name(page: Page) -> &'static str {
         Page::Installed => "installed",
         Page::Settings => "settings",
         Page::Skins => "skins",
-    }
-}
-
-fn profile_dir(home: &std::path::Path, id: u32) -> PathBuf {
-    if id == 0 {
-        home.into()
-    } else {
-        home.join("profiles").join(format!("profile-{id}"))
     }
 }
 
@@ -182,6 +173,18 @@ impl Controller {
                 Err(error) => format!("Diagnostic export failed: {error}"),
             };
         }
+        if let Some(result) = self.storage_worker.as_ref().and_then(|r| r.try_recv().ok()) {
+            self.storage_worker = None;
+            match result {
+                Ok(message) => {
+                    self.catalog.status = message;
+                    self.catalog.refresh(&self.home);
+                }
+                Err(error) => {
+                    self.catalog.status = format!("Moving the game files failed: {error}");
+                }
+            }
+        }
         if let Some(notice) = crate::minecraft_import::poll() {
             self.catalog.status = notice.text;
             if let Some(error) = notice.error {
@@ -212,6 +215,45 @@ impl Controller {
         }
     }
 
+    /// One line for the Storage section: where the game files live right now.
+    fn storage_summary(&self) -> String {
+        if crate::shared_storage::busy() {
+            let (done, total) = crate::shared_storage::progress();
+            return match total.checked_div(100) {
+                Some(step) if step > 0 => format!("Moving… {}%", (done / step).min(100)),
+                _ => "Moving…".into(),
+            };
+        }
+        match crate::shared_storage::state(&self.home) {
+            crate::shared_storage::State::Private => "App storage".into(),
+            crate::shared_storage::State::Shared => crate::shared_storage::display_name(&self.home),
+            crate::shared_storage::State::Missing => "Folder missing".into(),
+        }
+    }
+
+    /// The `storage` object of the snapshot the Compose settings screen polls.
+    fn storage_snapshot(&self) -> Value {
+        let moving = crate::shared_storage::busy();
+        let (done, total) = crate::shared_storage::progress();
+        if moving {
+            return json!({"state": "moving", "dir": Value::Null, "done": done, "total": total});
+        }
+        match crate::shared_storage::state(&self.home) {
+            crate::shared_storage::State::Private => {
+                json!({"state": "private", "dir": Value::Null, "done": 0, "total": 0})
+            }
+            crate::shared_storage::State::Shared => json!({
+                "state": "shared",
+                "dir": crate::shared_storage::resolve(&self.home).to_string_lossy(),
+                "done": done,
+                "total": total,
+            }),
+            crate::shared_storage::State::Missing => {
+                json!({"state": "missing", "dir": Value::Null, "done": 0, "total": 0})
+            }
+        }
+    }
+
     fn settings(&self) -> Value {
         let c = &self.catalog.config;
         let row = |id: &str, title: &str, value: String, kind: &str| json!({"id": id, "title": title, "value": value, "kind": kind});
@@ -238,7 +280,7 @@ impl Controller {
                 row("appearance", "Launcher appearance", self.appearance.summary(), "action"),
             ]},
             {"group": "Game", "rows": [
-                row("profile", "Instances", instances::display_name(&profile_dir(&self.home, c.profile), c.profile), "choice"),
+                row("profile", "Instances", instances::display_name(&crate::shared_storage::profile_dir(&self.home, c.profile), c.profile), "choice"),
                 row("input_host", "Input", c.input_host.label().into(), "choice"),
                 row("touch_layouts", "Touch layout profiles", crate::touch_layouts::summary(&c.game_home(&self.home)), "action"),
                 row("name", "Offline player name", if c.name.is_empty() { "Not set".into() } else { c.name.clone() }, "text"),
@@ -246,6 +288,7 @@ impl Controller {
                 row("servers", "Saved servers", "Add, edit and organize".into(), "action"),
             ]},
             {"group": "Storage", "rows": [
+                row("storage", "Game files location", self.storage_summary(), "action"),
                 row("screenshots", "Screenshots", "Browse, preview, share or delete".into(), "action"),
                 row("game_files", "Game files", "Open in system Files".into(), "action"),
                 row("world_files", "World files", "Import / copy / back up in Files".into(), "action"),
@@ -392,7 +435,7 @@ impl Controller {
             "profile" => {
                 let mut ids = vec![0, c.profile];
                 ids.extend(
-                    std::fs::read_dir(self.home.join("profiles"))
+                    std::fs::read_dir(crate::shared_storage::resolve(&self.home).join("profiles"))
                         .into_iter()
                         .flatten()
                         .flatten()
@@ -641,7 +684,7 @@ impl Controller {
                 "name": c.name,
                 "server": c.server,
                 "profile": c.profile,
-                "profile_name": instances::display_name(&profile_dir(&self.home, c.profile), c.profile),
+                "profile_name": instances::display_name(&crate::shared_storage::profile_dir(&self.home, c.profile), c.profile),
                 "renderer": c.renderer.label(),
                 "render_scale": c.render_scale.percent(),
                 "input": c.input_host.label(),
@@ -649,6 +692,7 @@ impl Controller {
                 "shader_source": if c.shader_source == crate::shader_catalog::Origin::Modrinth { "modrinth" } else { "horizon" },
             },
             "appearance": self.appearance.state(&self.home),
+            "storage": self.storage_snapshot(),
             "settings": self.settings(),
             "wardrobe": wardrobe,
             "catalog": {
@@ -672,7 +716,7 @@ impl Controller {
     fn profile_ids(&self) -> Vec<u32> {
         let mut ids = vec![0, self.catalog.config.profile];
         ids.extend(
-            std::fs::read_dir(self.home.join("profiles"))
+            std::fs::read_dir(crate::shared_storage::resolve(&self.home).join("profiles"))
                 .into_iter()
                 .flatten()
                 .flatten()
@@ -705,7 +749,7 @@ impl Controller {
             self.profile_ids()
                 .into_iter()
                 .map(|id| {
-                    let dir = profile_dir(&self.home, id);
+                    let dir = crate::shared_storage::profile_dir(&self.home, id);
                     json!({
                         "id": id,
                         "name": instances::display_name(&dir, id),
@@ -730,7 +774,7 @@ impl Controller {
         self.profile_ids()
             .into_iter()
             .map(|id| {
-                let dir = profile_dir(&self.home, id);
+                let dir = crate::shared_storage::profile_dir(&self.home, id);
                 (id, instances::display_name(&dir, id))
             })
             .collect()
@@ -835,6 +879,65 @@ impl Controller {
                 } else {
                     "Open the system Files app and choose Horizon Android.".into()
                 };
+            }
+            "storage_migrate" => {
+                // The Compose dialog computes the shared folder (it knows the
+                // package); the argument is its absolute path.
+                let target = PathBuf::from(arg);
+                if !target.is_absolute() || arg.trim().is_empty() {
+                    return Err("The shared folder path must be absolute".into());
+                }
+                if self.worker.is_some()
+                    || self.storage_worker.is_some()
+                    || crate::minecraft_import::busy()
+                    || crate::documents::busy()
+                {
+                    return Err("Finish the current task first".into());
+                }
+                if crate::shared_storage::state(&self.home) != crate::shared_storage::State::Private
+                {
+                    return Err("The game files are on shared storage already".into());
+                }
+                let home = self.home.clone();
+                let (sender, receiver) = mpsc::channel();
+                self.storage_worker = Some(receiver);
+                self.catalog.status = "Moving game files to shared storage…".into();
+                std::thread::spawn(move || {
+                    // Reinstall path: if the target holds data from an earlier
+                    // install and app storage holds nothing worth keeping,
+                    // adopt the existing folder instead of refusing.
+                    let result =
+                        crate::shared_storage::migrate(&home, &target, true).or_else(|error| {
+                            if error.contains("is not empty") {
+                                crate::shared_storage::adopt(&home, &target)
+                            } else {
+                                Err(error)
+                            }
+                        });
+                    let _ = sender.send(result);
+                });
+            }
+            "storage_restore" => {
+                if self.worker.is_some()
+                    || self.storage_worker.is_some()
+                    || crate::minecraft_import::busy()
+                    || crate::documents::busy()
+                {
+                    return Err("Finish the current task first".into());
+                }
+                if crate::shared_storage::state(&self.home) != crate::shared_storage::State::Shared
+                {
+                    return Err("The game files are on app storage already".into());
+                }
+                let home = self.home.clone();
+                let (sender, receiver) = mpsc::channel();
+                self.storage_worker = Some(receiver);
+                self.catalog.status = "Moving game files back to app storage…".into();
+                std::thread::spawn(move || {
+                    let shared = crate::shared_storage::resolve(&home);
+                    let result = crate::shared_storage::migrate(&home, &shared, false);
+                    let _ = sender.send(result);
+                });
             }
             "game_files" => {
                 self.catalog.status = if crate::platform::open_documents(
@@ -1069,7 +1172,7 @@ impl Controller {
             "profile_create" => {
                 let name = instances::validated_name(&self.named_profiles(), None, arg)?;
                 let id = instances::next_id(&self.profile_ids()).ok_or("Too many instances")?;
-                let dir = profile_dir(&home, id);
+                let dir = crate::shared_storage::profile_dir(&home, id);
                 std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
                 instances::write_name(&dir, &name)?;
                 self.choose("profile", &id.to_string())?;
@@ -1081,16 +1184,16 @@ impl Controller {
                     return Err("That instance no longer exists".into());
                 }
                 let name = instances::validated_name(&self.named_profiles(), Some(id), name)?;
-                instances::write_name(&profile_dir(&home, id), &name)?;
+                instances::write_name(&crate::shared_storage::profile_dir(&home, id), &name)?;
             }
             "profile_duplicate" => {
                 let id = arg.parse::<u32>().map_err(|e| e.to_string())?;
-                let source = profile_dir(&home, id);
+                let source = crate::shared_storage::profile_dir(&home, id);
                 if !self.profile_ids().contains(&id) || !source.is_dir() {
                     return Err("That instance's folder is missing; it cannot be duplicated".into());
                 }
                 let new_id = instances::next_id(&self.profile_ids()).ok_or("Too many instances")?;
-                let destination = profile_dir(&home, new_id);
+                let destination = crate::shared_storage::profile_dir(&home, new_id);
                 instances::copy_profile(&source, &destination)?;
                 let name = instances::unique_name(
                     &self.named_profiles(),
@@ -1113,7 +1216,8 @@ impl Controller {
                 if !self.profile_ids().contains(&id) {
                     return Err("That instance no longer exists".into());
                 }
-                std::fs::remove_dir_all(profile_dir(&home, id)).map_err(|e| e.to_string())?;
+                std::fs::remove_dir_all(crate::shared_storage::profile_dir(&home, id))
+                    .map_err(|e| e.to_string())?;
             }
             "profile_launch" => {
                 let id = arg.parse::<u32>().map_err(|e| e.to_string())?;
@@ -1630,6 +1734,15 @@ impl Controller {
 
     fn play(&mut self, world: Option<&str>) -> Result<Value, String> {
         if self.worker.is_some() || crate::minecraft_import::busy() || self.login.pending() {
+            return Ok(json!({"launch": false}));
+        }
+        if crate::shared_storage::busy() {
+            self.catalog.status = "Moving the game files. Wait for it to finish, then play.".into();
+            return Ok(json!({"launch": false}));
+        }
+        if crate::shared_storage::state(&self.home) == crate::shared_storage::State::Missing {
+            self.catalog.status =
+                "Horizon cannot find the Horizon-Android folder with your worlds. Re-create it from a file manager, or move the game files back in Settings → Storage.".into();
             return Ok(json!({"launch": false}));
         }
         if horizon_client::official_install::ready(&self.home) {

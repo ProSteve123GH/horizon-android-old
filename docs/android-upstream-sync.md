@@ -29,10 +29,11 @@ Before merging, review the changes that touch this fork's surface:
 - `docs/android*.md` and `docs/android-upstream.json`.
 
 Resolve Android module paths and bridges explicitly. Preserve the Compose
-launcher, the import/repair code, the dev application ID, the classic-launcher
-entry point and the dev workflow. Do not copy files from upstream when a merge
-can preserve authorship. Do not merge experimental upstream branches
-automatically; review a stable `android` revision or a specific release branch.
+launcher, the import/repair code, the dev application ID and the dev workflow.
+The classic Rust launcher was removed (it is no longer part of this fork), so do
+not re-add it when resolving an upstream merge. Do not copy files from upstream
+when a merge can preserve authorship. Do not merge experimental upstream
+branches automatically; review a stable `android` revision or a specific release branch.
 
 ## Updating the Compose launcher PR
 
@@ -96,7 +97,8 @@ Record:
 - what conflicted and how it was resolved;
 - which checks ran locally;
 - which checks ran only in CI;
-- any feature that remains on the classic Rust launcher.
+- any feature that exists only in the removed classic Rust launcher (there
+  should be none).
 
 Do not claim a device test, a frame-rate result or a gameplay validation that did
 not happen.
