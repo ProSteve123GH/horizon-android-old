@@ -9,7 +9,7 @@ path = "src/lib.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-android-activity = "0.6"
+android-activity = { version = "0.6", features = ["native-activity"] }
 libc = "0.2"
 serde_json = "1"
 
