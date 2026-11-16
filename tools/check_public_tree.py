@@ -13,6 +13,8 @@ ORIGINAL_JDK_TOOLS = {"tools/JfrSummary.java", "tests/java/JfrFixture.java"}
 ANDROID_RESULT_BRIDGE = "packaging/android/java/dev/horizon/android/HorizonActivity.java"
 ANDROID_DOCUMENTS_BRIDGE = "packaging/android/java/dev/horizon/android/HorizonDocumentsProvider.java"
 ANDROID_SCREENSHOT_BRIDGE = "packaging/android/java/dev/horizon/android/ScreenshotProvider.java"
+# Original native-mod library chooser; written for this fork, not recovered game code.
+ANDROID_NATIVE_MODS = "packaging/android/java/dev/horizon/android/NativeMods.java"
 
 
 def prohibited(path):
@@ -29,6 +31,7 @@ def prohibited(path):
         ANDROID_RESULT_BRIDGE,
         ANDROID_DOCUMENTS_BRIDGE,
         ANDROID_SCREENSHOT_BRIDGE,
+        ANDROID_NATIVE_MODS,
     }:
         return False
     # Original Horizon mod sources may also be tracked.
