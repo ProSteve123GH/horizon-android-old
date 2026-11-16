@@ -20288,6 +20288,35 @@ enum App {
     Loading(Box<Loading>),
     Ready(Box<split::Split<'static>>),
 }
+/// First `about_to_wait` on Android clears the native-mod crash guard: the
+/// trampoline exports `HORIZON_GAME_LIB` and `HORIZON_NATIVE_PENDING` before
+/// entering the game, and a start that reaches the event loop has not died
+/// before its first frame. Missing environment means a stock run; the guard
+/// never breaks the game.
+#[cfg(target_os = "android")]
+fn clear_native_crash_guard_once() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static CLEARED: AtomicBool = AtomicBool::new(false);
+    if CLEARED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let (Some(_lib), Some(pending)) = (
+        std::env::var_os("HORIZON_GAME_LIB"),
+        std::env::var_os("HORIZON_NATIVE_PENDING"),
+    ) else {
+        return;
+    };
+    let pending = std::path::PathBuf::from(pending);
+    if pending.file_name().is_some_and(|name| name == "pending_crash")
+        && std::fs::remove_file(&pending).is_ok()
+    {
+        let _ = std::fs::write(pending.with_file_name("crash_streak"), "0");
+        log::info!("Cleared the native-mod crash guard ({})", pending.display());
+    }
+}
+#[cfg(not(target_os = "android"))]
+fn clear_native_crash_guard_once() {}
+
 impl ApplicationHandler for App {
     #[cfg(target_os = "android")]
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
@@ -20328,6 +20357,7 @@ impl ApplicationHandler for App {
         }
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        clear_native_crash_guard_once();
         enum Step {
             Waiting,
             Ready(Box<split::Split<'static>>),
