@@ -1385,13 +1385,13 @@ pub(crate) fn install_from_state(home: &Path) {
                 );
                 return;
             }
-            let version = if mods.len() == 1 {
-                mods[0].version.clone()
+            let (id, version) = if mods.len() == 1 {
+                (mods[0].id.clone(), mods[0].version.clone())
             } else {
-                job.clone()
+                (job.clone(), job.clone())
             };
             let current = json!({
-                "id": job,
+                "id": id,
                 "version": version,
                 "lib": lib.to_string_lossy(),
                 "stock": stock,
