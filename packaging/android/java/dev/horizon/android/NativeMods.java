@@ -43,7 +43,7 @@ final class NativeMods {
         nativeDir.mkdirs();
         String stock = context.getApplicationInfo().nativeLibraryDir + File.separator + "libhorizon_android.so";
         String chosen = select(context, nativeDir);
-        writeActive(nativeDir, chosen == null ? stock : chosen);
+        writeActive(nativeDir, chosen == null ? stock : chosen, stock);
         if (chosen != null) {
             // Truncate an existing marker: this start has not proven itself yet.
             try (java.io.FileOutputStream out = new java.io.FileOutputStream(new File(nativeDir, "pending_crash"), false)) {
@@ -173,10 +173,10 @@ final class NativeMods {
         }
     }
 
-    private static void writeActive(File nativeDir, String lib) {
+    private static void writeActive(File nativeDir, String lib, String stock) {
         final String json;
         try {
-            json = new JSONObject().put("lib", lib).toString();
+            json = new JSONObject().put("lib", lib).put("stock", stock).toString();
         } catch (org.json.JSONException error) {
             Log.w(TAG, "Cannot encode active.json: " + error);
             return;

@@ -1,79 +1,115 @@
-//! Horizon's loader shim: the library `NativeActivity` loads (`android.app.lib_name`).
+//! Entry for the `:game` process (`android.app.func_name=horizon_on_create`).
 //!
-//! Java (`HorizonActivity`) validates `files/native/current.json` on every start and
-//! writes `files/native/active.json` naming the library for this process — an
-//! installed modded build, or the stock game. This shim reads `active.json`, sets
-//! the environment the crash guard watches for, calls the named library with
-//! `dlopen`, and runs its `android_main`. It holds no game code and no policy of
-//! its own: choosing the library is Java's job, running the game is the game's.
+//! Reads `files/native/active.json` — written by `HorizonActivity` on every
+//! start, naming the chosen library (an installed modded build, else the stock
+//! game) — and forwards Android's own entry-point call to that library's
+//! `ANativeActivity_onCreate`. The chosen game library then runs through the
+//! same entry glue every stock build uses: its `android-activity` glue
+//! initializes its jni-rs singleton, spawns its Rust thread and attaches it,
+//! and only then `android_main` runs. This shim carries no JNI machinery and
+//! no game code; the only difference from a stock device is which library
+//! answers the call.
+//!
+//! Why not `android_main` directly, like before: the game library only
+//! initializes its own jni-rs singleton inside its own `ANativeActivity_onCreate`
+//! path. Calling its `android_main` skipped that, `vm_as_ptr().unwrap()` then
+//! panicked through an unwinding `Global`-ref drop and the process aborted
+//! before the first frame ("panic in a destructor during cleanup"). Forwarding
+//! the framework's raw call instead keeps every game path identical to stock.
 
-use android_activity::AndroidApp;
-use std::ffi::CString;
+use std::ffi::{CStr, CString, OsString};
+use std::os::unix::ffi::OsStringExt;
+use std::path::PathBuf;
 
-/// Read the `active.json` text and return the library path it names.
-fn parse_active(text: &str) -> Result<String, String> {
-    let value: serde_json::Value =
-        serde_json::from_str(text).map_err(|error| format!("native/active.json is not JSON: {error}"))?;
-    let lib = value
-        .get("lib")
-        .and_then(serde_json::Value::as_str)
-        .filter(|lib| !lib.is_empty())
-        .ok_or_else(|| "native/active.json has no lib".to_string())?;
-    Ok(lib.to_owned())
+use ndk_sys::ANativeActivity;
+
+type OnCreate = unsafe extern "C" fn(*mut ANativeActivity, *mut std::ffi::c_void, usize);
+
+#[unsafe(no_mangle)]
+pub extern "C" fn horizon_on_create(
+    activity: *mut ANativeActivity,
+    saved_state: *mut std::ffi::c_void,
+    saved_state_size: usize,
+) {
+    if let Err(error) = unsafe { dispatch(activity, saved_state, saved_state_size) } {
+        eprintln!("horizon-trampoline: {error}");
+        unsafe { libc::abort() }
+    }
 }
 
-/// `NativeActivity` entry point (`ANativeActivity_onCreate`) comes from
-/// `android-activity`, which then calls this — the same extern "Rust"
-/// signature the game library exports (crates/horizon-client/src/android_main.rs).
-#[unsafe(no_mangle)]
-pub fn android_main(app: AndroidApp) {
-    let Some(files_dir) = app.internal_data_path() else {
-        fatal("Android supplied no application data directory");
-    };
-    let active = files_dir.join("native").join("active.json");
-    let lib = match std::fs::read_to_string(&active) {
-        Ok(text) => match parse_active(&text) {
-            Ok(lib) => lib,
-            Err(error) => fatal(&error),
-        },
-        Err(_) => fatal("native/active.json is missing or unreadable"),
-    };
-    // The game clears `pending_crash` on its first `about_to_wait` when these
-    // are present. Set them at the very top of this thread; nothing else reads
-    // or writes them concurrently.
-    // SAFETY: no other thread reads or writes these variables at this point.
+unsafe fn dispatch(
+    activity: *mut ANativeActivity,
+    saved_state: *mut std::ffi::c_void,
+    saved_state_size: usize,
+) -> Result<(), String> {
+    let root = unsafe { files_dir(activity)? };
+    let active = std::fs::read_to_string(root.join("native").join("active.json"))
+        .map_err(|error| format!("native/active.json unreadable: {error}"))?;
+    let (lib, fallback) = parse_active(&active)?;
+    // The game clears the crash-guard markers on its first frame when these
+    // are present. The layout of the process is unchanged from a stock start.
     unsafe {
         std::env::set_var("HORIZON_GAME_LIB", &lib);
         std::env::set_var(
             "HORIZON_NATIVE_PENDING",
-            files_dir.join("native").join("pending_crash"),
+            root.join("native").join("pending_crash"),
         );
     }
-    let Ok(c_lib) = CString::new(lib) else {
-        fatal("native/active.json lib contains an interior NUL");
-    };
-    // The game library is already loaded by `HorizonActivity` via `System.load`
-    // before `super.onCreate`, so this resolves to the same image (refcount
-    // only); the initializers are never run twice.
-    let handle = unsafe { libc::dlopen(c_lib.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    if handle.is_null() {
-        fatal("dlopen failed for the chosen game library");
+    match unsafe { call_game(&lib, activity, saved_state, saved_state_size) } {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            eprintln!("horizon-trampoline: {error}; falling back to {fallback}");
+            unsafe { call_game(&fallback, activity, saved_state, saved_state_size) }
+        }
     }
-    let entry = unsafe { libc::dlsym(handle, c"android_main".as_ptr()) };
-    if entry.is_null() {
-        fatal("the chosen game library does not export android_main");
-    }
-    // SAME signature the game library exports (crates/horizon-client/src/android_main.rs).
-    let game: extern "Rust" fn(AndroidApp) = unsafe { std::mem::transmute(entry) };
-    game(app);
 }
 
-fn fatal(message: &str) -> ! {
-    // No logging framework is initialized at this point; the message lands in
-    // the process's stderr and the abort keeps a broken install from hanging
-    // silently on a black window.
-    eprintln!("horizon-trampoline: {message}");
-    std::process::abort();
+unsafe fn call_game(
+    lib: &str,
+    activity: *mut ANativeActivity,
+    saved_state: *mut std::ffi::c_void,
+    saved_state_size: usize,
+) -> Result<(), String> {
+    let path = CString::new(lib).map_err(|_| format!("nul in path {lib:?}"))?;
+    let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    if handle.is_null() {
+        return Err(format!("dlopen failed for {lib}"));
+    }
+    let entry = unsafe { libc::dlsym(handle, c"ANativeActivity_onCreate".as_ptr()) };
+    if entry.is_null() {
+        return Err(format!("{lib} exports no ANativeActivity_onCreate"));
+    }
+    let game: OnCreate = unsafe { std::mem::transmute(entry) };
+    unsafe { game(activity, saved_state, saved_state_size) };
+    Ok(())
+}
+
+unsafe fn files_dir(activity: *mut ANativeActivity) -> Result<PathBuf, String> {
+    let path = unsafe { (*activity).internalDataPath };
+    if path.is_null() {
+        return Err("ANativeActivity has no internalDataPath".to_string());
+    }
+    let bytes = unsafe { CStr::from_ptr(path) }.to_bytes().to_vec();
+    Ok(PathBuf::from(OsString::from_vec(bytes)))
+}
+
+/// `active.json` — Java (`HorizonActivity`) always writes `lib`; `stock` as
+/// fallback when both are known. Missing `stock` means the game is loaded
+/// once, no fallback (the same APK's library is both).
+fn parse_active(text: &str) -> Result<(String, String), String> {
+    let value: serde_json::Value = serde_json::from_str(text)
+        .map_err(|error| format!("native/active.json is not JSON: {error}"))?;
+    let lib = value
+        .get("lib")
+        .and_then(|lib| lib.as_str())
+        .filter(|lib| !lib.is_empty())
+        .ok_or_else(|| "native/active.json has no lib".to_string())?;
+    let fallback = value
+        .get("stock")
+        .and_then(|stock| stock.as_str())
+        .unwrap_or(lib)
+        .to_string();
+    Ok((lib.to_string(), fallback))
 }
 
 #[cfg(test)]
@@ -81,30 +117,22 @@ mod tests {
     use super::parse_active;
 
     #[test]
-    fn parses_the_lib_path() {
-        let lib = parse_active(r#"{"lib": "/data/user/0/dev.horizon.android/files/native/builds/a/1.0.0/libhorizon_android.so"}"#)
-            .expect("valid active.json parses");
-        assert_eq!(
-            lib,
-            "/data/user/0/dev.horizon.android/files/native/builds/a/1.0.0/libhorizon_android.so"
-        );
+    fn parses_lib_and_stock() {
+        let (lib, stock) = parse_active(r#"{"lib": "/lib/chosen.so", "stock": "/lib/stock.so"}"#).unwrap();
+        assert_eq!(lib, "/lib/chosen.so");
+        assert_eq!(stock, "/lib/stock.so");
     }
 
     #[test]
-    fn rejects_invalid_json() {
-        assert!(parse_active("{not json").is_err());
+    fn falls_back_to_lib_when_stock_absent() {
+        let (lib, stock) = parse_active(r#"{"lib": "/lib/stock.so"}"#).unwrap();
+        assert_eq!(lib, stock);
     }
 
     #[test]
-    fn rejects_a_missing_lib() {
+    fn rejects_bad_shapes() {
+        assert!(parse_active(r#"{"other": 1}"#).is_err());
         assert!(parse_active(r#"{"lib": ""}"#).is_err());
-        assert!(parse_active(r#"{"other": "x"}"#).is_err());
-        assert!(parse_active(r#"{"lib": 42}"#).is_err());
-    }
-
-    #[test]
-    fn tolerates_extra_fields() {
-        let lib = parse_active(r#"{"lib": "/stock/libhorizon_android.so", "id": "x"}"#).expect("extra fields are fine");
-        assert_eq!(lib, "/stock/libhorizon_android.so");
+        assert!(parse_active("{nope").is_err());
     }
 }
