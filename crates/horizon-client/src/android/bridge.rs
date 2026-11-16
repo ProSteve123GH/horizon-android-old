@@ -993,12 +993,12 @@ impl Controller {
                 );
                 self.catalog.status = note.clone();
                 self.catalog.refresh(&self.home);
-                Ok(json!(note))
+                return Ok(json!(note));
             }
             "storage_prompt_done" => {
                 crate::shared_storage::mark_prompt_done(&self.home)
                     .map_err(|e| format!("Could not record the prompt choice: {e}"))?;
-                Ok(json!("ok"))
+                return Ok(json!("ok"));
             }
             "game_files" => {
                 self.catalog.status = if crate::platform::open_documents(

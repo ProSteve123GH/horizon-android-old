@@ -575,8 +575,8 @@ impl MigrationJournal {
                     .get(key)?
                     .as_array()?
                     .iter()
-                    .map(|entry| PathBuf::from(entry.as_str()?))
-                    .collect::<Vec<_>>(),
+                    .map(|entry| entry.as_str().map(PathBuf::from))
+                    .collect::<Option<Vec<_>>>()?,
             )
         };
         Some(Self {
