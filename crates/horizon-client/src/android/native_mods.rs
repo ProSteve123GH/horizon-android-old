@@ -1,12 +1,17 @@
-//! Native mod (`.hnmod`) import, listing and removal for the Android launcher.
+//! Native mod (`.hnmod`) import, listing, building and removal for the Android launcher.
 //!
 //! A `.hnmod` bundle is source-only Rust that hooks the game's own functions.
-//! It has to be compiled into the game before it can run, and this build of
-//! Horizon cannot compile one on the device: import validates and stores the
-//! bundle, and that is all. Nothing here fetches, executes or enables mod code;
-//! a mod runs only when an external build service produces a modded library and
-//! the user installs it. `files/native/` (app-private) holds the loader state
-//! the game process reads at start; bundles live with the game content.
+//! It has to be compiled into the game before it can run, which cannot happen
+//! on the device: the launcher sends the enabled bundles to the personal build
+//! service for this fork (`BUILD_BASE`), the service compiles the game with
+//! the mod's hooks on a hosted runner and publishes
+//! `/v1/job/<job>` and `/v1/job/<job>/lib`. The launcher streams the library
+//! back, verifies it against the job's SHA-256 and publishes
+//! `files/native/current.json`, which the Java loader
+//! (`HorizonActivity`) reads before the next start. Nothing here executes
+//! mod code; a mod runs only as part of a build the loader accepts.
+//! `files/native/` (app-private) holds the loader state the game process
+//! reads at start; bundles live with the game content.
 use horizon_mods::index::native::Bundle;
 use serde_json::{Value, json};
 use std::{
@@ -14,10 +19,21 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::Mutex,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 pub(crate) const MAX_BUNDLE: u64 = 64 << 20;
+/// The build service accepts at most 32 MiB; refuse to start the upload
+/// beyond a comfortable margin.
+pub(crate) const MAX_BUNDLE_TOTAL: u64 = 30 << 20;
+/// Hard cap for the assembled `mods.bin` body.
+pub(crate) const MAX_MODS_BIN: usize = 32 << 20;
+const BUILD_VERSION: &str = "0.7.7";
+const BUILD_BASE: &str =
+    "https://horizon-android-mod-builds.steve-horizon-android-hnmod.workers.dev";
+const POLL_SECS: u64 = 3;
+const BUILD_TIMEOUT_SECS: u64 = 45 * 60;
+const MAX_CONSECUTIVE_POLL_ERRORS: u32 = 8;
 
 /// Bundles sit in the active instance next to `horizon-mods/`.
 pub(crate) fn bundle_dir(game_home: &Path) -> PathBuf {
@@ -232,6 +248,98 @@ pub(crate) fn disable(home: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// ---- enabled flags ---------------------------------------------------
+
+fn enabled_file(game_home: &Path) -> PathBuf {
+    bundle_dir(game_home).join("enabled.json")
+}
+
+/// Read the enabled list. A missing file means every bundle is enabled
+/// (the default). Unknown ids (bundles that were removed) are ignored.
+fn enabled_set(game_home: &Path) -> Vec<String> {
+    let Some(value) = read_json(&enabled_file(game_home)) else {
+        return Vec::new();
+    };
+    value
+        .get("enabled")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(Value::as_str)
+                .filter(|id| horizon_mods::index::valid_id(id))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Write the enabled list atomically (`.tmp` + rename), keeping only ids
+/// that have a bundle on disk.
+fn write_enabled(game_home: &Path, ids: &[String]) -> Result<(), String> {
+    let dir = bundle_dir(game_home);
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let mut ids: Vec<String> = ids
+        .iter()
+        .filter(|id| bundle_dir(game_home).join(format!("{id}.hnmod")).is_file())
+        .cloned()
+        .collect();
+    ids.sort();
+    ids.dedup();
+    let body = json!({ "enabled": ids }).to_string();
+    let target = enabled_file(game_home);
+    let temp = target.with_file_name("enabled.json.tmp");
+    fs::write(&temp, body).map_err(|error| error.to_string())?;
+    fs::rename(&temp, &target).map_err(|error| error.to_string())
+}
+
+/// `native_enabled`: flip whether `id` takes part in **Compile**.
+pub(crate) fn set_enabled(
+    game_home: &Path,
+    id: &str,
+    enabled: bool,
+) -> Result<bool, String> {
+    if !horizon_mods::index::valid_id(id) {
+        return Err("Invalid native mod id".into());
+    }
+    if !bundle_dir(game_home).join(format!("{id}.hnmod")).is_file() {
+        return Err(format!("No native mod with id '{id}' is installed"));
+    }
+    let mut set = enabled_set(game_home);
+    if !enabled_file(game_home).is_file() {
+        // Materialize the default (all enabled) before applying the change.
+        set = list_ids(game_home);
+    }
+    let present = set.iter().position(|entry| entry == id).is_some();
+    match (enabled, present) {
+        (true, false) => set.push(id.to_owned()),
+        (false, true) => {
+            set.retain(|entry| entry != id);
+        }
+        _ => {}
+    }
+    write_enabled(game_home, &set)?;
+    Ok(enabled)
+}
+
+/// The ids of every stored bundle.
+fn list_ids(game_home: &Path) -> Vec<String> {
+    let mut ids: Vec<String> = fs::read_dir(bundle_dir(game_home))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let stem = name.strip_suffix(".hnmod")?;
+            if !horizon_mods::index::valid_id(stem) {
+                return None;
+            }
+            entry.metadata().ok().filter(|m| m.is_file()).map(|_| stem.to_owned())
+        })
+        .collect();
+    ids.sort();
+    ids
+}
+
 // ---- listing -----------------------------------------------------------------
 
 /// The snapshot's `native` section: stored bundles and the selected build.
@@ -267,6 +375,21 @@ pub(crate) fn section(home: &Path, game_home: &Path) -> Value {
             fingerprint.push(0);
         }
     }
+    match fs::metadata(enabled_file(game_home)) {
+        Ok(metadata) => {
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            fingerprint.extend(b"enabled.json");
+            fingerprint.extend(metadata.len().to_le_bytes());
+            fingerprint.extend(modified.to_le_bytes());
+        }
+        Err(_) => fingerprint.extend(b"enabled.json"),
+    }
+    fingerprint.push(0);
     for name in ["current.json", "current.json.rejected", "last_rejected"] {
         match fs::metadata(priv_native(home).join(name)) {
             Ok(metadata) => {
@@ -289,7 +412,16 @@ pub(crate) fn section(home: &Path, game_home: &Path) -> Value {
         cache.value = Some(section_uncached(home, game_home));
         cache.fingerprint = fingerprint;
     }
-    cache.value.clone().unwrap_or_else(|| json!({ "mods": [], "current": Value::Null }))
+    // The build state changes on its own schedule, so it is never
+    // cached: a fresh read at the 200 ms snapshot cadence.
+    let mut value = cache
+        .value
+        .clone()
+        .unwrap_or_else(|| json!({ "mods": [], "current": Value::Null }));
+    if let Some(object) = value.as_object_mut() {
+        object.insert("build".to_string(), build_state_json());
+    }
+    value
 }
 
 struct ListCache {
@@ -324,6 +456,8 @@ fn section_uncached(home: &Path, game_home: &Path) -> Value {
         }
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0));
+    let enabled = enabled_set(game_home);
+    let all_enabled = !enabled_file(game_home).is_file();
     let mods: Vec<Value> = rows
         .into_iter()
         .map(|(stem, path, size)| match Bundle::read(&path) {
@@ -346,6 +480,7 @@ fn section_uncached(home: &Path, game_home: &Path) -> Value {
                     "name": name,
                     "size": size,
                     "enabled_state": state,
+                    "enabled": all_enabled || enabled.iter().any(|entry| entry == &id),
                 })
             }
             // A bundle that no longer parses stays listed instead of vanishing.
@@ -355,6 +490,7 @@ fn section_uncached(home: &Path, game_home: &Path) -> Value {
                 "name": stem,
                 "size": size,
                 "enabled_state": "invalid",
+                "enabled": false,
             }),
         })
         .collect();
@@ -397,5 +533,1014 @@ fn current_value(value: &Value, rejected: bool, reason: Option<String>) -> Value
     if let Some(reason) = reason {
         out["reject_reason"] = json!(reason);
     }
+    let mod_ids: Vec<String> = value
+        .get("mods")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|entry| entry.get("id").and_then(Value::as_str).map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    out["mods"] = json!(mod_ids);
     out
+}
+
+// ---- the mod build service -------------------------------------------
+
+#[derive(Clone, PartialEq, Eq)]
+enum BuildPhase {
+    Idle,
+    Requesting,
+    Queued,
+    Building,
+    Installing,
+    /// The built library passed verification and `current.json` is written.
+    Ready,
+    Failed,
+}
+
+#[derive(Clone)]
+struct BuildMod {
+    id: String,
+    version: String,
+    sha256: String,
+}
+
+struct BuildState {
+    phase: BuildPhase,
+    job: Option<String>,
+    cached: bool,
+    ahead: Option<i64>,
+    seconds: Option<i64>,
+    sha256: Option<String>,
+    size: Option<u64>,
+    error: Option<String>,
+    /// The service says the job settled (it will not change state again).
+    settled: bool,
+    downloaded: u64,
+    install_total: Option<u64>,
+    /// The failure happened while fetching/verifying the library:
+    /// downloading again is meaningful, building again is not.
+    install_failed: bool,
+    mods: Vec<BuildMod>,
+    version_code: u64,
+    abi: String,
+    stock: Option<String>,
+}
+
+static BUILD: Mutex<BuildState> = Mutex::new(BuildState {
+    phase: BuildPhase::Idle,
+    job: None,
+    cached: false,
+    ahead: None,
+    seconds: None,
+    sha256: None,
+    size: None,
+    error: None,
+    settled: false,
+    downloaded: 0,
+    install_total: None,
+    install_failed: false,
+    mods: Vec::new(),
+    version_code: 0,
+    abi: String::new(),
+    stock: None,
+});
+
+static RESUMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn build_lock() -> std::sync::MutexGuard<'static, BuildState> {
+    BUILD.lock().unwrap_or_else(|error| error.into_inner())
+}
+
+fn phase_name(phase: &BuildPhase) -> &'static str {
+    match phase {
+        BuildPhase::Idle => "idle",
+        BuildPhase::Requesting => "requesting",
+        BuildPhase::Queued => "queued",
+        BuildPhase::Building => "building",
+        BuildPhase::Installing => "installing",
+        BuildPhase::Ready => "ready",
+        BuildPhase::Failed => "failed",
+    }
+}
+
+fn phase_busy(phase: &BuildPhase) -> bool {
+    matches!(
+        phase,
+        BuildPhase::Requesting | BuildPhase::Queued | BuildPhase::Building | BuildPhase::Installing
+    )
+}
+
+/// The snapshot's `build` section. Never blocks: a fresh read of the shared
+/// state at the 200 ms snapshot cadence.
+pub(crate) fn build_state_json() -> Value {
+    let state = build_lock();
+    json!({
+        "state": phase_name(&state.phase),
+        "job": state.job,
+        "cached": state.cached,
+        "ahead": state.ahead,
+        "seconds": state.seconds,
+        "sha256": state.sha256,
+        "size": state.size,
+        "error": state.error,
+        "settled": state.settled,
+        "downloaded": state.downloaded,
+        "installTotal": state.install_total,
+        "installFailed": state.install_failed,
+        "mods": state.mods.iter().map(|m| json!({
+            "id": m.id,
+            "version": m.version,
+            "sha256": m.sha256,
+        })).collect::<Vec<_>>(),
+        "versionCode": state.version_code,
+        "abi": state.abi,
+    })
+}
+
+/// `native_compile_status`: the last known state of the build. The poller
+/// thread keeps it current; this call does no network I/O.
+pub(crate) fn compile_status() -> Value {
+    build_state_json()
+}
+
+// ---- `mods.bin` packing -----------------------------------------------
+
+/// One bundle plus what `mods.json` names for it.
+pub(crate) struct ModBundle {
+    pub id: String,
+    pub version: String,
+    pub sha256: String,
+    pub bytes: Vec<u8>,
+}
+
+/// Pack the selected bundles into the `mods.bin` body the build service
+/// expects: a `mods.json` manifest plus one `<id>.hnmod` entry per bundle.
+pub(crate) fn pack_mods_bin(files: &[ModBundle]) -> Result<Vec<u8>, String> {
+    let mut body = Vec::new();
+    {
+        let cursor = std::io::Cursor::new(&mut body);
+        let mut zip = zip::ZipWriter::new(cursor);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .unix_permissions(0o644);
+        let entries: Vec<Value> = files
+            .iter()
+            .map(|file| {
+                json!({
+                    "id": file.id,
+                    "version": file.version,
+                    "file": format!("{}.hnmod", file.id),
+                    "sha256": file.sha256,
+                })
+            })
+            .collect();
+        zip.start_file("mods.json", options)
+            .map_err(|error| error.to_string())?;
+        zip.write_all(json!({ "files": entries }).to_string().as_bytes())
+            .map_err(|error| error.to_string())?;
+        for file in files {
+            zip.start_file(format!("{}.hnmod", file.id), options)
+                .map_err(|error| error.to_string())?;
+            zip.write_all(&file.bytes)
+                .map_err(|error| error.to_string())?;
+        }
+        zip.finish().map_err(|error| error.to_string())?;
+    }
+    if body.len() > MAX_MODS_BIN {
+        return Err(format!(
+            "the build archive is {} MiB; the build service accepts at most 32 MiB",
+            body.len() / (1024 * 1024)
+        ));
+    }
+    Ok(body)
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut file = fs::File::open(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 65536];
+    loop {
+        let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+// ---- build state persistence -------------------------------------------
+
+fn build_file(home: &Path) -> PathBuf {
+    priv_native(home).join("build.json")
+}
+
+fn persist_locked(home: &Path, state: &BuildState) {
+    if matches!(state.phase, BuildPhase::Idle | BuildPhase::Ready) {
+        let _ = fs::remove_file(build_file(home));
+        return;
+    }
+    let body = json!({
+        "phase": phase_name(&state.phase),
+        "job": state.job,
+        "cached": state.cached,
+        "sha256": state.sha256,
+        "size": state.size,
+        "error": state.error,
+        "installFailed": state.install_failed,
+        "mods": state.mods.iter().map(|m| json!({
+            "id": m.id,
+            "version": m.version,
+            "sha256": m.sha256,
+        })).collect::<Vec<_>>(),
+        "versionCode": state.version_code,
+        "abi": state.abi,
+        "stock": state.stock,
+    });
+    let dir = priv_native(home);
+    if fs::create_dir_all(&dir).is_ok() {
+        let temp = dir.join("build.json.tmp");
+        if fs::write(&temp, body.to_string()).is_ok() {
+            let _ = fs::rename(&temp, build_file(home));
+        }
+    }
+}
+
+fn persist(home: &Path) {
+    let state = build_lock();
+    persist_locked(home, &state);
+}
+
+/// Forget the in-flight build after a successful install or when the caller
+/// wants a clean slate.
+fn forget_build(home: &Path) {
+    let _ = fs::remove_file(build_file(home));
+}
+
+/// Raise a terminal failure; `install_failed` marks that only the download
+/// part failed and `native_install` can retry it.
+fn set_failed(home: &Path, message: String, install_failed: bool) {
+    let mut state = build_lock();
+    state.phase = BuildPhase::Failed;
+    state.error = Some(message);
+    state.install_failed = install_failed;
+    state.ahead = None;
+    state.seconds = None;
+    persist_locked(home, &state);
+}
+
+/// Restore a persisted build after a launcher restart. Resumes the poller
+/// or the installer; never re-sends a build request.
+pub(crate) fn resume_build(home: &Path) {
+    if RESUMED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let Some(saved) = read_json(&build_file(home)) else {
+        return;
+    };
+    let phase = saved["phase"].as_str().unwrap_or("idle").to_owned();
+    if phase == "idle" || phase == "ready" {
+        let _ = fs::remove_file(build_file(home));
+        return;
+    }
+    let job = saved["job"].as_str().map(str::to_owned);
+    let mods: Vec<BuildMod> = saved["mods"]
+        .as_array()
+        .map(|list| {
+            list.iter()
+                .filter_map(|entry| {
+                    Some(BuildMod {
+                        id: entry["id"].as_str()?.to_owned(),
+                        version: entry["version"].as_str()?.to_owned(),
+                        sha256: entry["sha256"].as_str()?.to_owned(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let version_code = saved["versionCode"].as_u64().unwrap_or(0);
+    let abi = saved["abi"].as_str().unwrap_or("").to_owned();
+    let stock = saved["stock"].as_str().map(str::to_owned);
+    let sha256 = saved["sha256"].as_str().map(str::to_owned);
+    let size = saved["size"].as_u64();
+    let error = saved["error"].as_str().map(str::to_owned);
+    let install_failed = saved["installFailed"].as_bool().unwrap_or(false);
+    {
+        let mut state = build_lock();
+        if state.phase != BuildPhase::Idle {
+            // The user already acted; the persisted file is stale.
+            return;
+        }
+        state.job = job.clone();
+        state.sha256 = sha256;
+        state.size = size;
+        state.mods = mods;
+        state.version_code = version_code;
+        state.abi = abi;
+        state.stock = stock;
+        state.error = error;
+        state.install_failed = install_failed;
+        state.phase = match phase.as_str() {
+            "requesting" => BuildPhase::Failed, // the request never reached the service
+            "queued" | "building" => BuildPhase::Queued,
+            "installing" => BuildPhase::Installing,
+            "done" => BuildPhase::Installing, // service said done; the install never finished
+            "failed" => BuildPhase::Failed,
+            _ => BuildPhase::Idle,
+        };
+        if phase == "requesting" {
+            state.error = Some("The build request was interrupted; compile again.".to_owned());
+        }
+    }
+    persist(home);
+    let resume_install = build_lock().phase == BuildPhase::Installing && build_lock().job.is_some();
+    let resume_poll = build_lock().phase == BuildPhase::Queued && build_lock().job.is_some();
+    if resume_install {
+        std::thread::Builder::new()
+            .name("Native mod install".into())
+            .spawn({
+                let home = home.to_path_buf();
+                move || install_from_state(&home)
+            })
+            .ok();
+    } else if resume_poll {
+        std::thread::Builder::new()
+            .name("Native mod build".into())
+            .spawn({
+                let home = home.to_path_buf();
+                move || poll_build(&home)
+            })
+            .ok();
+    }
+}
+
+// ---- network -----------------------------------------------------------
+
+fn agent(timeout_secs: u64) -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .https_only(true)
+        .timeout_connect(std::time::Duration::from_secs(20))
+        .timeout_read(std::time::Duration::from_secs(timeout_secs))
+        .build()
+}
+
+/// Parse a 4xx/5xx body into a message; only 4xx/5xx reaches this path
+/// because `ureq` turns them into `Error::Status`.
+fn error_message(code: u16, body: &str) -> String {
+    let parsed: Option<Value> = serde_json::from_str(body).ok();
+    if let Some(message) = parsed
+        .as_ref()
+        .and_then(|value| value.get("error"))
+        .and_then(Value::as_str)
+        .filter(|message| !message.is_empty())
+    {
+        return message.to_owned();
+    }
+    format!("the build service answered HTTP {code}")
+}
+
+struct JobStatus {
+    state: String,
+    ahead: Option<i64>,
+    seconds: Option<i64>,
+    sha256: Option<String>,
+    size: Option<u64>,
+    error: Option<String>,
+    settled: bool,
+}
+
+/// `GET /v1/job/<job>` → the service's status document, or `None` when the
+/// answer is definitively not parseable (a 4xx is terminal, a transport
+/// error is returned as `Err` so the poller can retry).
+fn poll_job(job: &str) -> Result<JobStatus, String> {
+    let url = format!("{BUILD_BASE}/v1/job/{job}");
+    let result = agent(15).get(&url).call();
+    let body = match result {
+        Ok(response) => response.into_string().map_err(|error| error.to_string())?,
+        Err(ureq::Error::Status(code, response)) => {
+            let body = response.into_string().unwrap_or_default();
+            // A 4xx is terminal: the job is unknown or malformed. Report it
+            // as a status so the poller stops instead of counting strikes.
+            return Ok(JobStatus {
+                state: "failed".to_owned(),
+                ahead: None,
+                seconds: None,
+                sha256: None,
+                size: None,
+                error: Some(error_message(code, &body)),
+                settled: true,
+            });
+        }
+        Err(ureq::Error::Transport(transport)) => {
+            return Err(format!("cannot reach the build service: {transport}"));
+        }
+    };
+    let value: Value = serde_json::from_str(&body).map_err(|_| "the build service answered with an unreadable status".to_string())?;
+    let state = value
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    Ok(JobStatus {
+        ahead: value.get("ahead").and_then(Value::as_i64),
+        seconds: value.get("seconds").and_then(Value::as_i64),
+        sha256: value
+            .get("sha256")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        size: value.get("size").and_then(Value::as_u64),
+        error: value.get("error").and_then(Value::as_str).map(str::to_owned),
+        state,
+        settled: value.get("settled").and_then(Value::as_bool).unwrap_or(false),
+    })
+}
+
+fn poll_build(home: &Path) {
+    let job = {
+        let state = build_lock();
+        state.job.clone()
+    };
+    let Some(job) = job else {
+        set_failed(home, "the build job is missing from the state".to_owned(), false);
+        return;
+    };
+    let start = Instant::now();
+    let mut consecutive_errors = 0u32;
+    loop {
+        if start.elapsed().as_secs() > BUILD_TIMEOUT_SECS {
+            set_failed(
+                home,
+                "the build service did not finish within 45 minutes; try again".to_owned(),
+                false,
+            );
+            return;
+        }
+        std::thread::sleep(Duration::from_secs(POLL_SECS));
+        let status = match poll_job(&job) {
+            Ok(status) => status,
+            Err(message) => {
+                consecutive_errors += 1;
+                if consecutive_errors >= MAX_CONSECUTIVE_POLL_ERRORS {
+                    set_failed(home, format!("lost contact with the build service: {message}"), false);
+                    return;
+                }
+                continue;
+            }
+        };
+        consecutive_errors = 0;
+        let done = status.state == "done";
+        let failed = status.state == "failed";
+        {
+            let mut state = build_lock();
+            state.ahead = status.ahead;
+            state.seconds = status.seconds;
+            state.sha256 = status.sha256.clone();
+            state.size = status.size;
+            state.error = status.error.clone();
+            state.settled = status.settled;
+            state.phase = if done {
+                BuildPhase::Installing
+            } else if failed {
+                BuildPhase::Failed
+            } else if status.state == "building" {
+                BuildPhase::Building
+            } else {
+                BuildPhase::Queued
+            };
+            persist_locked(home, &state);
+        }
+        if done {
+            install_from_state(home);
+            return;
+        }
+        if failed {
+            return;
+        }
+    }
+}
+
+// ---- `native_compile` ---------------------------------------------------
+
+/// Gather the enabled bundles, pack them and POST the archive to the build
+/// service. The POST happens on a worker thread: the launcher snapshot loop
+/// is the progress channel.
+pub(crate) fn compile(
+    home: &Path,
+    game_home: &Path,
+    arg: &str,
+) -> Result<Value, String> {
+    if phase_busy(&build_lock().phase) {
+        return Err("A build is already in progress. Wait for it to finish, or retry after it fails.".into());
+    }
+    let args: Value = serde_json::from_str(arg).map_err(|_| {
+        "Expected a JSON object with the enabled mods, the APK version code and the ABI".to_string()
+    })?;
+    let enabled: Vec<String> = args
+        .get("enabled")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .ok_or("No mods selected: enable at least one native mod to compile")?;
+    if enabled.is_empty() {
+        return Err("No mods selected: enable at least one native mod to compile".into());
+    }
+    let mut ids: Vec<String> = enabled
+        .into_iter()
+        .filter(|id| horizon_mods::index::valid_id(id))
+        .collect();
+    ids.sort();
+    ids.dedup();
+    let version_code = args
+        .get("versionCode")
+        .and_then(Value::as_u64)
+        .filter(|code| *code >= 1)
+        .ok_or("Missing the APK version code; the build must target this exact APK")?;
+    let abi = args
+        .get("abi")
+        .and_then(Value::as_str)
+        .filter(|abi| !abi.is_empty() && abi.len() <= 32)
+        .unwrap_or("arm64-v8a")
+        .to_owned();
+    let stock = args
+        .get("stock")
+        .and_then(Value::as_str)
+        .filter(|stock| !stock.is_empty() && Path::new(stock).is_absolute())
+        .map(str::to_owned);
+    // The bundles on disk are the input the service sees; enabled ids must exist.
+    let mut bundles: Vec<ModBundle> = Vec::with_capacity(ids.len());
+    let mut total: u64 = 0;
+    for id in &ids {
+        let path = bundle_dir(game_home).join(format!("{id}.hnmod"));
+        let metadata = fs::metadata(&path)
+            .map_err(|_| format!("{id}: the bundle is missing from the game files folder"))?;
+        if !metadata.is_file() {
+            return Err(format!("{id}: the stored bundle is not a file"));
+        }
+        total += metadata.len();
+        if total > MAX_BUNDLE_TOTAL {
+            return Err(format!(
+                "the selected mods add up to more than {} MiB; the build service accepts at most 32 MiB",
+                MAX_BUNDLE_TOTAL >> 20
+            ));
+        }
+        let bundle = Bundle::read(&path)
+            .map_err(|error| format!("{id}: {error}"))?;
+        let bytes = fs::read(&path)
+            .map_err(|error| format!("{id}: {error}"))?;
+        bundles.push(ModBundle {
+            id: id.clone(),
+            version: bundle.manifest.version,
+            sha256: sha256_bytes(&bytes),
+            bytes,
+        });
+    }
+    let body = pack_mods_bin(&bundles)?;
+    {
+        let mut state = build_lock();
+        *state = BuildState {
+            phase: BuildPhase::Requesting,
+            job: None,
+            cached: false,
+            ahead: None,
+            seconds: None,
+            sha256: None,
+            size: None,
+            error: None,
+            settled: false,
+            downloaded: 0,
+            install_total: None,
+            install_failed: false,
+            mods: bundles
+                .iter()
+                .map(|bundle| BuildMod {
+                    id: bundle.id.clone(),
+                    version: bundle.version.clone(),
+                    sha256: bundle.sha256.clone(),
+                })
+                .collect(),
+            version_code,
+            abi,
+            stock,
+        };
+        persist_locked(home, &state);
+    }
+    std::thread::Builder::new()
+        .name("Native mod build".into())
+        .spawn({
+            let home = home.to_path_buf();
+            move || submit_build(&home, body)
+        })
+        .map_err(|error| format!("cannot start the build worker: {error}"))?;
+    Ok(json!({ "started": true }))
+}
+
+fn submit_build(home: &Path, body: Vec<u8>) {
+    let url = format!("{BUILD_BASE}/v1/build?version={BUILD_VERSION}");
+    let result = agent(300)
+        .post(&url)
+        .set("content-type", "application/octet-stream")
+        .send_bytes(&body);
+    let job = match result {
+        Ok(response) => {
+            let body = response.into_string().unwrap_or_default();
+            match serde_json::from_str::<Value>(&body) {
+                Ok(value) => match (
+                    value.get("job").and_then(Value::as_str),
+                    value.get("cached").and_then(Value::as_bool).unwrap_or(false),
+                ) {
+                    (Some(job), cached) if !job.is_empty() => {
+                        let mut state = build_lock();
+                        state.phase = BuildPhase::Queued;
+                        state.job = Some(job.to_owned());
+                        state.cached = cached;
+                        persist_locked(home, &state);
+                        Some(job.to_owned())
+                    }
+                    _ => {
+                        set_failed(home, "the build service did not return a job id".to_owned(), false);
+                        None
+                    }
+                },
+                Err(_) => {
+                    set_failed(home, "the build service answered with an unreadable response".to_owned(), false);
+                    None
+                }
+            }
+        }
+        Err(ureq::Error::Status(code, response)) => {
+            let body = response.into_string().unwrap_or_default();
+            set_failed(home, error_message(code, &body), false);
+            None
+        }
+        Err(ureq::Error::Transport(transport)) => {
+            set_failed(home, format!("cannot reach the build service: {transport}"), false);
+            None
+        }
+    };
+    if job.is_some() {
+        poll_build(home);
+    }
+}
+
+// ---- `native_install` ---------------------------------------------------
+
+/// The download URL for a finished job.
+fn library_url(job: &str) -> String {
+    format!("{BUILD_BASE}/v1/job/{job}/lib")
+}
+
+/// The stock library path Java expects in `current.json`: an explicit value
+/// (from the launcher, derived from JNI), the persisted one, or the one Java
+/// wrote to `active.json` on the last game start.
+fn stock_path(home: &Path, explicit: Option<String>) -> Option<String> {
+    if let Some(stock) = explicit.filter(|stock| Path::new(stock).is_absolute()) {
+        return Some(stock);
+    }
+    if let Some(stock) = build_lock().stock.clone() {
+        if Path::new(&stock).is_absolute() {
+            return Some(stock);
+        }
+    }
+    read_json(&priv_native(home).join("active.json"))
+        .and_then(|value| value.get("stock").and_then(Value::as_str).map(str::to_owned))
+        .filter(|stock| Path::new(stock).is_absolute())
+}
+
+/// Download `/v1/job/<job>/lib` into `native/builds/<job>/libhorizon_android.so`.
+///
+/// Resumes an interrupted download when the service honors `Range: bytes=N-`
+/// (HTTP 206 with a matching `Content-Range`); otherwise starts the file over.
+/// Verifies SHA-256 at the end against the value the service published for the
+/// job; on a mismatch the partial file is deleted and the download is retried
+/// from scratch exactly once.
+fn download_library(home: &Path, job: &str, expected_sha: &str) -> Result<(PathBuf, String, u64), String> {
+    let target = priv_native(home).join(format!("builds/{job}/libhorizon_android.so"));
+    let partial = target.with_file_name("libhorizon_android.so.partial");
+    let parent = target
+        .parent()
+        .ok_or_else(|| "builds folder is unreachable".to_string())?;
+    fs::create_dir_all(parent).map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+    if fs::symlink_metadata(parent)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err("Refusing a redirected builds folder".into());
+    }
+    const MAX_ATTEMPTS: u32 = 2; // one from scratch after a SHA-256 mismatch
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        let offset = fs::metadata(&partial).map(|m| m.len()).unwrap_or(0);
+        let url = library_url(job);
+        let request = agent(300).get(&url);
+        let request = if offset > 0 {
+            request.set("Range", &format!("bytes={offset}-"))
+        } else {
+            request
+        };
+        let result = request.call();
+        let response = match result {
+            Ok(response) => response,
+            Err(ureq::Error::Status(416, _)) => {
+                // A resume offset the service cannot serve: restart cleanly.
+                let _ = fs::remove_file(&partial);
+                if attempt >= MAX_ATTEMPTS {
+                    return Err("the build service cannot serve the library download (HTTP 416)".into());
+                }
+                continue;
+            }
+            Err(ureq::Error::Status(code, response)) => {
+                let body = response.into_string().unwrap_or_default();
+                return Err(error_message(code, &body));
+            }
+            Err(ureq::Error::Transport(transport)) => {
+                return Err(format!("cannot reach the build service: {transport}"));
+            }
+        };
+        let status = response.status();
+        let resume = offset > 0 && status == 206 && {
+            response
+                .header("content-range")
+                .map(|value| value == format!("bytes {offset}-") || value.starts_with(&format!("bytes {offset}-")))
+                .unwrap_or(false)
+        };
+        let total = response
+            .header("content-length")
+            .and_then(|value| value.parse::<u64>().ok())
+            .map(|length| if resume { offset + length } else { length })
+            .or_else(|| if resume { None } else { build_lock().size });
+        {
+            let mut state = build_lock();
+            state.install_total = total;
+            state.downloaded = if resume { offset } else { 0 };
+        }
+        let mut file = if resume {
+            fs::OpenOptions::new()
+                .append(true)
+                .open(&partial)
+                .map_err(|error| format!("cannot append to {}: {error}", partial.display()))?
+        } else {
+            fs::File::create(&partial)
+                .map_err(|error| format!("cannot create {}: {error}", partial.display()))?
+        };
+        let mut reader = response.into_reader();
+        let mut buffer = [0u8; 65536];
+        loop {
+            let read = reader
+                .read(&mut buffer)
+                .map_err(|error| format!("the download was interrupted: {error}"))?;
+            if read == 0 {
+                break;
+            }
+            file.write_all(&buffer[..read])
+                .map_err(|error| format!("cannot write {}: {error}", partial.display()))?;
+            let mut state = build_lock();
+            state.downloaded = state.downloaded.saturating_add(read as u64);
+        }
+        drop(file);
+        drop(reader);
+        let sha256 = sha256_file(&partial)?;
+        if sha256 == expected_sha.to_ascii_lowercase() {
+            let size = fs::metadata(&partial).map(|m| m.len()).unwrap_or(0);
+            fs::rename(&partial, &target)
+                .map_err(|error| format!("cannot move the library into place: {error}"))?;
+            return Ok((target, sha256, size));
+        }
+        // Hash mismatch: keep nothing. One from-scratch attempt is allowed.
+        let _ = fs::remove_file(&partial);
+        if attempt >= MAX_ATTEMPTS {
+            return Err(
+                "downloaded library failed sha256 — retried from scratch once and it still did not match"
+                    .into(),
+            );
+        }
+        {
+            let mut state = build_lock();
+            state.downloaded = 0;
+            persist_locked(home, &state);
+        }
+    }
+}
+
+/// Install the finished build: download, verify, then publish `current.json`
+/// in exactly the shape the Java loader reads.
+pub(crate) fn install_from_state(home: &Path) {
+    let (job, expected_sha, size, mods, version_code, abi) = {
+        let state = build_lock();
+        (
+            state.job.clone(),
+            state.sha256.clone(),
+            state.size,
+            state.mods.clone(),
+            state.version_code,
+            state.abi.clone(),
+        )
+    };
+    let (Some(job), Some(expected_sha)) = (job, expected_sha) else {
+        set_failed(home, "the build has not finished yet".to_owned(), true);
+        return;
+    };
+    if phase_busy(&build_lock().phase) && build_lock().phase != BuildPhase::Installing {
+        return; // a compile is racing us; let it finish
+    }
+    {
+        let mut state = build_lock();
+        state.phase = BuildPhase::Installing;
+        state.error = None;
+        state.install_failed = false;
+        state.downloaded = 0;
+        state.install_total = size;
+        persist_locked(home, &state);
+    }
+    let outcome = download_library(home, &job, &expected_sha);
+    match outcome {
+        Ok((lib, sha256, _len)) => {
+            let stock = stock_path(home, None);
+            let Some(stock) = stock else {
+                set_failed(
+                    home,
+                    "no stock library path is known: start the stock game once (or rebuild with a fresh APK) so active.json exists".to_owned(),
+                    true,
+                );
+                return;
+            };
+            if !Path::new(&stock).is_file() {
+                set_failed(
+                    home,
+                    format!("the stock library is missing at {stock}; reinstall the game or contact support before using native mods"),
+                    true,
+                );
+                return;
+            }
+            let version = if mods.len() == 1 {
+                mods[0].version.clone()
+            } else {
+                job.clone()
+            };
+            let current = json!({
+                "id": job,
+                "version": version,
+                "lib": lib.to_string_lossy(),
+                "stock": stock,
+                "abi": abi,
+                "versionCode": version_code,
+                "sha256": sha256,
+                "mods": mods.iter().map(|m| json!({
+                    "id": m.id,
+                    "version": m.version,
+                    "sha256": m.sha256,
+                })).collect::<Vec<_>>(),
+            });
+            let dir = priv_native(home);
+            let temp = dir.join("current.json.tmp");
+            let target = dir.join("current.json");
+            let written = fs::write(&temp, current.to_string())
+                .and_then(|_| fs::rename(&temp, &target))
+                .map_err(|error| format!("cannot publish current.json: {error}"));
+            match written {
+                Ok(()) => {
+                    forget_build(home);
+                    let mut state = build_lock();
+                    state.phase = BuildPhase::Ready;
+                    state.error = None;
+                    state.install_failed = false;
+                }
+                Err(message) => set_failed(home, message, true),
+            }
+        }
+        Err(message) => set_failed(home, message, true),
+    }
+}
+
+/// `native_install`: fetch the finished build, verify it and publish it.
+/// Only valid when the build is done (or only the download failed).
+pub(crate) fn install(home: &Path, arg: &str) -> Result<Value, String> {
+    let args: Value = serde_json::from_str(arg).unwrap_or_else(|_| json!({}));
+    let requested_job = args.get("job").and_then(Value::as_str).map(str::to_owned);
+    {
+        let state = build_lock();
+        if let (Some(requested), Some(current)) = (requested_job.as_ref(), state.job.as_ref()) {
+            if requested != current {
+                return Err(format!("a different build ({current}) is the one tracked; refusing to install {requested}"));
+            }
+        }
+        match state.phase {
+            BuildPhase::Ready => return Err("the build is installed; restart the game to use it".into()),
+            BuildPhase::Failed if state.install_failed => {}
+            BuildPhase::Installing => return Err("The download is already in progress.".into()),
+            _ => {
+                return Err(
+                    "the build is not finished yet; wait for the build service to report done".into(),
+                )
+            }
+        }
+        // Merge explicit JNI-derived values over the persisted ones.
+        let mut state = state;
+        if let Some(stock) = args
+            .get("stock")
+            .and_then(Value::as_str)
+            .filter(|stock| !stock.is_empty())
+        {
+            state.stock = Some(stock.to_owned());
+        }
+        if let Some(version_code) = args.get("versionCode").and_then(Value::as_u64).filter(|v| *v >= 1) {
+            state.version_code = version_code;
+        }
+        if let Some(abi) = args.get("abi").and_then(Value::as_str).filter(|a| !a.is_empty()) {
+            state.abi = abi.to_owned();
+        }
+    }
+    std::thread::Builder::new()
+        .name("Native mod install".into())
+        .spawn({
+            let home = home.to_path_buf();
+            move || install_from_state(&home)
+        })
+        .map_err(|error| format!("cannot start the install worker: {error}"))?;
+    Ok(json!({ "started": true }))
+}
+
+// ---- tests -----------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read as _;
+
+    fn bundle(id: &str, version: &str, fill: u8) -> ModBundle {
+        let bytes = vec![fill; 4096];
+        ModBundle {
+            id: id.to_string(),
+            version: version.to_string(),
+            sha256: sha256_bytes(&bytes),
+            bytes,
+        }
+    }
+
+    /// The archive the build service receives must carry a parseable
+    /// `mods.json` whose hashes match the entries that follow it.
+    #[test]
+    fn mods_bin_round_trips() {
+        let files = vec![
+            bundle("alpha-mod", "1.2.3", 7),
+            bundle("beta_mod", "0.1.0", 0xAB),
+        ];
+        let body = pack_mods_bin(&files).expect("the archive must pack");
+        let mut archive =
+            zip::ZipArchive::new(std::io::Cursor::new(&body)).expect("the archive must parse");
+
+        let mut manifest = String::new();
+        archive
+            .by_name("mods.json")
+            .expect("mods.json must be an entry")
+            .read_to_string(&mut manifest)
+            .expect("mods.json must be readable");
+        let doc: Value = serde_json::from_str(&manifest).expect("mods.json must be JSON");
+        let entries = doc["files"].as_array().expect("files must be a list");
+        assert_eq!(entries.len(), 2);
+
+        for (bundle, entry) in files.iter().zip(entries) {
+            assert_eq!(entry["id"].as_str(), Some(bundle.id.as_str()));
+            assert_eq!(entry["version"].as_str(), Some(bundle.version.as_str()));
+            assert_eq!(
+                entry["file"].as_str(),
+                Some(format!("{}.hnmod", bundle.id).as_str())
+            );
+            assert_eq!(entry["sha256"].as_str(), Some(bundle.sha256.as_str()));
+
+            let mut bytes = Vec::new();
+            archive
+                .by_name(&format!("{}.hnmod", bundle.id))
+                .expect("each bundle must be an entry")
+                .read_to_end(&mut bytes)
+                .expect("each bundle must be readable");
+            assert_eq!(bytes, bundle.bytes);
+            assert_eq!(sha256_bytes(&bytes), entry["sha256"].as_str().unwrap());
+        }
+    }
+
+    /// A single enabled mod still produces a valid manifest and one entry.
+    #[test]
+    fn mods_bin_single_mod() {
+        let files = vec![bundle("solo", "9.9.9", 1)];
+        let body = pack_mods_bin(&files).expect("the archive must pack");
+        let mut archive =
+            zip::ZipArchive::new(std::io::Cursor::new(&body)).expect("the archive must parse");
+        assert_eq!(archive.len(), 2);
+        assert!(archive.by_name("mods.json").is_ok());
+        assert!(archive.by_name("solo.hnmod").is_ok());
+    }
 }

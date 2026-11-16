@@ -138,6 +138,7 @@ impl Controller {
             error: None,
         };
         controller.resume();
+        crate::native_mods::resume_build(&home);
         controller
     }
 
@@ -1115,6 +1116,31 @@ impl Controller {
                 self.catalog.status =
                     "Native mods disabled. The stock game runs on the next start.".into();
                 return Ok(json!({"disabled": true}));
+            }
+            "native_compile" => {
+                let game_home = self.catalog.config.game_home(&self.home);
+                return Ok(crate::native_mods::compile(&self.home, &game_home, arg)?);
+            }
+            "native_compile_status" => {
+                return Ok(crate::native_mods::compile_status());
+            }
+            "native_install" => {
+                return Ok(crate::native_mods::install(&self.home, arg)?);
+            }
+            "native_enabled" => {
+                let args: serde_json::Value = serde_json::from_str(arg)
+                    .map_err(|_| "Expected a JSON object with the mod id and the enabled flag".to_string())?;
+                let id = args
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or("Expected a JSON object with the mod id and the enabled flag")?;
+                let enabled = args
+                    .get("enabled")
+                    .and_then(serde_json::Value::as_bool)
+                    .ok_or("Expected a JSON object with the mod id and the enabled flag")?;
+                let game_home = self.catalog.config.game_home(&self.home);
+                crate::native_mods::set_enabled(&game_home, id, enabled)?;
+                return Ok(json!({ "id": id, "enabled": enabled }));
             }
             "native_remove" => {
                 let game_home = self.catalog.config.game_home(&self.home);

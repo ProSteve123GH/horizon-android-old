@@ -143,6 +143,8 @@ data class NativeMod(
     val size: Long,
     /** `imported`, `selected` (runs next start), `rejected` (set aside) or `invalid`. */
     val enabledState: String,
+    /** Whether the mod takes part in **Compile**. */
+    val enabled: Boolean,
 )
 
 /** The modded build chosen for the next start, or the one that was set aside. */
@@ -153,11 +155,40 @@ data class NativeCurrent(
     val abi: String,
     val rejected: Boolean,
     val rejectReason: String?,
+    /** Ids of the mods that build covers, as recorded in `current.json`. */
+    val mods: List<String>,
+)
+
+/** One mod inside the built library the build service produced. */
+data class NativeModRef(
+    val id: String,
+    val version: String,
+    val sha256: String,
+)
+
+/** The mod build pipeline's live state (`idle`, `requesting`, `queued`, `building`, `installing`, `ready`, `failed`). */
+data class NativeBuild(
+    val state: String,
+    val job: String?,
+    val cached: Boolean,
+    val ahead: Int?,
+    val seconds: Int?,
+    val sha256: String?,
+    val size: Long?,
+    val error: String?,
+    val settled: Boolean,
+    val downloaded: Long,
+    val installTotal: Long?,
+    val installFailed: Boolean,
+    val mods: List<NativeModRef>,
+    val versionCode: Long,
+    val abi: String,
 )
 
 data class NativeMods(
     val mods: List<NativeMod>,
     val current: NativeCurrent?,
+    val build: NativeBuild?,
 )
 
 data class Conflict(val name: String, val keepBoth: Boolean)
@@ -341,6 +372,7 @@ data class Snapshot(
                                 name = it.optString("name"),
                                 size = it.optLong("size"),
                                 enabledState = it.optString("enabled_state"),
+                                enabled = it.optBoolean("enabled", true),
                             )
                         },
                         current = n.optJSONObject("current")?.let { c2 ->
@@ -351,10 +383,41 @@ data class Snapshot(
                                 abi = c2.optString("abi"),
                                 rejected = c2.optBoolean("rejected"),
                                 rejectReason = c2.text("reject_reason"),
+                                mods = c2.optJSONArray("mods")?.let { list ->
+                                    List(list.length()) { index -> list.optString(index) }
+                                }.orEmpty(),
+                            )
+                        },
+                        build = n.optJSONObject("build")?.let { b ->
+                            NativeBuild(
+                                state = b.optString("state", "idle"),
+                                job = b.text("job"),
+                                cached = b.optBoolean("cached"),
+                                ahead = b.optInt("ahead", -1).takeIf { it >= 0 },
+                                seconds = b.optInt("seconds", -1).takeIf { it >= 0 },
+                                sha256 = b.text("sha256"),
+                                size = b.optLong("size", -1).takeIf { it >= 0 },
+                                error = b.text("error"),
+                                settled = b.optBoolean("settled"),
+                                downloaded = b.optLong("downloaded"),
+                                installTotal = b.optLong("installTotal", -1).takeIf { it >= 0 },
+                                installFailed = b.optBoolean("installFailed"),
+                                mods = b.optJSONArray("mods")?.let { list ->
+                                    List(list.length()) { index ->
+                                        val entry = list.optJSONObject(index)
+                                        NativeModRef(
+                                            id = entry?.optString("id").orEmpty(),
+                                            version = entry?.optString("version").orEmpty(),
+                                            sha256 = entry?.optString("sha256").orEmpty(),
+                                        )
+                                    }
+                                }.orEmpty(),
+                                versionCode = b.optLong("versionCode"),
+                                abi = b.optString("abi"),
                             )
                         },
                     )
-                } ?: NativeMods(emptyList(), null),
+                } ?: NativeMods(emptyList(), null, null),
             )
         }
     }
