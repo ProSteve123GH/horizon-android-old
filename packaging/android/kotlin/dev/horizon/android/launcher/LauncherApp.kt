@@ -350,7 +350,7 @@ private fun LauncherContent(
         ImportDialogs(state.documents)
         // First run, or still on SAF: offer internal storage once. "Not now"
         // keeps the SAF mode fully working and never shows again.
-        if (state.storage.state == "private" && !state.storage.prompted && !storagePromptDismissed) {
+        if (state.storage.state == "private" && !state.storage.prompted && !storagePromptDismissed && !settingsOpen) {
             StoragePromptDialog(onDismiss = { storagePromptDismissed = true })
         }
     }
