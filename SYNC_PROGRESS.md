@@ -438,3 +438,44 @@ can name another builds repository. The workflow copy `packaging/android/dev-bui
 byte-identical. `packaging/android/mod_builds_announce.py` is tested by
 `tests/test_android_mod_builds_announce.py` (mapping upsert, exact cache key), and the Android
 suite now has 21 tests.
+
+### Post-merge fixes: GLES crash, shader validity, warnings, native-mod API (2026-11-16)
+
+PR #13 merged into `android` at `2fde1b23b5`. The dev 29 APK
+(`0.7.7-dev.29.2fde1b23b517`) crashed on the OpenGL ES renderer at
+`crates/horizon-client-render/src/gfx/terrain_source.rs:91` ("terrain emissive lookup"): the GLES
+unroller still matched upstream's old 32-entry loop, but the synced `terrain.wgsl` has 128
+entries. The unroller now targets `128u`, emits 128 flat guarded branches (`emissive_found`, first
+match and the `0xffffffff` sentinel preserved) instead of a deep else-if AST, and logs and returns
+the source rather than panicking if the loop changes again; a test covers that fallback.
+
+The same shader carried both the fork's packed `TerrainOut` entry points and upstream's
+`TerrainWire` ones (`opaque_quad`/`vs_terrain_opaque` twice, plus `fs_cutout_static`), so both the
+Vulkan and GLES modules were invalid WGSL. The base keeps upstream's wire interface; the GLES
+lowering uses it, removes the Adreno 304 `rotated_grid` path, and the sprite include matches the
+current `sample_rgss(..., tiled)` signature. The GLES module now gets the `hdr_light.wgsl` prelude
+(its `HDR_WRITE_LIGHT` override was undefined). The Android static-cutout/settled-terrain pipelines
+are off until they get a wire-interface fragment; the plain opaque/cutout pipelines are unchanged
+and this is a performance-only loss on those toggles.
+
+Native mods failed against the synced base with `no field options_to_game` (the mod build server
+reached the mod glue at `game.rs:14136`). `Game::options_to_game` is back with upstream's exact
+pre-removal behavior: `open_options_at` clears it and Done consumes it to return to the game. The
+HDR shortcut itself stays removed.
+
+The dev 29 build's warnings are fixed: renderer unused imports/fields/variants, the duplicate
+`Screen::BlockEditor` arm and unused Android re-exports, the shared launcher backend's
+Android-only paths, and the remaining code-mod hooks (narrow allows where the WASM runtime is not
+wired). `actions/setup-java` is v5 in both workflow copies, which stay byte-identical. The stale
+render test compile errors and assertions from the sync are repaired; the render terrain test
+naga-validates both backends and the no-pattern fallback.
+
+Branch `fix/android-gles-and-warnings`, commit `d11096cc0d`, PR #14:
+https://github.com/ProSteve123GH/horizon-android-old/pull/14. Dev APK run 43787339341 is building
+from that commit. The base for `2fde1b23b5` succeeded (run 43777239950); the base for
+`d11096cc0d` still has to be dispatched once the dev APK's version label is known, since
+`MOD_BUILDS_TOKEN` is absent from the game repository. `cargo check -p horizon-android` (aarch64,
+single job, no debuginfo) compiles; the 21 Android Python tests and
+`tools/check_public_tree.py` pass. The desktop `cargo check -p horizon-client` cannot run on this
+Termux host (`hidapi`'s build script has no libudev); that is an environment limit, not this
+change.
