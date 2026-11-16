@@ -2093,8 +2093,8 @@ dependencies = [
 name = "horizon-trampoline"
 version = "0.1.0"
 dependencies = [
- "android-activity",
  "libc",
+ "ndk-sys",
  "serde_json",
 ]
 
