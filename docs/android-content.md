@@ -7,12 +7,20 @@ buttons, browses that directory in a system file manager. If the phone shows an
 app chooser, select Files. Alternatively open the system Files app and select
 **Horizon Android** in its navigation drawer.
 
+Game data lives in the app-specific external folder
+(`Android/data/dev.horizon.android/files`), a real folder on shared storage, and
+not in app-private internal storage. On the first launch after updating, the old
+internal game data is copied there once; the old copy is left in place so a failed
+migration never loses a world. External storage is also used by the game process
+and by the Files provider. No `MANAGE_EXTERNAL_STORAGE` permission is needed.
+
 The provider contains **Mods**, **Resource Packs**, **Shader Packs**, **Worlds**,
-and **Configuration** for the selected launcher profile, and **Reports**. Files stay in app storage; no migration
-or second copy is needed. Android grants other apps access to documents you select.
-Account files, launcher configuration and prepared game resources are not exposed.
-Reports are read-only and can be copied or shared through Files. Screenshots
-continue to appear in **Pictures/HorizonAndroid**.
+and **Configuration** for the selected launcher profile, and **Reports**. Android
+grants other apps access to documents you select. Account files, launcher
+configuration and prepared game resources are not exposed. Reports cannot be
+opened for writing, but exported ZIPs, crash text and standalone performance
+reports can be deleted, renamed or moved through Files. Screenshots continue to
+appear in **Pictures/HorizonAndroid**.
 
 **Configuration** exposes only `options.txt`, `horizon-graphics.txt`,
 `horizon-touch.json` and `horizon-keypad.json`. These are the existing engine
@@ -77,7 +85,8 @@ existing content. Original URI grants are not retained after copying.
 The allowlisted DocumentsProvider supports browsing, copying files in and out,
 editing, renaming, moving and deleting files and child folders. Fixed directories
 (Mods, Resource Packs, Shader Packs, Worlds, Configuration and Reports) cannot be
-removed or moved. The Configuration root exposes only `options.txt`,
+removed or moved; report files can be deleted, renamed or moved. Configuration
+files can be written; report contents stay read-only. The Configuration root exposes only `options.txt`,
 `horizon-graphics.txt`, `horizon-touch.json` and `horizon-keypad.json`; those
 files can be written, renamed, moved or deleted, while account data and other
 private files stay outside the provider. Deleting a child folder (a world or
@@ -86,8 +95,8 @@ does not implement same-provider `copyDocument`; system Files can still copy
 documents in and out through create, read and write. Hidden paths, traversal and
 symlinks are rejected. World and configuration content operations are refused
 while the game is running: the provider probes the game lock and each world's
-`session.lock`. It does not require MANAGE_EXTERNAL_STORAGE. ZIP-world
-import/export and moving the game to an external folder remain separate tasks.
+`session.lock`. It does not require MANAGE_EXTERNAL_STORAGE. Game data already lives in the
+app-specific external folder; ZIP-world import/export remains a separate task.
 
 Copying directly with a file manager bypasses the Import file validator; wait for
 the copy to finish before starting the game, and use the game's pack selection to

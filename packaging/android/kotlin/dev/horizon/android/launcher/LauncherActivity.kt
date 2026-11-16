@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import dev.horizon.android.HorizonActivity
+import dev.horizon.android.HorizonHome
 import dev.horizon.android.NativeBridge
 import dev.horizon.android.NativeMods
 import java.io.File
@@ -18,10 +19,11 @@ class LauncherActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        copyEngineData()
+        val home = HorizonHome.ensure(this)
+        copyEngineData(home)
         NativeBridge.start(
             this,
-            filesDir.absolutePath,
+            home.absolutePath,
             NativeMods.stamp(this),
             runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull(),
         )
@@ -52,17 +54,17 @@ class LauncherActivity : ComponentActivity() {
      * reachable.
      */
     private fun startClassicLauncher() {
-        File(filesDir, "launch-request.json").delete()
+        File(HorizonHome.ensure(this), "launch-request.json").delete()
         startActivity(Intent(this, HorizonActivity::class.java))
     }
 
     /** The engine tables ship inside the APK; the installer reads them from app storage. */
-    private fun copyEngineData() {
-        val target = File(filesDir, "engine-data.zip")
+    private fun copyEngineData(home: File) {
+        val target = File(home, "engine-data.zip")
         val updated = packageManager.getPackageInfo(packageName, 0).lastUpdateTime
         if (target.isFile && target.lastModified() >= updated) return
         runCatching {
-            val partial = File(filesDir, "engine-data.partial")
+            val partial = File(home, "engine-data.partial")
             assets.open("engine-data.zip").use { input ->
                 partial.outputStream().use { input.copyTo(it) }
             }

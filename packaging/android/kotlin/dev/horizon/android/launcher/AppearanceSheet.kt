@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import dev.horizon.android.HorizonHome
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -430,7 +431,8 @@ private fun decodeBackground(path: String, maxDimension: Int): Bitmap? {
  */
 suspend fun importLauncherBackground(context: Context, uri: Uri): Result<Unit> =
     withContext(Dispatchers.IO) {
-        val partial = File(context.filesDir, "launcher-background.partial")
+        val home = HorizonHome.ensure(context)
+        val partial = File(home, "launcher-background.partial")
         runCatching {
             val resolver = context.contentResolver
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -461,7 +463,7 @@ suspend fun importLauncherBackground(context: Context, uri: Uri): Result<Unit> =
                 }
                 Files.move(
                     partial.toPath(),
-                    File(context.filesDir, "launcher-background.jpg").toPath(),
+                    File(home, "launcher-background.jpg").toPath(),
                     StandardCopyOption.REPLACE_EXISTING,
                 )
                 Unit

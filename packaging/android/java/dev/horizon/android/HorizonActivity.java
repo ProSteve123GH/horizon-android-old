@@ -36,7 +36,17 @@ public final class HorizonActivity extends android.app.NativeActivity {
         NativeMods.INSTANCE.started(this);
     }
 
+    private void prepareHome() {
+        java.io.File home = HorizonHome.ensure(this);
+        try {
+            android.system.Os.setenv("HORIZON_HOME", home.getAbsolutePath(), true);
+        } catch (Throwable error) {
+            android.util.Log.w("HorizonActivity", "Cannot select the game data folder", error);
+        }
+    }
+
     @Override protected void onCreate(android.os.Bundle state) {
+        prepareHome();
         loadGame();
         super.onCreate(state);
     }

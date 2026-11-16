@@ -33,7 +33,7 @@ public final class ScreenshotProvider extends ContentProvider {
     }
 
     private String home() {
-        return getContext().getFilesDir().getAbsolutePath();
+        return HorizonHome.ensure(getContext()).getAbsolutePath();
     }
 
     static String id(Uri uri) {

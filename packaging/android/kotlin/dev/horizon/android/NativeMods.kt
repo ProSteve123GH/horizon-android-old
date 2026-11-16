@@ -7,8 +7,8 @@ import java.io.File
 /**
  * The native-mod build the game loads in place of the APK's own library.
  *
- * `crates/horizon-client/src/android/native_builds.rs` writes `files/native/compiled-<key>/`
- * (the library, `for`, `apk`, `build.json`) and `files/native/current`. This object is the
+ * `crates/horizon-client/src/android/native_builds.rs` writes `<data root>/native/compiled-<key>/`
+ * (the library, `for`, `apk`, `build.json`) and `<data root>/native/current`. This object is the
  * game's side: it picks that library when it was made for this version name and this install
  * of the APK, and counts the starts that never reached a first frame, so a build that crashes
  * the game is set aside instead of locking the player out.
@@ -36,7 +36,7 @@ object NativeMods {
      * build that closes before then is one that does not work.
      */
     fun chosen(context: Context, version: String?): File? {
-        val dir = File(context.filesDir, DIR)
+        val dir = File(HorizonHome.ensure(context), DIR)
         val name = text(File(dir, CURRENT)).orEmpty()
         if (name.isEmpty() || !plain(name)) return null
         val build = File(dir, name)
@@ -56,7 +56,7 @@ object NativeMods {
 
     /** The game reached its first frame: the build it runs works. */
     fun started(context: Context) {
-        val dir = File(context.filesDir, DIR)
+        val dir = File(HorizonHome.ensure(context), DIR)
         val name = text(File(dir, CURRENT)).orEmpty()
         if (name.isEmpty()) return
         File(File(dir, name), STARTS).delete()
@@ -74,14 +74,14 @@ object NativeMods {
 
     /** The launcher's notice about a build, read once. */
     fun takeNotice(context: Context): String? {
-        val file = File(context.filesDir, DIR).resolve(NOTICE)
+        val file = File(HorizonHome.ensure(context), DIR).resolve(NOTICE)
         val text = text(file) ?: return null
         file.delete()
         return text
     }
 
     private fun setAside(context: Context, reason: String) {
-        val dir = File(context.filesDir, DIR)
+        val dir = File(HorizonHome.ensure(context), DIR)
         runCatching { File(dir, NOTICE).writeText(reason) }
         File(dir, CURRENT).delete()
         Log.w("Horizon", reason)

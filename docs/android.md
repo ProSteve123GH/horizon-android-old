@@ -26,9 +26,12 @@ asset index and asset objects, and downloads anything missing. See
 block access to another app's private `Android/data` directory; export a ZIP or
 use **Download** in that case.
 
-Worlds, profiles, resource caches and account data use app-private storage.
-Updating with the same signing certificate preserves them; uninstalling the app
-or clearing its storage removes them.
+Worlds, profiles, configuration, mods, packs, reports and account files use the
+app-specific external folder (`Android/data/dev.horizon.android/files`); temporary
+caches stay in app-private/cache storage. The first launch after updating copies
+old internal game data to the external folder. Updating with the same signing
+certificate preserves both; uninstalling the app or clearing its storage removes
+them.
 
 | APK architecture | Minimum Android | Native `.hmod` runtime |
 | --- | --- | --- |
@@ -245,8 +248,8 @@ Open **Play → Screenshots** or **Settings → Storage → Screenshots** to bro
 originals kept in every instance. The grid samples thumbnails, so opening a large
 gallery does not decode every full-size image. Tap a screenshot for a full-screen
 preview with pinch zoom, pan, filename, resolution, file size and date. Sharing
-uses an app-private, read-only content provider with a temporary URI grant; raw
-private paths never reach the share sheet. Deletion asks for confirmation and
+uses a read-only content provider with a temporary URI grant; raw private paths
+never reach the share sheet. Deletion asks for confirmation and
 keeps working if the file was already removed outside the app. The list can be
 sorted newest first, oldest first or by name, and grouped by instance when more
 than one instance has screenshots. Removing the original does not remove a copy
