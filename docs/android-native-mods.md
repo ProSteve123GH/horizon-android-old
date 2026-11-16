@@ -58,7 +58,7 @@ its id, version and file name. Each bundle's state:
 
 1. Import one or more bundles as above and enable the ones you want built
    (the toggle per row).
-2. Press **Compile** (Settings → Mods → Native mods (.hnmod), the big
+2. Press **Compile** (the **Mods** tab → **Native mods (.hnmod)**, the big
    button below the list). If no mod is enabled the button is greyed out and
    says why; while a build is in flight it stays greyed out.
 3. A confirmation dialog states the risk, literally:
