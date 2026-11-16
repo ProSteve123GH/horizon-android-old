@@ -14,7 +14,7 @@ upstream repository and does not publish GitHub Releases automatically.
 | Minecraft reuse | Import an existing Minecraft 26.3 folder or ZIP through Android's Storage Access Framework, verify it against the engine pins and download only missing files. |
 | Game files location | The player-facing files (worlds, mods, packs, shader packs, options, servers, screenshots, instances and shareable reports) can move from app storage to `Horizon-Android` on shared storage via Settings → Storage → Game files location, after the user grants the storage access Android shows. Everything private stays app-private. |
 | Repair | A **Repair missing files** action on the installed state verifies the prepared resources and redownloads missing or damaged Minecraft files. |
-| Dev identity | CI builds use `dev.horizon.android.dev` and the label **Horizon Android Dev**, separate from a release install. |
+| Dev identity | CI builds use `dev.horizon.android.steve.dev` and the label **Horizon Android Dev**, separate from a release install. |
 | Dev builds | `.github/workflows/android-dev.yml` builds an arm64 APK on fork branches and can build all ABIs on dispatch. |
 | Docs | Import, fork, upstream-sync and dev-build notes are in this directory. |
 
@@ -45,8 +45,8 @@ the Compose launcher does not change that architecture.
 
 | Build | Application ID | Label |
 | --- | --- | --- |
-| Local debug | `dev.horizon.android.dev` | Horizon Android Dev |
-| CI dev | `dev.horizon.android.dev` | Horizon Android Dev |
+| Local debug | `dev.horizon.android.steve.dev` | Horizon Android Dev |
+| CI dev | `dev.horizon.android.steve.dev` | Horizon Android Dev |
 | Public/release | `dev.horizon.android` | Horizon Android |
 
 CI dev builds use `ANDROID_DEV_KEYSTORE_BASE64` when configured. Without it, the

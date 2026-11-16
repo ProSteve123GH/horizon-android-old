@@ -247,7 +247,7 @@ jobs:
               'branch': os.environ['GITHUB_REF_NAME'],
               'abi': abi,
               'profile': os.environ['PROFILE'],
-              'package': 'dev.horizon.android.dev',
+              'package': 'dev.horizon.android.steve.dev',
               'version_code': 1000 + int(os.environ['GITHUB_RUN_NUMBER']),
               'experimental': True,
               'signing': os.environ['SIGNING'],
@@ -261,7 +261,7 @@ jobs:
                   f'Profile: `{os.environ["PROFILE"]}`. Signing: {os.environ["SIGNING"]}.\n\n'
                   f'SHA-256: `{digest}`\n\n'
                   'Download the APK artifact below. It installs separately from the release app '
-                  'as `dev.horizon.android.dev`; worlds and accounts are not copied automatically.\n')
+                  'as `dev.horizon.android.steve.dev`; worlds and accounts are not copied automatically.\n')
           PY
           # Convert the version code to the exact APK identity for the log.
           "$ANDROID_HOME/build-tools/${BUILD_TOOLS_VERSION}/aapt2" dump badging \

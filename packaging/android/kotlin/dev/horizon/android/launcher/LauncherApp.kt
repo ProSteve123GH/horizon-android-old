@@ -58,6 +58,9 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.toShape
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -70,6 +73,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
@@ -121,13 +125,26 @@ sealed interface Overlay {
 @Composable
 fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit) {
     var appearance by remember { mutableStateOf(LauncherAppearance.load()) }
+    // Fade and grow in over the splash window so opening the app is a transition, not a cut.
+    val appear = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { appear.animateTo(1f, tween(durationMillis = 450, easing = FastOutSlowInEasing)) }
     HorizonTheme(appearance) {
-        LauncherContent(
-            appearance = appearance,
-            onAppearance = { appearance = it },
-            onPlay = onPlay,
-            onImport = onImport,
-        )
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = appear.value
+                    scaleX = 0.97f + 0.03f * appear.value
+                    scaleY = 0.97f + 0.03f * appear.value
+                },
+        ) {
+            LauncherContent(
+                appearance = appearance,
+                onAppearance = { appearance = it },
+                onPlay = onPlay,
+                onImport = onImport,
+            )
+        }
     }
 }
 

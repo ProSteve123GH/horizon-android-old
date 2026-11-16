@@ -30,7 +30,7 @@ android {
         debug {
             signingConfig signingConfigs.development
             versionNameSuffix '-dev.' + providers.gradleProperty('devBuild').getOrElse('local')
-            if (!providers.gradleProperty('appId').isPresent()) { applicationIdSuffix '.dev' }
+            if (!providers.gradleProperty('appId').isPresent()) { applicationIdSuffix '.steve.dev' }
         }
         release {
             debuggable false

@@ -12,10 +12,12 @@ The default push build is `arm64-v8a`. A dispatch with **all_abis** builds
 `release` profile by default (ThinLTO), public payload checks and on-device
 Mojang downloads.
 
-The CI package is `dev.horizon.android.dev`, labelled **Horizon Android Dev**, so
-it installs beside a release app. The version name contains the workflow run and
-source commit; the version code is `1000 + run_number`. Test data is separate:
-worlds and accounts are not copied from the release app.
+The CI package is `dev.horizon.android.steve.dev`, labelled **Horizon Android Dev**, so
+it installs beside a release app. It changed from the old `dev.horizon.android.dev`
+identity, which installs as a separate app; its worlds and accounts are not carried
+over, so uninstall the old package manually. The version name contains the workflow
+run and source commit; the version code is `1000 + run_number`. Test data is
+separate: worlds and accounts are not copied from the release app.
 
 The workflow never publishes GitHub Releases, sends Discord messages or attaches
 raw Minecraft inputs, prepared resources, player data or signing keys to an
