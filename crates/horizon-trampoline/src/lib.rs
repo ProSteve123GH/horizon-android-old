@@ -23,10 +23,10 @@ fn parse_active(text: &str) -> Result<String, String> {
 }
 
 /// `NativeActivity` entry point (`ANativeActivity_onCreate`) comes from
-/// `android-activity`, which then calls this with the same signature the game
-/// library exports.
+/// `android-activity`, which then calls this — the same extern "Rust"
+/// signature the game library exports (crates/horizon-client/src/android_main.rs).
 #[unsafe(no_mangle)]
-pub extern "C" fn android_main(app: AndroidApp) {
+pub fn android_main(app: AndroidApp) {
     let Some(files_dir) = app.internal_data_path() else {
         fatal("Android supplied no application data directory");
     };
@@ -64,7 +64,7 @@ pub extern "C" fn android_main(app: AndroidApp) {
         fatal("the chosen game library does not export android_main");
     }
     // SAME signature the game library exports (crates/horizon-client/src/android_main.rs).
-    let game: extern "C" fn(AndroidApp) = unsafe { std::mem::transmute(entry) };
+    let game: extern "Rust" fn(AndroidApp) = unsafe { std::mem::transmute(entry) };
     game(app);
 }
 
