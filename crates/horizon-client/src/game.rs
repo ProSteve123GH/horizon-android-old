@@ -2599,6 +2599,9 @@ struct Game<'a> {
     narration: horizon_client::screen_narrator::ScreenNarrator,
     /// Where the options screen returns: true = title, false = pause menu.
     options_from_title: bool,
+    /// A native mod opened the options from the game: Done returns to the game.
+    /// The HDR shortcut that used this is gone, but the native-mod API keeps it.
+    options_to_game: bool,
     dragging: bool,
     /// `ClientAvatarState`: walked distance and view bob.
     avatar: horizon_client::camera::AvatarBob,
@@ -11884,6 +11887,7 @@ impl<'a> Game<'a> {
             narrator_toast: None,
             narration: Default::default(),
             options_from_title: false,
+            options_to_game: false,
             dragging: false,
             avatar: Default::default(),
             flash: 0,

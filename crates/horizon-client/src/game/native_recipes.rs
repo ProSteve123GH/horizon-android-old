@@ -388,6 +388,7 @@ impl Game<'_> {
 impl Game<'_> {
     /// Capability `recipes`'s tables and known displays for this tick's
     /// snapshot; nothing while no running mod reads them.
+    #[allow(dead_code)]
     pub(super) fn mod_recipes(&mut self) -> (Option<Arc<horizon_mods::Recipes>>, Arc<[i32]>) {
         if !self.mods.mods.wants_recipes() || self.res.rest.get().is_none() {
             return (None, Arc::from([]));
@@ -449,6 +450,8 @@ mod wasm {
             tags: i.tags.clone(),
         }
     }
+    // The library build compiles the conversion without the game that calls it.
+    #[allow(dead_code)]
     pub(super) fn recipes(t: &Recipes) -> m::Recipes {
         m::Recipes {
             items: t.items.iter().map(item).collect(),

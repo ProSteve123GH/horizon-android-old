@@ -78,7 +78,6 @@ pub(crate) use horizon_client::{
     device_preferences, diagnostics, display, document_store, performance,
 };
 
-pub(crate) use horizon_client::{keyboard_mouse_input, touch_input, touch_visible};
 use std::cell::RefCell;
 pub(crate) fn configure_input_mode(mode: catalog::InputHost) {
     horizon_client::android_runtime::configure_input(mode);

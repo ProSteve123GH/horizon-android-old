@@ -210,6 +210,7 @@ impl Game<'_> {
         self.settings.extras.pvp.combat.legacy
     }
     /// Combat feel Legacy hides the attack indicator unless the player keeps it.
+    #[allow(dead_code)]
     pub(in crate::game) fn pvp_hides_attack_indicator(&self) -> bool {
         let combat = self.settings.extras.pvp.combat;
         combat.legacy && !combat.indicator

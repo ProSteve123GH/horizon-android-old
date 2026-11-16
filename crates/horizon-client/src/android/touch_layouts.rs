@@ -43,25 +43,6 @@ pub const MODES: [(&str, &str); 3] = [
     ("dpad", "D-Pad & tap to interact"),
 ];
 
-/// Short labels of the fixed controls, in the engine's `Control::ALL` order.
-/// The launcher draws them beside a profile's preview.
-pub const CONTROL_LABELS: [&str; CONTROLS] = [
-    "Move",
-    "Sprint",
-    "Jump",
-    "Sneak",
-    "Attack",
-    "Use",
-    "Chat",
-    "Pause",
-    "Settings",
-    "Inventory",
-    "Debug",
-    "Perspective",
-    "Offhand",
-    "Shield",
-];
-
 pub fn mode_label(mode: &str) -> &'static str {
     MODES
         .iter()

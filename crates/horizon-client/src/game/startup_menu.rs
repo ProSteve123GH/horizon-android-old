@@ -29,7 +29,6 @@ pub(super) struct StartupMenu {
     #[cfg(target_os = "android")]
     audio_tick: Option<Instant>,
     pub(super) frame_graph: horizon_client::perf_overlay::FrameGraph,
-    pub(super) last_frame: Option<Instant>,
     title: Option<Title>,
     options: OptionsUi,
     options_open: bool,

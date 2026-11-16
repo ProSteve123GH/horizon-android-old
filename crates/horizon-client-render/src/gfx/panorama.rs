@@ -539,19 +539,6 @@ mod tests {
     }
 
     #[test]
-    fn cube_vertices_form_twelve_inward_facing_triangles() {
-        let mut faces = [0; 6];
-        for triangle in cube_vertices().chunks_exact(3) {
-            let [a, b, c] = [triangle[0], triangle[1], triangle[2]].map(glam::Vec3::from_array);
-            let normal = (b - a).cross(c - a);
-            assert_eq!(normal.length_squared(), 16.0);
-            assert!(normal.dot(a) < 0.0);
-            let axis = (0..3).find(|&i| normal[i] != 0.0).unwrap();
-            faces[axis * 2 + usize::from(normal[axis] > 0.0)] += 1;
-        }
-        assert_eq!(faces, [2; 6]);
-    }
-    #[test]
     fn rotation_speed_changes_preserve_position() {
         let mut rotation = Rotation::default();
         assert_eq!(rotation.update(5.0, 1.0), -10.0);

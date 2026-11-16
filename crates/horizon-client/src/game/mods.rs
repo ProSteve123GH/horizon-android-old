@@ -29,6 +29,8 @@ use {
 };
 
 #[derive(Default)]
+// Code-mod state; the WebAssembly runtime is not wired in this build.
+#[allow(dead_code)]
 pub(super) struct ModsState {
     #[cfg(feature = "mods")]
     pub(super) mods: Mods,
@@ -113,6 +115,7 @@ pub(super) struct ModsState {
 /// The mappings `input.mapping` answers for, with the default key their
 /// binding is translated to (none: a mouse button, attack or use).
 #[cfg(feature = "mods")]
+#[allow(dead_code)]
 const MAPPINGS: [(&str, Option<winit::keyboard::KeyCode>); 9] = {
     use winit::keyboard::KeyCode as K;
     [
@@ -129,6 +132,7 @@ const MAPPINGS: [(&str, Option<winit::keyboard::KeyCode>); 9] = {
 };
 /// Characters `render.text-width` knows exactly: U+0000 to U+024F.
 #[cfg(feature = "mods")]
+#[allow(dead_code)]
 const FONT_CHARS: u32 = 0x250;
 
 /// A `ui` mod's own screen, or its settings page from Options > Mods: the
@@ -182,10 +186,12 @@ impl ModsState {
 }
 /// How often dev mods are checked for a rebuild.
 #[cfg(feature = "mods")]
+#[allow(dead_code)]
 const RELOAD_CHECK: Duration = Duration::from_secs(1);
 
 /// A vanilla command name: mods may not take it.
 #[cfg(feature = "mods")]
+#[allow(dead_code)]
 fn vanilla_command(name: &str) -> bool {
     let d = vanilla::game_dispatcher();
     d.nodes[0]
@@ -515,6 +521,7 @@ impl Game<'_> {
     pub(super) fn open_mod_screen(&mut self, _owner: usize, _settings: bool) {}
     pub(super) fn draw_mod_screen(&mut self, _batch: &mut HudBatch) {}
     pub(super) fn mod_screen_click(&mut self, _button: winit::event::MouseButton) {}
+    #[allow(dead_code)]
     pub(super) fn mod_screen_key(&mut self, _key: winit::keyboard::KeyCode) -> bool {
         false
     }
@@ -738,6 +745,7 @@ impl Game<'_> {
     pub(super) fn mod_snapshot_with(&mut self, _players: Vec<ServerPlayer>) -> Snapshot {
         Snapshot::default()
     }
+    #[allow(dead_code)]
     pub(super) fn reload_dev_mods(&mut self) {}
     pub(super) fn merge_remote_tree(&mut self) {}
     pub(super) fn sync_mods(&mut self) {}
@@ -747,6 +755,7 @@ impl Game<'_> {
     /// A mod's line in the window's chat; not through system_message: a mod
     /// must not hear its own lines.
     /// Written by this client, so the Chat option doesn't hide it.
+    #[allow(dead_code)]
     pub(super) fn add_mod_chat_line(&mut self, line: Text) {
         let focused = self.screen == Screen::Chat;
         self.ui.chat.add(
@@ -865,6 +874,7 @@ impl Game<'_> {
     }
     /// A key while a mod screen is up: true when a key row waited for
     /// it (Key Binds: Escape binds none).
+    #[allow(dead_code)]
     pub(super) fn mod_screen_key(&mut self, key: KeyCode) -> bool {
         if self
             .mods
@@ -1316,6 +1326,7 @@ mod tests {
 
 /// A mod gave `block` block entity `id`, but the block's template has none,
 /// so breaking it would never remove it: the block gets none.
+#[allow(dead_code)]
 pub(super) fn warn_no_block_entity(block: &str, id: &str) {
     log::warn!("{block}: no block entity {id}, its template has none (copy a chest or furnace)");
 }

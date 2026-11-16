@@ -1,4 +1,5 @@
 // Adapted from Starling's touch.rs tests (see the header of touch.rs).
+use super::draw::mining_radius;
 use super::*;
 
 mod gestures;
@@ -700,7 +701,6 @@ fn world_taps_never_press_attack_or_use_and_remember_the_original_item() {
 #[test]
 fn sprint_toggle_survives_finger_release_and_clears_on_focus_loss() {
     let mut t = TouchControls {
-        loaded: true,
         aspect: 16.0 / 9.0,
         ..Default::default()
     };
@@ -740,7 +740,6 @@ fn global_button_scale_changes_hit_geometry_without_rewriting_saved_layouts() {
 fn oversized_controls_can_be_dragged_on_narrow_portrait_surfaces() {
     let mut touch = TouchControls {
         aspect: 0.4,
-        loaded: true,
         ..Default::default()
     };
     touch.settings.layouts[0][Control::Move as usize].size = 0.45;
@@ -784,7 +783,6 @@ fn portrait_factory_shortcuts_do_not_overlap_and_margins_do_not_move_controls() 
     assert_eq!(touch.placement(Control::Chat).center, [0.25, 0.2]);
 }
 
-use super::*;
 #[test]
 fn editor_add_row_creates_a_button_without_closing_the_editor() {
     let mut touch = TouchControls::default();

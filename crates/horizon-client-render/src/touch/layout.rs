@@ -4,7 +4,6 @@
 //! This is the file the touch HUD and its in-game editor share. The Compose
 //! launcher hardcodes these layouts for its previews; keep them in sync.
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 
 /// How the player moves and aims.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -16,6 +16,7 @@ impl ExecutionRole {
     }
 
     /// The optional in-frame simulation remains a client execution mode.
+    #[allow(dead_code)]
     pub fn starts_integrated_server(self, server_thread: bool) -> bool {
         self.is_client() && server_thread
     }

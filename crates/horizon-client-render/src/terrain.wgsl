@@ -686,50 +686,6 @@ var<private> hdr_normal: vec3<f32>;
 fn hdr_facing() -> f32 {
     return mix(0.45, 1.0, max(dot(hdr_normal, globals.sun.xyz), 0.0));
 }
-fn opaque_quad(layer: u32, w: f32) -> bool {
-    return (layer & 0x8000u) != 0u && fade_code(w) == 0u;
-}
-fn left_out() -> TerrainOut {
-    var out: TerrainOut;
-    out.clip = vec4(2.0, 2.0, 2.0, 1.0);
-    return out;
-}
-@vertex fn vs_terrain_opaque(
-    @location(0) position: vec3<f32>, @location(1) uv: vec2<u32>,
-    @location(2) layer: u32, @location(3) color: vec4<f32>, @location(4) light: vec2<u32>,
-    @location(5) origin: vec4<f32>) -> TerrainOut {
-    if !opaque_quad(layer, origin.w) { return left_out(); }
-    return terrain_vertex(position, terrain_uv(uv, origin.w), layer, color, light, origin.xyz,
-        origin.w);
-}
-@vertex fn vs_terrain_cutout(
-    @location(0) position: vec3<f32>, @location(1) uv: vec2<u32>,
-    @location(2) layer: u32, @location(3) color: vec4<f32>, @location(4) light: vec2<u32>,
-    @location(5) origin: vec4<f32>) -> TerrainOut {
-    if opaque_quad(layer, origin.w) { return left_out(); }
-    return terrain_vertex(position, terrain_uv(uv, origin.w), layer, color, light, origin.xyz,
-        origin.w);
-}
-@vertex fn vs_terrain_flat_opaque(
-    @builtin(vertex_index) vertex: u32,
-    @location(0) position: vec3<f32>, @location(1) uv: vec2<u32>,
-    @location(2) layer: u32, @location(3) color: vec4<f32>, @location(4) light: vec2<u32>
-) -> TerrainOut {
-    let origin = slot_origins[block_slots[vertex >> 8u]];
-    if !opaque_quad(layer, origin.w) { return left_out(); }
-    return terrain_vertex(position, terrain_uv(uv, origin.w), layer, color, light, origin.xyz,
-        origin.w);
-}
-@vertex fn vs_terrain_flat_cutout(
-    @builtin(vertex_index) vertex: u32,
-    @location(0) position: vec3<f32>, @location(1) uv: vec2<u32>,
-    @location(2) layer: u32, @location(3) color: vec4<f32>, @location(4) light: vec2<u32>
-) -> TerrainOut {
-    let origin = slot_origins[block_slots[vertex >> 8u]];
-    if opaque_quad(layer, origin.w) { return left_out(); }
-    return terrain_vertex(position, terrain_uv(uv, origin.w), layer, color, light, origin.xyz,
-        origin.w);
-}
 fn terrain_vertex(position: vec3<f32>, uv: vec2<f32>, layer: u32, color: vec4<f32>,
     light: vec2<u32>, origin: vec3<f32>, w: f32) -> TerrainOut {
     // [world warp vertex]
@@ -820,17 +776,6 @@ fn hdr_mark(tier: u32, y: f32) -> f32 {
     let in = from_wire(wire);
     if in.height < globals.fog_ends.w { discard; }
     return solid_color(in);
-}
-// Identical alpha cutout, HDR and fog for sections with fade_code == 0.
-// Selecting this entrypoint is a CPU-side proof, never a quality option.
-@fragment fn fs_cutout_static(in: TerrainOut) -> @location(0) vec4<f32> {
-    let texel = sprite(in.uv, in.layer & 0x7fffu);
-    var color = texel * in.color;
-    if !TERRAIN_FULLY_VISIBLE {
-        color = mix(globals.fog_color * vec4(1.0, 1.0, 1.0, color.a), color, in.visibility);
-    }
-    if color.a < 0.5 && (in.layer & 0x8000u) == 0u { discard; }
-    return solid_finish(in, texel, color);
 }
 fn solid_color(in: TerrainOut) -> vec4<f32> {
     let dx = dpdx(in.local);
