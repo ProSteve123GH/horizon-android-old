@@ -95,8 +95,24 @@ impl Controller {
             }
         });
         let mut catalog = Catalog::new(&home);
+        // Finish or undo a migration the app was killed during, before any
+        // file is opened or moved again.
+        let recovery = match crate::shared_storage::recover(&home) {
+            Ok(note) => note,
+            Err(error) => {
+                log::error!("{error}");
+                Some(error)
+            }
+        };
         if crate::diagnostics::previous_unclean(&home) {
             catalog.status = crate::diagnostics::summary(&home);
+        }
+        if let Some(note) = recovery {
+            catalog.status = if catalog.status.is_empty() {
+                note
+            } else {
+                format!("{note} {}", catalog.status)
+            };
         }
         horizon_client::android_runtime::graphics_startup::configure(home.clone());
         if horizon_client::android_runtime::graphics_startup::recover(&home) {
@@ -236,21 +252,27 @@ impl Controller {
     fn storage_snapshot(&self) -> Value {
         let moving = crate::shared_storage::busy();
         let (done, total) = crate::shared_storage::progress();
+        let prompted = crate::shared_storage::prompt_done(&self.home);
         if moving {
-            return json!({"state": "moving", "dir": Value::Null, "done": done, "total": total});
+            return json!({"state": "moving", "dir": Value::Null, "done": done, "total": total,
+                "prompted": prompted});
         }
         match crate::shared_storage::state(&self.home) {
             crate::shared_storage::State::Private => {
-                json!({"state": "private", "dir": Value::Null, "done": 0, "total": 0})
+                json!({"state": "private", "dir": Value::Null, "done": 0, "total": 0,
+                    "prompted": prompted})
             }
             crate::shared_storage::State::Shared => json!({
                 "state": "shared",
                 "dir": crate::shared_storage::resolve(&self.home).to_string_lossy(),
                 "done": done,
                 "total": total,
+                "prompted": prompted,
             }),
             crate::shared_storage::State::Missing => {
-                json!({"state": "missing", "dir": Value::Null, "done": 0, "total": 0})
+                json!({"state": "missing", "dir": crate::shared_storage::recorded_dir(&self.home)
+                    .map(|dir| dir.to_string_lossy().into_owned()),
+                    "done": 0, "total": 0, "prompted": prompted})
             }
         }
     }
@@ -926,7 +948,11 @@ impl Controller {
                 {
                     return Err("Finish the current task first".into());
                 }
-                if crate::shared_storage::state(&self.home) != crate::shared_storage::State::Shared
+                // A missing folder can still be moved back once the player
+                // re-creates it (it may hold the restored worlds), so the
+                // recorded location is passed even when it is not readable
+                // right now; the migration itself reports that honestly.
+                if crate::shared_storage::state(&self.home) == crate::shared_storage::State::Private
                 {
                     return Err("The game files are on app storage already".into());
                 }
@@ -935,10 +961,44 @@ impl Controller {
                 self.storage_worker = Some(receiver);
                 self.catalog.status = "Moving game files back to app storage…".into();
                 std::thread::spawn(move || {
-                    let shared = crate::shared_storage::resolve(&home);
+                    let shared = crate::shared_storage::recorded_dir(&home)
+                        .unwrap_or_else(|| crate::shared_storage::resolve(&home));
                     let result = crate::shared_storage::migrate(&home, &shared, false);
                     let _ = sender.send(result);
                 });
+            }
+            "storage_recreate" => {
+                if self.worker.is_some()
+                    || self.storage_worker.is_some()
+                    || crate::minecraft_import::busy()
+                    || crate::documents::busy()
+                {
+                    return Err("Finish the current task first".into());
+                }
+                if crate::shared_storage::state(&self.home) != crate::shared_storage::State::Missing
+                {
+                    return Err("The shared folder is either there or was never used".into());
+                }
+                let Some(folder) = crate::shared_storage::recorded_dir(&self.home) else {
+                    return Err("No shared folder is recorded in the storage marker".into());
+                };
+                if folder.is_dir() {
+                    return Ok(json!("The folder is there already."));
+                }
+                std::fs::create_dir_all(&folder)
+                    .map_err(|e| format!("Cannot re-create {}: {e}", folder.display()))?;
+                let note = format!(
+                    "Re-created {}. The folder is empty; if it was deleted by accident, restore its contents from your file manager's Trash first.",
+                    folder.display()
+                );
+                self.catalog.status = note.clone();
+                self.catalog.refresh(&self.home);
+                Ok(json!(note))
+            }
+            "storage_prompt_done" => {
+                crate::shared_storage::mark_prompt_done(&self.home)
+                    .map_err(|e| format!("Could not record the prompt choice: {e}"))?;
+                Ok(json!("ok"))
             }
             "game_files" => {
                 self.catalog.status = if crate::platform::open_documents(
@@ -1743,7 +1803,7 @@ impl Controller {
         }
         if crate::shared_storage::state(&self.home) == crate::shared_storage::State::Missing {
             self.catalog.status =
-                "Horizon cannot find the Horizon-Android folder with your worlds. Re-create it from a file manager, or move the game files back in Settings → Storage.".into();
+                "Horizon cannot find the Horizon-Android folder with your worlds. Re-create it from Settings → Storage → Game files location (or from a file manager), or move the game files back in the same place.".into();
             return Ok(json!({"launch": false}));
         }
         if horizon_client::official_install::ready(&self.home) {
