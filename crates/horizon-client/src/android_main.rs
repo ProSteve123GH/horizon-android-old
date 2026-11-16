@@ -83,6 +83,25 @@ pub(crate) fn configure_input_mode(mode: catalog::InputHost) {
     horizon_client::android_runtime::configure_input(mode);
 }
 
+/// A crash report the system Files app can reach under **Reports**. `crash::deliver` calls
+/// this before it saves the report itself, so a failure here cannot lose the report. The
+/// diagnostic-log tail is bounded; the AI summary or an upload runs nowhere in this path.
+pub(crate) fn copy_crash_report(home: &std::path::Path, report: &horizon_client::crash::Report) {
+    let dir = home.join("performance");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let path = dir.join(horizon_client::crash::file_name(&report.time, "android"));
+    let mut text = report.text();
+    if let Ok(log) = std::fs::read(dir.join("diagnostic.log")) {
+        const TAIL: usize = 256 * 1024;
+        let tail = &log[log.len().saturating_sub(TAIL)..];
+        text.push_str("\n\n-- Diagnostic log (tail) --\n");
+        text.push_str(&String::from_utf8_lossy(tail));
+    }
+    let _ = std::fs::write(path, text);
+}
+
 /// The library's `crate::save_input_mode`, kept for the launcher's next start. It uses the
 /// same home the rest of the game does (the app-specific external folder when available),
 /// never the old internal folder the activity started with.
@@ -279,7 +298,7 @@ fn android_main(app: AndroidApp) {
     // when the crash happened before the launcher could export anything. This runs before the
     // crash report is saved: saving the copy must never depend on a later summary, upload or
     // provider callback succeeding.
-    horizon_client::crash::on_report(horizon_client::diagnostics::copy_crash_report);
+    horizon_client::crash::on_report(copy_crash_report);
     exit_reports::install(&home);
     let _ = std::fs::remove_file(home.join("android-error.txt"));
     if let Some(mut data) = engine_data {
