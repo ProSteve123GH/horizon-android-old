@@ -11,10 +11,11 @@ switch. The first install shows a trust notice, and every build waits behind a r
 after a review (its later releases are checked by machine); and they play in a game of their own, built for the
 instance they are installed in.
 
-> On Android (this fork) they are import-only: the launcher validates and stores `.hnmod` bundles, and a
+> On Android (this fork) the launcher validates and stores `.hnmod` bundles, and a
 > trampoline loader picks the stock or a modded game library on every start (a build that crashes before its
-> first frame twice is set aside). Nothing builds a native mod in the Android app yet — there is no mod
-> build service for this fork — so bundles cannot be compiled or run today. See
+> first frame twice is set aside). A personal build service for this fork compiles the pinned commit on
+> GitHub-hosted runners: the launcher's **Compile** button sends the enabled bundles, polls the job and
+> installs the resulting library. See
 > [docs/android-native-mods.md](android-native-mods.md).
 
 ## Pinned to a Nightly
