@@ -631,8 +631,6 @@ impl Controller {
                     && p.source == crate::browser::SourceId::Modrinth;
                 let note = if java_mod {
                     Some("Java mod")
-                } else if crate::catalog::source_only_mod(p) {
-                    Some(".hnmod: later")
                 } else if p.kind == crate::browser::Kind::Mod && !cfg!(target_pointer_width = "64")
                 {
                     Some("64-bit required")
