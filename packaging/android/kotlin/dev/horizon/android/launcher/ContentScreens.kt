@@ -85,7 +85,7 @@ fun CatalogScreen(page: Destination, state: Snapshot, wide: Boolean, actions: La
     val hint = when {
         page == Destination.Mods && state.config.modSource == "modrinth" ->
             "Modrinth Java mods are browse-only: Fabric, Forge and NeoForge cannot run here."
-        page == Destination.Mods -> "Horizon content mods (.hmod). Paste an HTTPS .hmod link to import it."
+        page == Destination.Mods -> "Horizon content mods (.hmod) and native mods (.hnmod). Paste an HTTPS link to import."
         page == Destination.Shaders && state.config.shaderSource == "modrinth" ->
             "Modrinth shader ZIPs are experimental; some packs may not work."
         page == Destination.Shaders -> "Horizon native .hshader packs."
@@ -105,7 +105,7 @@ fun CatalogScreen(page: Destination, state: Snapshot, wide: Boolean, actions: La
                     onValueChange = { query = it },
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = {
-                        Text(if (page == Destination.Mods) "Search mods or paste an .hmod link" else "Search")
+                        Text(if (page == Destination.Mods) "Search mods or paste an .hmod/.hnmod link" else "Search")
                     },
                     leadingIcon = { Icon(Icons.Rounded.Search, null) },
                     trailingIcon = {

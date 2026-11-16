@@ -17,7 +17,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const MAX_BUNDLE: u64 = 64 << 20;
+pub(crate) const MAX_BUNDLE: u64 = 64 << 20;
 
 /// Bundles sit in the active instance next to `horizon-mods/`.
 pub(crate) fn bundle_dir(game_home: &Path) -> PathBuf {
@@ -155,44 +155,54 @@ fn import_worker(
             output.write_all(&buffer[..read]).map_err(|error| error.to_string())?;
         }
         drop(output);
-        let bundle = Bundle::read(&staged).map_err(|error| format!("not a valid .hnmod bundle: {error}"))?;
-        let id = bundle.manifest.id.clone();
-        let version = bundle.manifest.version.clone();
-        drop(bundle);
-        let target_dir = bundle_dir(game_home);
-        fs::create_dir_all(&target_dir).map_err(|error| error.to_string())?;
-        if fs::symlink_metadata(&target_dir)
-            .map_err(|error| error.to_string())?
-            .file_type()
-            .is_symlink()
-        {
-            return Err("Refusing a redirected native-mods folder".into());
-        }
-        let target = target_dir.join(format!("{id}.hnmod"));
-        if target.exists() {
-            return Err(format!("a native mod with id '{id}' is installed; remove it first"));
-        }
-        // The cache and the instance can be on different filesystems (app
-        // storage and shared storage), so a plain rename can fail with EXDEV.
-        match fs::rename(&staged, &target) {
-            Ok(()) => {}
-            Err(rename_error) => {
-                if fs::copy(&staged, &target).is_ok() {
-                    let _ = fs::remove_file(&staged);
-                } else {
-                    let _ = fs::remove_file(&target);
-                    return Err(format!(
-                        "could not store the bundle: rename failed ({rename_error}); copy failed"
-                    ));
-                }
-            }
-        }
-        Ok((id, version))
+        install_staged(game_home, &staged)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&staged);
     }
     result
+}
+
+/// Validate a staged bundle file and store it as `<game_home>/horizon-native-mods/<id>.hnmod`.
+/// Shared by the SAF (`import_external`) and HTTPS (`catalog::import_native`) import paths.
+/// Returns `(id, version)`; refuses bad bundles and an id that is already installed.
+pub(crate) fn install_staged(
+    game_home: &Path,
+    staged: &Path,
+) -> Result<(String, String), String> {
+    let bundle = Bundle::read(staged).map_err(|error| format!("not a valid .hnmod bundle: {error}"))?;
+    let id = bundle.manifest.id.clone();
+    let version = bundle.manifest.version.clone();
+    drop(bundle);
+    let target_dir = bundle_dir(game_home);
+    fs::create_dir_all(&target_dir).map_err(|error| error.to_string())?;
+    if fs::symlink_metadata(&target_dir)
+        .map_err(|error| error.to_string())?
+        .file_type()
+        .is_symlink()
+    {
+        return Err("Refusing a redirected native-mods folder".into());
+    }
+    let target = target_dir.join(format!("{id}.hnmod"));
+    if target.exists() {
+        return Err(format!("a native mod with id '{id}' is installed; remove it first"));
+    }
+    // The cache and the instance can be on different filesystems (app
+    // storage and shared storage), so a plain rename can fail with EXDEV.
+    match fs::rename(staged, &target) {
+        Ok(()) => {}
+        Err(rename_error) => {
+            if fs::copy(staged, &target).is_ok() {
+                let _ = fs::remove_file(staged);
+            } else {
+                let _ = fs::remove_file(&target);
+                return Err(format!(
+                    "could not store the bundle: rename failed ({rename_error}); copy failed"
+                ));
+            }
+        }
+    }
+    Ok((id, version))
 }
 
 // ---- removal -----------------------------------------------------------------

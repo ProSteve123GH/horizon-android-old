@@ -25,10 +25,17 @@ here, and vice versa.
 
 ## What works today
 
-Import a `.hnmod` from the source picker on the Mods page
-(**Native mods (.hnmod) → Import**). The bundle is validated and stored as
-`<instance>/horizon-native-mods/<id>.hnmod` (it moves with the rest of the game
-files if you change **Settings → Storage → Game files location**). No second
+Three import paths feed the same bundle folder, all with the same validation
+(`horizon-mods`, `Bundle::read`):
+
+- **SAF picker**: the source picker on the Mods page (**Native mods (.hnmod) → Import**);
+- **HTTPS link**: paste an `https://…/name.hnmod` link into the Mods page search field and
+  press Search — the file is downloaded (at most 64 MiB) and stored on success;
+- **Horizon catalog**: source-only `.hnmod` rows carry **Install**: the bundle is
+  downloaded and verified against the registry's SHA-256, validated and stored.
+
+The bundle is stored as `<instance>/horizon-native-mods/<id>.hnmod` (it moves with the rest
+of the game files if you change **Settings → Storage → Game files location**). No second
 copy is made and nothing is executed.
 
 The list shows each bundle's id, version, size and one of:
