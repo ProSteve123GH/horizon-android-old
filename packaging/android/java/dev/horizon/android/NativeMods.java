@@ -80,9 +80,9 @@ final class NativeMods {
         }
         try {
             PackageInfo info = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
-            if (info.longVersionCode != versionCode) {
+            if (info.getLongVersionCode() != versionCode) {
                 return rejected("modded build targets versionCode " + versionCode
-                        + " but this APK is " + info.longVersionCode);
+                        + " but this APK is " + info.getLongVersionCode());
             }
         } catch (Exception error) {
             return rejected("cannot read this APK's versionCode: " + error);
