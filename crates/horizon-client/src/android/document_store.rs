@@ -178,7 +178,10 @@ struct Document {
     configuration: bool,
 }
 fn shareable_report(name: &str) -> bool {
-    (name.starts_with("horizon-diagnostics-") && name.ends_with(".zip")) || name.ends_with(".jsonl")
+    (name.starts_with("horizon-diagnostics-") && name.ends_with(".zip"))
+        || name.ends_with(".jsonl")
+        || (name.starts_with("crash-") && name.ends_with(".txt"))
+        || name == "last-rust-panic.txt"
 }
 fn resolve(home: &Path, id: &str) -> io::Result<Document> {
     let mut parts = id.split('/');
@@ -279,11 +282,13 @@ fn row(home: &Path, id: &str) -> io::Result<Value> {
         }
     };
     // Fixed roots (Mods, Worlds, Configuration...) stay in place, but children
-    // can be changed. Reports are always read-only. Configuration files are the
-    // four allowlisted files, so replacing or deleting them cannot reach the
+    // can be changed. Reports cannot be opened for writing (they are evidence of
+    // what happened), but an exported ZIP, crash text or performance report can
+    // be deleted, renamed or moved like any other child. Configuration files are
+    // the four allowlisted files, so replacing or deleting them cannot reach the
     // game's account data or other private files.
     let writable = !doc.reports && meta.is_file();
-    let deletable = !doc.reports && doc.label.is_none();
+    let deletable = doc.label.is_none();
     let renamable = deletable && meta.is_file();
     let movable = deletable;
     let dir_create = !doc.reports && meta.is_dir();
@@ -452,7 +457,7 @@ pub fn call(home: &Path, op: &str, id: &str, arg: &str) -> io::Result<Value> {
         }
         "rename" | "delete" => {
             let doc = resolve(home, id)?;
-            if doc.label.is_some() || doc.reports {
+            if doc.label.is_some() {
                 return Err(invalid());
             }
             if op == "delete" {
@@ -482,14 +487,11 @@ pub fn call(home: &Path, op: &str, id: &str, arg: &str) -> io::Result<Value> {
         }
         "move" => {
             let source = resolve(home, id)?;
-            if source.label.is_some() || source.reports {
+            if source.label.is_some() {
                 return Err(invalid());
             }
             let parent = resolve(home, arg)?;
-            if parent.reports
-                || !parent.path.is_dir()
-                || (parent.configuration && !source.path.is_file())
-            {
+            if !parent.path.is_dir() || (parent.configuration && !source.path.is_file()) {
                 return Err(invalid());
             }
             let name = source.path.file_name().ok_or_else(invalid)?;
@@ -571,13 +573,20 @@ mod tests {
         assert!(call(&home, "delete", "p0/mods", "").is_err());
         assert!(call(&home, "create", "reports", "bad.txt").is_err());
         fs::write(home.join("performance/report.jsonl"), b"{}").unwrap();
+        fs::write(home.join("performance/crash-1.txt"), b"crash").unwrap();
+        fs::write(home.join("performance/last-rust-panic.txt"), b"panic").unwrap();
         fs::write(home.join("performance/current-session.json"), b"{}").unwrap();
         fs::write(home.join("performance/exit-1.trace"), b"private trace").unwrap();
         assert!(open(&home, "reports/exit-1.trace", "r").is_err());
         assert!(open(&home, "reports/current-session.json", "r").is_err());
-        assert_eq!(children(&home, "reports").unwrap().len(), 1);
+        assert_eq!(children(&home, "reports").unwrap().len(), 3);
         assert!(open(&home, "reports/report.jsonl", "r").is_ok());
+        assert!(open(&home, "reports/crash-1.txt", "r").is_ok());
         assert!(open(&home, "reports/report.jsonl", "w").is_err());
+        // A crash report is evidence, not a writable document, but the user
+        // can still remove it after Files asks for confirmation.
+        assert!(call(&home, "delete", "reports/crash-1.txt", "").is_ok());
+        assert!(!home.join("performance/crash-1.txt").exists());
         assert!(!is_child(&home, "p0/mods", "p0/packs/pack.zip"));
         assert!(is_child(&home, ROOT, "p0/mods/test.hmod"));
         assert_eq!(
@@ -713,13 +722,23 @@ mod world_tests {
         assert!(blocked);
         assert!(config_blocked);
         assert!(open(&home, "p0/worlds/Example/level.dat", "r").is_ok());
-        // Reports stay read-only even though normal files advertise writes.
+        // Reports stay closed to writes, but can be deleted, renamed or moved
+        // once the Files app's confirmation has been accepted.
         fs::create_dir_all(home.join("performance")).unwrap();
         fs::write(home.join("performance/report.jsonl"), b"{}").unwrap();
         assert_eq!(
             call(&home, "document", "reports/report.jsonl", "").unwrap()[0]["flags"],
-            0
+            324
         );
+        assert!(call(&home, "delete", "reports/report.jsonl", "").is_ok());
+        assert!(!home.join("performance/report.jsonl").exists());
+        fs::write(home.join("performance/move.jsonl"), b"{}").unwrap();
+        assert_eq!(
+            call(&home, "move", "reports/move.jsonl", "p0/mods").unwrap(),
+            json!("p0/mods/move.jsonl")
+        );
+        assert!(home.join("horizon-mods/move.jsonl").is_file());
+        assert!(!home.join("performance/move.jsonl").exists());
         // Deleting a child directory after the Files confirmation removes the
         // whole world, including region files.
         fs::create_dir_all(home.join("saves/Example/region")).unwrap();

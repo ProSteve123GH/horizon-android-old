@@ -210,6 +210,27 @@ pub fn record_error(error: &str) {
         let _ = state.sender.try_send(Event::Session(state.session.clone()));
     }
 }
+
+/// Keep a crash report under `performance/`, where the Files provider's **Reports** root
+/// exposes it and where the diagnostic ZIP already looks. The report itself is saved
+/// separately by `crash::deliver`, so this hook cannot lose it: a failed copy only means the
+/// report stays in `crash-reports/`. The diagnostic-log tail is bounded, and the AI summary
+/// or an upload runs nowhere in this path.
+pub fn copy_crash_report(home: &Path, report: &crate::crash::Report) {
+    let dir = home.join("performance");
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let path = dir.join(crate::crash::file_name(&report.time, "android"));
+    let mut text = report.text();
+    if let Ok(log) = fs::read(dir.join("diagnostic.log")) {
+        const TAIL: usize = 256 * 1024;
+        let tail = &log[log.len().saturating_sub(TAIL)..];
+        text.push_str("\n\n-- Diagnostic log (tail) --\n");
+        text.push_str(&String::from_utf8_lossy(tail));
+    }
+    let _ = fs::write(path, text);
+}
 pub fn finish() {
     if let Some(state) = STATE.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
         state.session["clean_exit"] = true.into();

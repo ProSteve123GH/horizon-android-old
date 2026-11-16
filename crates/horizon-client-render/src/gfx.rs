@@ -2195,6 +2195,39 @@ fn surface_format(
     .or_else(|| formats.iter().copied().find(|f| !f.is_srgb()))
     .unwrap_or(default)
 }
+
+/// The configuration of a renderer built before it has the window surface (the loading
+/// screen's background renderer). It keeps the previous renderer's swapchain format, present
+/// mode and usage: handing that renderer the surface must not configure wgpu with a format or
+/// mode the surface does not offer. Android/Mali, for one, offers `Rgba8Unorm` and `Mailbox`,
+/// not `Bgra8Unorm` and `Immediate`; a mismatch only showed when `Texture::create_view` made a
+/// `Bgra8Unorm` view of the `Rgba8Unorm` swapchain and panicked. Only a first renderer without
+/// a previous one uses the offscreen defaults.
+fn offscreen_config(
+    previous: Option<&wgpu::SurfaceConfiguration>,
+    size: winit::dpi::PhysicalSize<u32>,
+    max_side: u32,
+) -> wgpu::SurfaceConfiguration {
+    let mut config = previous.cloned().unwrap_or_else(|| {
+        let format = wgpu::TextureFormat::Bgra8Unorm;
+        wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
+            format,
+            width: 0,
+            height: 0,
+            present_mode: wgpu::PresentMode::Immediate,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+            view_formats: vec![format],
+            color_space: wgpu::SurfaceColorSpace::default(),
+        }
+    });
+    config.width = size.width.clamp(1, max_side);
+    config.height = size.height.clamp(1, max_side);
+    config
+}
 /// The 16-bit frame HDR output draws into where it can (`Renderer::frame_format`). Unorm
 /// rather than float: it clips at white after every pass as the 8-bit frame does, so light
 /// added past white (the sun on the sky) and then blended over (glass) looks the same.
@@ -2672,6 +2705,17 @@ impl Renderer {
             .flatten();
 
         let from_previous = previous.is_some();
+        // A renderer built without the window surface (the loading screen's background
+        // renderer) still has to draw in the format that surface will take. Keep the
+        // previous renderer's configuration instead of falling back to Bgra8Unorm and
+        // Immediate: Android's Mali swapchain offers Rgba8Unorm and Mailbox, and a
+        // mismatch only surfaced later, when the background renderer was handed the
+        // surface, then panicked in `Texture::create_view`.
+        let previous_config = previous.as_ref().map(|r| r.config.clone());
+        let previous_present_modes = previous
+            .as_ref()
+            .map_or_else(Vec::new, |r| r.present_modes.clone());
+        let previous_hdr = previous.as_ref().and_then(|r| r.hdr_output);
         let reuse_pre = previous
             .as_ref()
             .map_or_else(Default::default, |r| r.reuse.clone());
@@ -2751,21 +2795,8 @@ impl Renderer {
             }
             (config, caps.present_modes, hdr_output)
         } else {
-            let format = wgpu::TextureFormat::Bgra8Unorm;
-            let config = wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::COPY_SRC
-                    | wgpu::TextureUsages::COPY_DST,
-                format,
-                width: size.width.clamp(1, max_side),
-                height: size.height.clamp(1, max_side),
-                present_mode: wgpu::PresentMode::Immediate,
-                desired_maximum_frame_latency: 2,
-                alpha_mode: wgpu::CompositeAlphaMode::Opaque,
-                view_formats: vec![format],
-                color_space: wgpu::SurfaceColorSpace::default(),
-            };
-            let hdr_output = hdr::offscreen_output();
+            let config = offscreen_config(previous_config.as_ref(), size, max_side);
+            let hdr_output = previous_hdr.or_else(hdr::offscreen_output);
             // Only where one is named: splitscreen's views draw offscreen too.
             if let Some(output) = hdr_output
                 && !from_previous
@@ -2775,7 +2806,7 @@ impl Renderer {
                     output.name()
                 );
             }
-            (config, Vec::new(), hdr_output)
+            (config, previous_present_modes, hdr_output)
         };
         let offscreen = surface
             .is_none()
@@ -7214,6 +7245,7 @@ impl Renderer {
         self.frame_gen.stop();
         // The submit thread may still present to the old swapchain.
         self.queue.wait();
+        let mut configured = true;
         if let Some(surface) = &self.surface
             && let Err(e) = Self::configure(
                 &self.device,
@@ -7224,7 +7256,13 @@ impl Renderer {
             )
         {
             log::warn!("Horizon renderer: the window surface did not configure ({e})");
+            configured = false;
         }
+        // A failed configure leaves the old swapchain in place; acquiring from it
+        // reports another validation error. `render` retries the configure and
+        // skips the frame while it fails, instead of drawing into a surface whose
+        // format and present mode no longer match the renderer's.
+        self.surface_unconfigured = self.surface.is_some() && !configured;
     }
     /// HDR calibration's test picture (`crate::hdr_calibration`) while it runs, else None.
     pub fn set_hdr_calibration(&mut self, calibration: Option<HdrCalibration>) {
@@ -13200,6 +13238,38 @@ mod frame_policy_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_background_renderer_keeps_the_window_surfaces_format_and_present_mode() {
+        use super::*;
+
+        let previous = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            width: 1920,
+            height: 1200,
+            present_mode: wgpu::PresentMode::Mailbox,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+            view_formats: vec![wgpu::TextureFormat::Rgba8Unorm],
+            color_space: wgpu::SurfaceColorSpace::default(),
+        };
+        let config = offscreen_config(
+            Some(&previous),
+            winit::dpi::PhysicalSize::new(1600, 900),
+            8192,
+        );
+        assert_eq!(config.format, previous.format);
+        assert_eq!(config.present_mode, previous.present_mode);
+        assert_eq!(config.view_formats, previous.view_formats);
+        assert_eq!((config.width, config.height), (1600, 900));
+
+        let first = offscreen_config(None, winit::dpi::PhysicalSize::new(800, 600), 8192);
+        assert_eq!(first.format, wgpu::TextureFormat::Bgra8Unorm);
+        assert_eq!(first.present_mode, wgpu::PresentMode::Immediate);
+    }
+
     #[test]
     fn taa_culling_covers_jittered_view_edges_but_still_rejects_behind_the_camera() {
         use super::*;

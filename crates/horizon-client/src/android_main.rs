@@ -82,20 +82,22 @@ use std::cell::RefCell;
 pub(crate) fn configure_input_mode(mode: catalog::InputHost) {
     horizon_client::android_runtime::configure_input(mode);
 }
-/// The library's `crate::save_input_mode`, kept for the launcher's next start.
+
+/// The library's `crate::save_input_mode`, kept for the launcher's next start. It uses the
+/// same home the rest of the game does (the app-specific external folder when available),
+/// never the old internal folder the activity started with.
 fn save_input_mode() {
-    APP.with(|app| {
-        if let Some(home) = app.borrow().as_ref().and_then(|a| a.internal_data_path()) {
-            let mut config = catalog::Config::load(&home);
-            let mode = horizon_client::android_runtime::input_mode();
-            if config.input_host != mode {
-                config.input_host = mode;
-                if let Err(e) = config.save(&home) {
-                    log::warn!("Saving input mode: {e}");
-                }
-            }
+    let Some(home) = horizon_client::backend::try_data_dir() else {
+        return;
+    };
+    let mut config = catalog::Config::load(&home);
+    let mode = horizon_client::android_runtime::input_mode();
+    if config.input_host != mode {
+        config.input_host = mode;
+        if let Err(e) = config.save(&home) {
+            log::warn!("Saving input mode: {e}");
         }
-    });
+    }
 }
 pub(crate) use horizon_client::PUBLIC_BUILD;
 
@@ -117,6 +119,12 @@ use winit::{
 thread_local! {
     static APP: RefCell<Option<AndroidApp>> = const { RefCell::new(None) };
 }
+/// Winit allows one event loop per process. Android can recreate the NativeActivity in a
+/// process whose old activity was destroyed (for example after a render-thread panic) without
+/// the process having exited yet. Building a second loop only reports "EventLoop can't be
+/// recreated" and hides the first failure; leave the process instead and let the next launch
+/// start clean.
+static EVENT_LOOP_TAKEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub(crate) fn android_event_loop() -> Result<EventLoop<()>, winit::error::EventLoopError> {
     APP.with(|app| {
@@ -222,7 +230,14 @@ fn android_main(app: AndroidApp) {
         app.enable_motion_axis(axis);
     }
     init_logging();
-    let Some(home) = app.internal_data_path() else {
+    // `HorizonActivity` selects the app-specific external folder (shared storage, no SAF
+    // needed to read and write it) before the native entry point runs; an older or unusual
+    // start without it keeps the internal folder.
+    let home = std::env::var_os("HORIZON_HOME")
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| app.internal_data_path());
+    let Some(home) = home else {
         log::error!("Android supplied no application data directory");
         return;
     };
@@ -259,6 +274,12 @@ fn android_main(app: AndroidApp) {
         std::process::exit(0);
     }
     horizon_client::crash::install(home.clone(), "client");
+    // The provider exposes `performance/`, not `crash-reports/`. Keep a copy of every crash
+    // there too, so the report is reachable through Files (and in the diagnostic ZIP) even
+    // when the crash happened before the launcher could export anything. This runs before the
+    // crash report is saved: saving the copy must never depend on a later summary, upload or
+    // provider callback succeeding.
+    horizon_client::crash::on_report(horizon_client::diagnostics::copy_crash_report);
     exit_reports::install(&home);
     let _ = std::fs::remove_file(home.join("android-error.txt"));
     if let Some(mut data) = engine_data {
@@ -284,6 +305,13 @@ fn android_main(app: AndroidApp) {
             .ok()
             .and_then(|request| request.get("world")?.as_str().map(str::to_owned));
         launcher.play_directly(world);
+    }
+    if EVENT_LOOP_TAKEN.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        log::error!(
+            "Horizon: Android recreated the game activity in a process that already ran its \
+             event loop; exiting instead of reporting a second event-loop failure"
+        );
+        std::process::exit(0);
     }
     let result = android_event_loop()
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })

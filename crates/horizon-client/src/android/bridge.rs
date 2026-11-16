@@ -1910,6 +1910,7 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_start(
         log::error!("Cannot open {}: {error}", home.display());
     }
     horizon_client::crash::install(home.clone(), "launcher");
+    horizon_client::crash::on_report(crate::diagnostics::copy_crash_report);
     let mut controller = Controller::new(home);
     controller.stamp = stamp;
     controller.version_name = version;
