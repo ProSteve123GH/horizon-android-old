@@ -31,38 +31,38 @@ object HorizonHome {
 
     /** The data root for this context, with old internal game data copied there once. */
     @JvmStatic
-    fun ensure(context: Context): File {
-        synchronized(LOCK) {
-            val internal = context.filesDir
-            val external = try {
-                context.getExternalFilesDir(null)
-            } catch (error: Throwable) {
-                Log.w(TAG, "External app storage is unavailable", error)
-                null
-            }
-            if (external == null || (!external.isDirectory && !external.mkdirs())) {
+    fun ensure(context: Context): File = synchronized(LOCK) { ensureLocked(context) }
+
+    private fun ensureLocked(context: Context): File {
+        val internal = context.filesDir
+        val external = try {
+            context.getExternalFilesDir(null)
+        } catch (error: Throwable) {
+            Log.w(TAG, "External app storage is unavailable", error)
+            null
+        }
+        if (external == null || (!external.isDirectory && !external.mkdirs())) {
+            return internal
+        }
+        val marker = File(external, MARKER)
+        if (!marker.isFile) {
+            // Copy what the old internal root has and the external root does not.
+            // Running it on every start until it finishes also resumes a copy interrupted
+            // by a process death; an existing file is never overwritten. A failed or
+            // interrupted copy keeps the old internal root as the data root, so the game
+            // still starts with its complete data.
+            if (!copyMissing(internal, external)) {
                 return internal
             }
-            val marker = File(external, MARKER)
-            if (!marker.isFile) {
-                // Copy what the old internal root has and the external root does not.
-                // Running it on every start until it finishes also resumes a copy interrupted
-                // by a process death; an existing file is never overwritten. A failed or
-                // interrupted copy keeps the old internal root as the data root, so the game
-                // still starts with its complete data.
-                if (!copyMissing(internal, external)) {
-                    return internal
+            try {
+                if (!marker.createNewFile() && !marker.isFile) {
+                    Log.w(TAG, "Cannot mark ${external.absolutePath} as the data root")
                 }
-                try {
-                    if (!marker.createNewFile() && !marker.isFile) {
-                        Log.w(TAG, "Cannot mark ${external.absolutePath} as the data root")
-                    }
-                } catch (error: IOException) {
-                    Log.w(TAG, "Cannot mark ${external.absolutePath} as the data root", error)
-                }
+            } catch (error: IOException) {
+                Log.w(TAG, "Cannot mark ${external.absolutePath} as the data root", error)
             }
-            return external
         }
+        return external
     }
 
     private fun copyMissing(source: File, target: File): Boolean {
