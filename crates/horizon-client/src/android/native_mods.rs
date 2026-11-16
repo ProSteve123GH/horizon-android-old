@@ -1272,9 +1272,10 @@ fn download_library(home: &Path, job: &str, expected_sha: &str) -> Result<(PathB
         };
         let status = response.status();
         let resume = offset > 0 && status == 206 && {
+            let prefix = format!("bytes {offset}-");
             response
                 .header("content-range")
-                .map(|value| value == format!("bytes {offset}-") || value.starts_with(&format!("bytes {offset}-")))
+                .map(|value| value.starts_with(prefix.as_str()))
                 .unwrap_or(false)
         };
         let total = response
