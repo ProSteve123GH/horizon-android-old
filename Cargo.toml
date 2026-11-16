@@ -48,6 +48,7 @@ members = [
     "mods/official/zoom",
     "xtask",
     "mods/official/recipes",
+    "crates/horizon-trampoline",
 ]
 resolver = "2"
 

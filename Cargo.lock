@@ -2090,6 +2090,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "horizon-trampoline"
+version = "0.1.0"
+dependencies = [
+ "android-activity",
+ "libc",
+ "serde_json",
+]
+
+[[package]]
 name = "horizon-world"
 version = "0.1.0"
 dependencies = [
