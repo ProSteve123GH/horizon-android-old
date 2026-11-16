@@ -274,10 +274,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # One stable asset name per ABI: the release page always shows the
+          # current dev APK, it does not accumulate old builds.
+          abi="${{ matrix.abi }}"
+          apk_src="$(ls dist/*.apk)"
+          apk="Horizon-Android-dev-${abi}.apk"
+          cp "$apk_src" "dist/$apk"
+          ( cd dist && sha256sum "$apk" > SHA256SUMS.txt )
           gh release view dev-latest >/dev/null 2>&1 || gh release create dev-latest \
             --title "Horizon Android Dev (auto-built)" --prerelease \
-            --notes "Latest branch-built dev APK for this fork. Not signed for distribution; install only if you trust the branch. Updated on every build; the assets are replaced."
-          gh release upload dev-latest --clobber dist/*
+            --notes "Latest branch-built dev APK for this fork. Not signed for distribution; install only if you trust the branch. One stable asset per ABI; old APKs do not accumulate here."
+          gh release upload dev-latest --clobber "dist/$apk" dist/BUILD.json dist/LICENSE.txt dist/THIRD_PARTY_NOTICES.md dist/SHA256SUMS.txt
 
       # Feature branches only read the default branch's cache. Saving a new
       # 600 MB cache per branch fills the repository's 10 GB cache budget and
