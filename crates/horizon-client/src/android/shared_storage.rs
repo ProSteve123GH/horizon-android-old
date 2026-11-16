@@ -3,20 +3,24 @@
 //! Horizon has two storage modes for the player-facing files (worlds, mods,
 //! resource packs, shader packs, options and the shareable reports):
 //!
-//! - **Private** (the default): the files sit in the app-private home
-//!   (`getFilesDir()`). Other apps can only reach them through the SAF
-//!   documents provider.
-//! - **Shared**: the same files sit in a normal folder on shared storage
-//!   (typically `/storage/emulated/0/Horizon-Android`), so any file manager
-//!   can open them. The switch is deliberate (Settings → Storage → *Game
-//!   files location*), never automatic, and it needs the all-files access
-//!   the user grants in system settings first.
+//! - **Internal storage** (the default, recommended): the files sit in a
+//!   normal folder on shared storage (`/storage/emulated/0/Horizon-Android`),
+//!   so any file manager can open them. The move there happens only after the
+//!   user grants the all-files access Android shows and asks for it (Settings
+//!   → Storage → *Game files location*, or the one-time first-run prompt).
+//! - **App storage**: the files sit in the app-private home (`getFilesDir()`).
+//!   Other apps can only reach them through the SAF documents provider. This
+//!   mode keeps working fully when the user does not grant access.
 //!
 //! The choice is recorded in `shared-storage.json` in the app-private home.
 //! Every reader goes through [`resolve`]/[`profile_dir`] so both modes behave
 //! the same; no call site may join the private home with a game file name.
 //! The marker is also the only thing the SAF provider and the game process
 //! need to agree on, so they can be running at the same time.
+//!
+//! Migrations journal every file they create in `.storage-migration.json`
+//! (private) so a killed or crashed move can roll itself back (copy phase) or
+//! finish itself (delete phase) on the next start; see [`recover`].
 //!
 //! Kept deliberately free of crate dependencies: the storage harness
 //! (`tools/test_android_shared_storage.py`) compiles this file standalone.
@@ -35,6 +39,16 @@ use std::{
 /// and skip both while collecting jobs.
 pub const MARKER: &str = "shared-storage.json";
 const MARKER_PARTIAL: &str = "shared-storage.json.partial";
+
+/// One-shot marker for the first-run prompt. Starts with `android-` so the
+/// migration keeps it private on both moves.
+pub const PROMPT_MARKER: &str = "android-storage-prompt.json";
+
+/// Private journal of an in-flight migration: every destination path this
+/// run creates, the matching sources, the phase (`copying` | `deleting`) and
+/// both roots. Used by [`recover`] after a crash. Starts with a dot, so the
+/// migration keeps it private too.
+const JOURNAL: &str = ".storage-migration.json";
 
 /// Top-level entries of the private home that never move to shared storage:
 /// the prepared engine build, private diagnostics, account sessions and the
@@ -90,6 +104,31 @@ fn marker_dir(home: &Path) -> Option<PathBuf> {
 
 fn marker_exists(home: &Path) -> bool {
     home.join(MARKER).is_file()
+}
+
+/// The shared folder recorded in the marker, without requiring it to exist.
+/// `None` when there is no usable `shared-storage.json` (never moved, or
+/// corrupt). Used to re-create a missing folder and to move back to app
+/// storage; every other reader must use [`marker_dir`]'s existence check.
+pub fn recorded_dir(home: &Path) -> Option<PathBuf> {
+    let bytes = fs::read(home.join(MARKER)).ok()?;
+    let value = serde_json::from_slice::<serde_json::Value>(&bytes).ok()?;
+    let dir = value.get("dir")?.as_str()?;
+    let path = PathBuf::from(dir);
+    path.is_absolute().then_some(path)
+}
+
+/// Whether the one-shot first-run prompt was already dismissed or answered.
+pub fn prompt_done(home: &Path) -> bool {
+    home.join(PROMPT_MARKER).is_file()
+}
+
+/// Records that the first-run prompt was dismissed or answered; the caller
+/// never shows it again afterwards.
+pub fn mark_prompt_done(home: &Path) -> std::io::Result<()> {
+    let partial = home.join(format!("{PROMPT_MARKER}.partial"));
+    fs::write(&partial, b"{\"version\":1}\n")?;
+    fs::rename(&partial, home.join(PROMPT_MARKER))
 }
 
 /// The active root for the player's game files: the shared folder when the
@@ -148,7 +187,10 @@ pub fn display_name(home: &Path) -> String {
 }
 
 fn is_private_top_level(name: &str) -> bool {
-    PRIVATE_TOP_LEVEL.contains(&name) || name.starts_with("android-") || name.starts_with(MARKER)
+    PRIVATE_TOP_LEVEL.contains(&name)
+        || name.starts_with("android-")
+        || name.starts_with(MARKER)
+        || name.starts_with('.')
 }
 
 /// Whether a game is currently running on `base` (its `game.lock` is held).
@@ -220,7 +262,7 @@ fn collect_tree(
             if depth == 0 && is_private_top_level(&name) {
                 continue;
             }
-            if depth > 0 && PRIVATE_NESTED.contains(&name.as_str()) {
+            if depth > 0 && (PRIVATE_NESTED.contains(&name.as_str()) || name.starts_with('.')) {
                 continue;
             }
         }
@@ -396,17 +438,273 @@ fn copy_one(plan: &EntryPlan, created: &mut Vec<Created>) -> std::io::Result<u64
     Ok(copied)
 }
 
+/// Re-reads a copied file end to end and compares it with the source, byte
+/// for byte. A truncated or torn copy would otherwise become the only copy
+/// of a world; the size check alone cannot catch a same-length corruption.
+fn verify_file(plan: &EntryPlan) -> std::io::Result<()> {
+    use std::io::Read;
+
+    let source = fs::metadata(&plan.src)?;
+    let copied = fs::metadata(&plan.dst)?;
+    if source.len() != plan.bytes || copied.len() != plan.bytes {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "Size mismatch for {}: source {} bytes, copy {} bytes",
+                plan.dst.display(),
+                source.len(),
+                copied.len()
+            ),
+        ));
+    }
+    let mut src = fs::File::open(&plan.src)?;
+    let mut dst = fs::File::open(&plan.dst)?;
+    let mut a = [0u8; 64 * 1024];
+    let mut b = [0u8; 64 * 1024];
+    loop {
+        let read_a = src.read(&mut a)?;
+        let read_b = dst.read(&mut b)?;
+        if read_a != read_b || a[..read_a] != b[..read_b] {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Contents differ between {} and {}", plan.src.display(), plan.dst.display()),
+            ));
+        }
+        if read_a == 0 {
+            return Ok(());
+        }
+    }
+}
+
+/// Every directory the destination side of `plans` needs to exist, from the
+/// target root down to the files. Recovery removes these only when empty.
+fn destination_dirs(target: &Path, plans: &[EntryPlan]) -> Vec<PathBuf> {
+    let mut dirs = BTreeSet::new();
+    for plan in plans {
+        let mut current = plan.dst.parent();
+        while let Some(dir) = current {
+            if !dir.starts_with(target) {
+                break;
+            }
+            let insert = dirs.insert(dir.to_path_buf());
+            if !insert || dir == target {
+                break;
+            }
+            current = dir.parent();
+        }
+    }
+    dirs.into_iter().collect()
+}
+
 fn rollback(created: &[Created]) {
     for entry in created.iter().rev() {
         if entry.is_dir {
             // Only remove directories this run created, and only if empty;
             // a non-empty one holds files we must not touch.
             if entry.new {
-                let _ = fs::remove_dir_all(&entry.path);
+                let _ = fs::remove_dir(&entry.path);
             }
         } else {
             let _ = fs::remove_file(&entry.path);
         }
+    }
+}
+
+/// A snapshot of an in-flight migration, written to the private home before
+/// anything is copied. The journal is the only state a killed or crashed
+/// migration leaves behind; [`recover`] finishes or undoes exactly what it
+/// records and never anything else.
+struct MigrationJournal {
+    /// `copying` until every byte is in place and verified; `deleting` while
+    /// the sources are being removed.
+    phase: &'static str,
+    to_shared: bool,
+    from: PathBuf,
+    target: PathBuf,
+    /// `(src, dst)` for every file that travels, in copy order.
+    files: Vec<(PathBuf, PathBuf)>,
+    /// Every directory the destination side needs, including `target`
+    /// itself. Recovery removes these deepest-first and only when empty.
+    created_dirs: Vec<PathBuf>,
+    /// Source directories to empty after the delete, deepest-first handled
+    /// by the caller.
+    source_dirs: Vec<PathBuf>,
+}
+
+impl MigrationJournal {
+    fn to_json(&self) -> serde_json::Value {
+        json!({
+            "version": 1,
+            "phase": self.phase,
+            "to_shared": self.to_shared,
+            "from": self.from.to_string_lossy(),
+            "target": self.target.to_string_lossy(),
+            "files": self.files.iter().map(|(src, dst)| json!({
+                "src": src.to_string_lossy(),
+                "dst": dst.to_string_lossy(),
+            })).collect::<Vec<_>>(),
+            "created_dirs": self.created_dirs.iter()
+                .map(|dir| dir.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            "source_dirs": self.source_dirs.iter()
+                .map(|dir| dir.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    fn from_json(value: &serde_json::Value) -> Option<Self> {
+        let phase = match value.get("phase")?.as_str()? {
+            "copying" => "copying",
+            "deleting" => "deleting",
+            _ => return None,
+        };
+        let files = value
+            .get("files")?
+            .as_array()?
+            .iter()
+            .map(|entry| {
+                Some((
+                    PathBuf::from(entry.get("src")?.as_str()?),
+                    PathBuf::from(entry.get("dst")?.as_str()?),
+                ))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let dirs = |key: &str| -> Option<Vec<PathBuf>> {
+            Some(
+                value
+                    .get(key)?
+                    .as_array()?
+                    .iter()
+                    .map(|entry| PathBuf::from(entry.as_str()?))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        Some(Self {
+            phase,
+            to_shared: value.get("to_shared")?.as_bool()?,
+            from: PathBuf::from(value.get("from")?.as_str()?),
+            target: PathBuf::from(value.get("target")?.as_str()?),
+            files,
+            created_dirs: dirs("created_dirs")?,
+            source_dirs: dirs("source_dirs")?,
+        })
+    }
+}
+
+fn journal_path(home: &Path) -> PathBuf {
+    home.join(JOURNAL)
+}
+
+/// Atomically records `journal` in the private home.
+fn write_journal(home: &Path, journal: &MigrationJournal) -> std::io::Result<()> {
+    let partial = home.join(format!("{JOURNAL}.partial"));
+    fs::write(&partial, journal.to_json().to_string())?;
+    fs::rename(&partial, journal_path(home))
+}
+
+fn read_journal(home: &Path) -> Option<MigrationJournal> {
+    let bytes = fs::read(journal_path(home)).ok()?;
+    let value = serde_json::from_slice::<serde_json::Value>(&bytes).ok()?;
+    MigrationJournal::from_json(&value)
+}
+
+/// Refuses a journal that does not describe a self-contained move: every
+/// recorded path must be absolute and under the roots the migration
+/// controlled, so a corrupt or stale file can never delete unrelated data.
+fn journal_paths_are_safe(journal: &MigrationJournal) -> bool {
+    if !journal.from.is_absolute() || !journal.target.is_absolute() {
+        return false;
+    }
+    journal.files.iter().all(|(src, dst)| {
+        src.is_absolute() && dst.is_absolute() && src.starts_with(&journal.from) && dst.starts_with(&journal.target)
+    }) && journal.created_dirs.iter().all(|dir| dir.starts_with(&journal.target))
+        && journal
+            .source_dirs
+            .iter()
+            .all(|dir| dir.starts_with(&journal.from))
+}
+
+/// Deletes every destination file the journal lists, deepest first, and the
+/// directories this run created (only while they are empty). Sources are
+/// left untouched. Used after a crash in the `copying` phase.
+fn recover_copying(home: &Path, journal: &MigrationJournal) {
+    for (_, dst) in journal.files.iter().rev() {
+        // The destination was created by the interrupted run; only files
+        // (never directories) are removed by path.
+        match fs::symlink_metadata(dst) {
+            Ok(meta) if !meta.is_dir() => {
+                let _ = fs::remove_file(dst);
+            }
+            _ => {}
+        }
+    }
+    let mut dirs = journal.created_dirs.clone();
+    dirs.sort_by_key(|dir| std::cmp::Reverse(dir.components().count()));
+    for dir in dirs {
+        let _ = fs::remove_dir(dir);
+    }
+    let _ = fs::remove_file(journal_path(home));
+}
+
+/// Finishes the delete phase the interrupted run started: the destination
+/// was fully copied and verified, so the recorded sources may be removed,
+/// the empty source directories pruned, and the marker recorded. Used after
+/// a crash in the `deleting` phase.
+fn recover_deleting(home: &Path, journal: &MigrationJournal) {
+    for (src, _) in &journal.files {
+        let _ = fs::remove_file(src);
+    }
+    let mut dirs = journal.source_dirs.clone();
+    dirs.sort_by_key(|dir| std::cmp::Reverse(dir.components().count()));
+    for dir in dirs {
+        let _ = fs::remove_dir(dir);
+    }
+    if journal.to_shared {
+        let _ = write_marker(home, &journal.target);
+    } else {
+        let _ = fs::remove_file(home.join(MARKER));
+        let _ = fs::remove_dir(&journal.from);
+    }
+    let _ = fs::remove_file(journal_path(home));
+}
+
+/// Recovers an interrupted migration, if any. Called at launcher start and
+/// at the top of every migration; safe when no journal exists.
+///
+/// Returns `Ok(Some(note))` when a journal was found and handled, `Ok(None)`
+/// when there was nothing to do, and `Err` when the journal is unreadable or
+/// unsafe — in that case nothing is deleted and the caller must surface it.
+pub fn recover(home: &Path) -> Result<Option<String>, String> {
+    if !journal_path(home).is_file() {
+        return Ok(None);
+    }
+    let journal = read_journal(home).ok_or_else(|| {
+        format!(
+            "An interrupted storage move left an unreadable {} in app storage. Nothing was deleted.",
+            JOURNAL
+        )
+    })?;
+    if !journal_paths_are_safe(&journal) {
+        return Err(format!(
+            "An interrupted storage move left an inconsistent {JOURNAL} in app storage. Nothing was deleted."
+        ));
+    }
+    match journal.phase {
+        "copying" => {
+            recover_copying(home, &journal);
+            Ok(Some(
+                "Rolled back an interrupted storage move: the partial copy was removed and your game files were left in place.".into(),
+            ))
+        }
+        "deleting" => {
+            recover_deleting(home, &journal);
+            Ok(Some(
+                "Completed an interrupted storage move that had already copied and verified every file.".into(),
+            ))
+        }
+        _ => Err(format!(
+            "An interrupted storage move left an unknown phase in {JOURNAL}. Nothing was deleted."
+        )),
     }
 }
 
@@ -439,6 +737,9 @@ pub fn adopt(home: &Path, shared: &Path) -> Result<String, String> {
 fn adopt_inner(home: &Path, shared: &Path) -> Result<String, String> {
     if !shared.is_absolute() {
         return Err("The shared folder path must be absolute".into());
+    }
+    if let Err(error) = recover(home) {
+        return Err(error);
     }
     if state(home) != State::Private {
         return Err("The game files are already on shared storage".into());
@@ -485,6 +786,11 @@ pub fn migrate(home: &Path, shared: &Path, to_shared: bool) -> Result<String, St
 fn migrate_inner(home: &Path, shared: &Path, to_shared: bool) -> Result<String, String> {
     if !shared.is_absolute() || !home.is_absolute() {
         return Err("Storage paths must be absolute".into());
+    }
+    // A killed migration from an earlier run is finished or undone first,
+    // so a half-moved tree is never copied on top of.
+    if let Err(error) = recover(home) {
+        return Err(error);
     }
     let (from, to) = if to_shared {
         (home, shared)
@@ -538,6 +844,26 @@ fn migrate_inner(home: &Path, shared: &Path, to_shared: bool) -> Result<String, 
         }
     }
 
+    // Journal the copy before anything is written, so a crash at any point
+    // can be undone (copying) or completed (deleting) on the next start.
+    let journal_files: Vec<(PathBuf, PathBuf)> = plans
+        .iter()
+        .map(|plan| (plan.src.clone(), plan.dst.clone()))
+        .collect();
+    let journal_dirs = destination_dirs(to, &plans);
+    let journal = MigrationJournal {
+        phase: "copying",
+        to_shared,
+        from: from.to_path_buf(),
+        target: to.to_path_buf(),
+        files: journal_files,
+        created_dirs: journal_dirs,
+        source_dirs: source_dirs.iter().cloned().collect(),
+    };
+    if let Err(error) = write_journal(home, &journal) {
+        return Err(format!("Could not record the move in progress: {error}"));
+    }
+
     let mut created: Vec<Created> = Vec::new();
     let mut done = 0u64;
     let copy_result = (|| -> std::io::Result<()> {
@@ -545,11 +871,30 @@ fn migrate_inner(home: &Path, shared: &Path, to_shared: bool) -> Result<String, 
             done += copy_one(plan, &mut created)?;
             PROGRESS_DONE.store(done, Ordering::Relaxed);
         }
+        // Every byte is claimed in place; prove it before anything is
+        // deleted from the source.
+        for plan in &plans {
+            verify_file(plan)?;
+        }
         Ok(())
     })();
     if let Err(error) = copy_result {
         rollback(&created);
+        let _ = fs::remove_file(journal_path(home));
         return Err(format!("Could not copy the game files: {error}"));
+    }
+
+    // The copies are in place and verified; only now may the sources go.
+    // Record the phase before the first delete so a crash here completes
+    // rather than rolls back.
+    let deleting = MigrationJournal {
+        phase: "deleting",
+        ..journal
+    };
+    if let Err(error) = write_journal(home, &deleting) {
+        rollback(&created);
+        let _ = fs::remove_file(journal_path(home));
+        return Err(format!("Could not record the move in progress: {error}"));
     }
 
     // Every byte is in place; only now remove the sources, files first.
@@ -568,15 +913,19 @@ fn migrate_inner(home: &Path, shared: &Path, to_shared: bool) -> Result<String, 
         let _ = fs::remove_dir(dir);
     }
 
-    // The marker is the commit point; everything before it rolls back.
+    // The marker is the commit point; everything before it rolls back. If
+    // writing it fails here the journal stays behind with phase `deleting`,
+    // and the next start finishes the marker through `recover`.
     if to_shared {
-        write_marker(home, shared)
-            .map_err(|e| format!("Could not record the storage location: {e}"))?;
+        if let Err(error) = write_marker(home, shared) {
+            return Err(format!("Could not record the storage location: {error}"));
+        }
     } else {
         let _ = fs::remove_file(home.join(MARKER));
         // Leave nothing behind when everything moved.
         let _ = fs::remove_dir(shared);
     }
+    let _ = fs::remove_file(journal_path(home));
     PROGRESS_DONE.store(total, Ordering::Relaxed);
     let note = if sources_removed {
         String::new()
@@ -790,5 +1139,299 @@ mod tests {
         assert!(home.join("saves/World One/level.dat").is_file());
         fs::remove_dir_all(&home).unwrap();
         let _ = fs::remove_dir_all(&shared);
+    }
+
+    #[test]
+    fn denylist_keeps_private_paths_out_of_the_plan() {
+        let home = scratch();
+        seed(&home);
+        fs::write(home.join("control.json"), b"{}").unwrap();
+        fs::write(home.join("launch-request.json"), b"{}").unwrap();
+        fs::create_dir_all(home.join("crash-reports")).unwrap();
+        fs::write(home.join("crash-reports/crash.txt"), b"boom").unwrap();
+        fs::create_dir_all(home.join("profiles/profile-2/crash-reports")).unwrap();
+        fs::write(
+            home.join("profiles/profile-2/crash-reports/crash.txt"),
+            b"boom",
+        )
+        .unwrap();
+        fs::write(home.join(JOURNAL), b"{}").unwrap();
+        let target = scratch();
+        let (plans, _dirs, _total) = collect_jobs(&home, &target, true).unwrap();
+        assert!(!plans.is_empty(), "game files must be planned");
+        for plan in &plans {
+            let rel = plan
+                .dst
+                .strip_prefix(&target)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            assert!(!rel.starts_with("android-"), "android-* planned: {rel}");
+            assert!(!rel.starts_with('.'), "dotfile planned: {rel}");
+            for component in rel.split('/') {
+                assert!(
+                    !component.starts_with("android-"),
+                    "android-* component in {rel}"
+                );
+                assert!(
+                    !matches!(
+                        component,
+                        "sessions" | "logs" | "crash-reports" | ".cache" | "cache" | "game.lock"
+                    ),
+                    "private component in {rel}"
+                );
+            }
+            assert_ne!(rel, "engine-data.zip", "engine build planned: {rel}");
+            assert_ne!(
+                rel, "shared-storage.json",
+                "marker planned: {rel}"
+            );
+            assert_ne!(
+                rel, ".storage-migration.json",
+                "journal planned: {rel}"
+            );
+        }
+        // The plan does contain the player-facing files.
+        let names: Vec<_> = plans
+            .iter()
+            .map(|plan| {
+                plan.dst
+                    .strip_prefix(&target)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        assert!(names.contains(&"options.txt".to_string()));
+        assert!(names.contains(&"saves/World One/level.dat".to_string()));
+        assert!(names.iter().any(|n| n == "horizon-mods/test.hmod"));
+        fs::remove_dir_all(&home).unwrap();
+        fs::remove_dir_all(&target).unwrap();
+    }
+
+    #[test]
+    fn is_private_top_level_covers_the_journal_marker_and_lock() {
+        for name in [
+            "game.lock",
+            "engine-data.zip",
+            "engine-data.partial",
+            "control.json",
+            "launch-request.json",
+            ".storage-migration.json",
+            "shared-storage.json",
+            "shared-storage.json.partial",
+            "android-launcher.json",
+            ".local",
+            ".git",
+        ] {
+            assert!(is_private_top_level(name), "{name} must stay private");
+        }
+        for name in ["saves", "options.txt", "servers.dat", "profiles", "performance"] {
+            assert!(!is_private_top_level(name), "{name} may move");
+        }
+        assert!(is_private_top_level(PROMPT_MARKER));
+    }
+
+    fn journal_body(
+        phase: &str,
+        to_shared: bool,
+        from: &Path,
+        target: &Path,
+        files: &[(&Path, &Path)],
+        created_dirs: &[&Path],
+        source_dirs: &[&Path],
+    ) -> String {
+        json!({
+            "version": 1,
+            "phase": phase,
+            "to_shared": to_shared,
+            "from": from.to_string_lossy(),
+            "target": target.to_string_lossy(),
+            "files": files.iter().map(|(src, dst)| json!({
+                "src": src.to_string_lossy(),
+                "dst": dst.to_string_lossy(),
+            })).collect::<Vec<_>>(),
+            "created_dirs": created_dirs.iter()
+                .map(|dir| dir.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            "source_dirs": source_dirs.iter()
+                .map(|dir| dir.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn journal_copying_phase_removes_only_what_this_run_created() {
+        let home = scratch();
+        fs::create_dir_all(home.join("saves/World One")).unwrap();
+        fs::write(home.join("saves/World One/level.dat"), b"world").unwrap();
+        fs::write(home.join("options.txt"), b"options").unwrap();
+        let target = scratch();
+        // Half-copied destination: two files from this run, one dir created
+        // here, and a pre-existing empty dir that must survive.
+        fs::create_dir_all(target.join("saves/World One")).unwrap();
+        fs::write(target.join("options.txt"), b"partial").unwrap();
+        fs::write(target.join("saves/World One/level.dat"), b"half").unwrap();
+        let target_saves = target.join("saves");
+        let target_world = target.join("saves/World One");
+        let journal = journal_body(
+            "copying",
+            true,
+            &home,
+            &target,
+            &[
+                (&home.join("options.txt"), &target.join("options.txt")),
+                (
+                    &home.join("saves/World One/level.dat"),
+                    &target.join("saves/World One/level.dat"),
+                ),
+            ],
+            &[&target, &target_saves, &target_world],
+            &[],
+        );
+        fs::write(home.join(JOURNAL), journal).unwrap();
+        let note = recover(&home).unwrap();
+        assert!(note.is_some());
+        assert!(!target.join("options.txt").exists());
+        assert!(!target.join("saves").exists(), "created dirs must be pruned");
+        assert!(!journal_path(&home).exists());
+        // The source is untouched.
+        assert_eq!(fs::read(home.join("options.txt")).unwrap(), b"options");
+        assert_eq!(
+            fs::read(home.join("saves/World One/level.dat")).unwrap(),
+            b"world"
+        );
+        fs::remove_dir_all(&home).unwrap();
+        // Recovery may have pruned the target root itself.
+        let _ = fs::remove_dir_all(&target);
+    }
+
+    #[test]
+    fn journal_deleting_phase_completes_the_move() {
+        let home = scratch();
+        let target = scratch();
+        fs::write(home.join("options.txt"), b"options").unwrap();
+        fs::create_dir_all(home.join("saves/World One")).unwrap();
+        fs::write(home.join("saves/World One/level.dat"), b"world").unwrap();
+        fs::write(target.join("options.txt"), b"options").unwrap();
+        fs::create_dir_all(target.join("saves/World One")).unwrap();
+        fs::write(target.join("saves/World One/level.dat"), b"world").unwrap();
+        let journal = journal_body(
+            "deleting",
+            true,
+            &home,
+            &target,
+            &[
+                (&home.join("options.txt"), &target.join("options.txt")),
+                (
+                    &home.join("saves/World One/level.dat"),
+                    &target.join("saves/World One/level.dat"),
+                ),
+            ],
+            &[&target, &target.join("saves"), &target.join("saves/World One")],
+            &[&home.join("saves"), &home.join("saves/World One")],
+        );
+        fs::write(home.join(JOURNAL), journal).unwrap();
+        let note = recover(&home).unwrap();
+        assert!(note.is_some());
+        assert!(!home.join("options.txt").exists(), "sources must be removed");
+        assert!(!home.join("saves").exists());
+        assert!(target.join("options.txt").is_file(), "copy must stay in place");
+        assert_eq!(state(&home), State::Shared);
+        assert_eq!(resolve(&home), target);
+        assert!(!journal_path(&home).exists());
+        fs::remove_dir_all(&home).unwrap();
+        fs::remove_dir_all(&target).unwrap();
+    }
+
+    #[test]
+    fn journal_with_paths_outside_the_move_is_refused() {
+        let home = scratch();
+        let outside = scratch();
+        let victim = outside.join("keep.txt");
+        fs::write(&victim, b"precious").unwrap();
+        let journal = journal_body(
+            "copying",
+            true,
+            &home,
+            &home.join("target"),
+            &[(&home.join("options.txt"), &victim)],
+            &[],
+            &[],
+        );
+        fs::write(home.join(JOURNAL), journal).unwrap();
+        assert!(recover(&home).is_err());
+        assert_eq!(fs::read(&victim).unwrap(), b"precious");
+        assert!(journal_path(&home).is_file(), "unsafe journal must stay for inspection");
+        fs::remove_dir_all(&home).unwrap();
+        fs::remove_dir_all(&outside).unwrap();
+    }
+
+    #[test]
+    fn restore_refuses_when_the_destination_holds_data() {
+        let home = scratch();
+        seed(&home);
+        let shared = home.with_file_name(format!(
+            "{}-shared",
+            home.file_name().unwrap().to_string_lossy()
+        ));
+        migrate(&home, &shared, true).unwrap();
+        // App storage gets a new file at a path the shared folder holds.
+        fs::write(home.join("options.txt"), b"new user data").unwrap();
+        let result = migrate(&home, &shared, false);
+        assert!(result.is_err(), "restore must refuse over existing data");
+        assert_eq!(fs::read(home.join("options.txt")).unwrap(), b"new user data");
+        assert_eq!(
+            fs::read(shared.join("options.txt")).unwrap(),
+            b"options",
+            "the shared copy must stay in place"
+        );
+        assert_eq!(state(&home), State::Shared);
+        fs::remove_dir_all(&home).unwrap();
+        fs::remove_dir_all(&shared).unwrap();
+    }
+
+    #[test]
+    fn adopt_refuses_when_both_locations_hold_game_files() {
+        let home = scratch();
+        seed(&home);
+        let shared = scratch();
+        fs::write(shared.join("someone-else.txt"), b"x").unwrap();
+        let result = adopt(&home, &shared);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Both"));
+        assert!(home.join("options.txt").is_file());
+        assert!(shared.join("someone-else.txt").is_file());
+        fs::remove_dir_all(&home).unwrap();
+        fs::remove_dir_all(&shared).unwrap();
+    }
+
+    #[test]
+    fn restore_with_a_missing_folder_errors_honestly() {
+        let home = scratch();
+        seed(&home);
+        let gone = home.join("gone");
+        fs::write(
+            home.join(MARKER),
+            json!({"version": 1, "dir": gone.to_string_lossy()}).to_string(),
+        )
+        .unwrap();
+        let result = migrate(&home, &gone, false);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("shared game files folder was not found"));
+        assert_eq!(state(&home), State::Missing);
+        fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn prompt_marker_roundtrip_stays_private() {
+        let home = scratch();
+        assert!(!prompt_done(&home));
+        mark_prompt_done(&home).unwrap();
+        assert!(prompt_done(&home));
+        fs::remove_dir_all(&home).unwrap();
     }
 }
