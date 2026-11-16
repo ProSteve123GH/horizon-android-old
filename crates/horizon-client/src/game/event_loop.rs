@@ -20,14 +20,16 @@ pub(super) fn redraw_flow(frame_drawn: &mut bool, offscreen: bool, now: Instant)
     }
 }
 
-pub(super) trait EventLoopCtl {
+pub(crate) trait EventLoopCtl {
     /// Ends the loop after the current iteration (`ActiveEventLoop::exit`).
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     fn exit(&self);
     /// When the loop wakes next (`ActiveEventLoop::set_control_flow`).
     fn set_control_flow(&self, flow: ControlFlow);
 }
 
 impl EventLoopCtl for ActiveEventLoop {
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     fn exit(&self) {
         ActiveEventLoop::exit(self);
     }

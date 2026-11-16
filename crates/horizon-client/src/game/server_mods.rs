@@ -5,6 +5,10 @@
 //! the last one, then ticks them; a player's command reaches them at once.
 //! Their lines go to the players they name. With no server mod on, each hook
 //! here is one check.
+// WebAssembly server mods are not wired in this build; the hooks remain for the
+// dedicated server API.
+#![allow(dead_code)]
+
 use super::{Game, lan::LanHost};
 #[cfg(not(feature = "mods"))]
 use horizon_world::registry::BlockStateId;

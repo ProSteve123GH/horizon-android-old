@@ -2,6 +2,9 @@
 //! the mod's own keys and the mouse wheel; and `render`'s zoom. With no mod
 //! claiming items, keys or the wheel, each hook here returns after one
 //! check.
+// WebAssembly code-mod input hooks; no code mod runs in this build.
+#![allow(dead_code)]
+
 use super::Game;
 use winit::{event::MouseButton, keyboard::KeyCode};
 #[cfg(feature = "mods")]

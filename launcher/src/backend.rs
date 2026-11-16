@@ -920,17 +920,20 @@ pub fn data_dir() -> PathBuf {
     // library's Android backend; there is no desktop data folder to use.
     #[cfg(target_os = "android")]
     return horizon_client::backend::data_dir();
-    if let Some(home) = std::env::var_os("HORIZON_LAUNCHER_HOME").filter(|h| !h.is_empty()) {
-        return PathBuf::from(home);
+    #[cfg(not(target_os = "android"))]
+    {
+        if let Some(home) = std::env::var_os("HORIZON_LAUNCHER_HOME").filter(|h| !h.is_empty()) {
+            return PathBuf::from(home);
+        }
+        // A location that does not open stands in as the default folders, as
+        // `data_location::startup` makes it for the window: never a panic here.
+        if let Ok(Some(roots)) = crate::data_location::configured_roots() {
+            return roots.launcher;
+        }
+        dirs::data_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("horizon-launcher")
     }
-    // A location that does not open stands in as the default folders, as
-    // `data_location::startup` makes it for the window: never a panic here.
-    if let Ok(Some(roots)) = crate::data_location::configured_roots() {
-        return roots.launcher;
-    }
-    dirs::data_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("horizon-launcher")
 }
 
 /// A canonical path without Windows' verbatim prefix: `canonicalize` gives `\\?\C:\...` there,
@@ -2654,17 +2657,20 @@ pub fn prepare_in_process(options: &prepare::Options, log: &dyn Fn(String)) -> R
 pub fn game_home() -> PathBuf {
     #[cfg(target_os = "android")]
     return horizon_client::backend::game_home();
-    if let Some(home) = std::env::var_os("HORIZON_HOME").filter(|h| !h.is_empty()) {
-        return PathBuf::from(home);
+    #[cfg(not(target_os = "android"))]
+    {
+        if let Some(home) = std::env::var_os("HORIZON_HOME").filter(|h| !h.is_empty()) {
+            return PathBuf::from(home);
+        }
+        // A location that does not open stands in as the default folders, as
+        // `data_location::startup` makes it for the window: never a panic here.
+        if let Ok(Some(roots)) = crate::data_location::configured_roots() {
+            return roots.game;
+        }
+        dirs::data_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("horizon")
     }
-    // A location that does not open stands in as the default folders, as
-    // `data_location::startup` makes it for the window: never a panic here.
-    if let Ok(Some(roots)) = crate::data_location::configured_roots() {
-        return roots.game;
-    }
-    dirs::data_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("horizon")
 }
 
 /// Whether No AI is on: every AI feature hidden and off (`horizon_platform::no_ai`, kept in the

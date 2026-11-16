@@ -1688,6 +1688,7 @@ mod tests {
             description: String::new(),
             problem: None,
             dev: false,
+            has_settings: false,
             native: Some(NativePage::default()),
         };
         s.mods.installed = vec![installed("fps_overlay"), installed("zoom")];

@@ -29,7 +29,7 @@ fn sprite_level(uv: vec2<f32>, layer: u32, lod: f32) -> vec4<f32> {
 // Adreno 304 V@269 crashes while linking a locally indexed RGSS offset array.
 // The four original samples and their accumulation order are unchanged.
 fn sample_rgss(uv: vec2<f32>, layer: u32, pixel: vec2<f32>, du: vec2<f32>, dv: vec2<f32>,
-               texel_screen: vec2<f32>) -> vec4<f32> {
+               texel_screen: vec2<f32>, tiled: bool) -> vec4<f32> {
     let max_texel = max(texel_screen.x, texel_screen.y);
     let min_pixel = min(pixel.x, pixel.y);
     let blend = smoothstep(min_pixel, min_pixel * 2.0, max_texel);
@@ -54,5 +54,5 @@ fn sample_rgss(uv: vec2<f32>, layer: u32, pixel: vec2<f32>, du: vec2<f32>, dv: v
     sum_low += sprite_level(p3, layer, low);
     sum_high += sprite_level(p3, layer, low + 1.0);
     let rgss = mix(sum_low * 0.25, sum_high * 0.25, mip_blend);
-    return mix(sample_nearest(uv, layer, pixel, du, dv, texel_screen), rgss, blend);
+    return mix(sample_nearest(uv, layer, pixel, du, dv, texel_screen, tiled), rgss, blend);
 }

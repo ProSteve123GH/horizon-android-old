@@ -168,11 +168,6 @@ impl BlockEditScreen {
             dragging: None,
         }
     }
-    /// Whether one of the block's text boxes has the keyboard's focus: the
-    /// window asks the OS for an input method only then.
-    pub(super) fn text_focused(&self) -> bool {
-        self.focus.is_some()
-    }
 }
 
 /// `WidgetTooltipHolder.refreshTooltipForNextRenderPass`: hovering or keyboard focus shows it.

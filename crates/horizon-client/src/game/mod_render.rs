@@ -38,6 +38,7 @@ const SHAKE_DEGREES: (f32, f32) = (3.0, 2.0);
 
 #[cfg(feature = "mods")]
 impl Shake {
+    #[allow(dead_code)]
     pub(super) fn add(&mut self, strength: f32, seconds: f32) {
         self.jolts.push(Jolt {
             start: Instant::now(),

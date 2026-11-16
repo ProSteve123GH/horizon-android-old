@@ -1460,6 +1460,7 @@ struct ReferenceParams { peak: f32, scene: f32, world: f32, debug: f32, share: v
             &target.create_view(&Default::default()),
             "legacy oracle",
             None,
+            None,
         );
     }
 

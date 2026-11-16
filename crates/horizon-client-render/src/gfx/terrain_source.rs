@@ -45,40 +45,13 @@ fn gles_source(source: &str) -> String {
     output.push_str(&source[end..rgss]);
     output.push_str(&source[rgss_end..]);
 
-    // Adreno 304 renders broken terrain with the separated scalar varyings.
-    // Pack values sharing their interpolation qualifier; leave the vertex
-    // buffers, texture sampling, fade, lighting, fog and HDR arithmetic alone.
-    let start = output
-        .find("struct TerrainOut {")
-        .expect("terrain interface");
-    let end = output[start..]
-        .find("struct SkyOut {")
-        .expect("sky interface")
-        + start;
-    let fields_end = output[start..]
-        .find("\n}\n")
-        .expect("terrain interface end")
-        + start
-        + 3;
-    let mut body = output[fields_end..end].to_owned();
-    for (member, packed) in [
-        ("emissive_layer", "codes.w"),
-        ("layer", "codes.x"),
-        ("emission", "codes.y"),
-        ("fade", "codes.z"),
-        ("spherical", "distances.x"),
-        ("cylindrical", "distances.y"),
-        ("visibility", "distances.z"),
-        ("height", "distances.w"),
-    ] {
-        for variable in ["in", "out"] {
-            body = body.replace(
-                &format!("{variable}.{member}"),
-                &format!("{variable}.{packed}"),
-            );
+    // Adreno 304 V@269's compiler crashes on this local indexed array; the
+    // include's four constant taps keep the same samples and accumulation.
+    if let Some(start) = output.find("fn rotated_grid(") {
+        if let Some(len) = output[start..].find("\n}\n") {
+            output.replace_range(start..start + len + 3, "");
         }
     }
-    output.replace_range(start..end, &(PACKED_INTERFACE.to_owned() + &body));
     output
 }
 
@@ -86,9 +59,15 @@ fn gles_source(source: &str) -> String {
 // robust EGL context. Preserve the first match, every entry and the no-match
 // sentinel; constant-index branches also keep robust access enabled.
 fn unroll_emissive_lookup(mut source: String) -> String {
-    let start = source
-        .find("    for (var i = 0u; i < min(globals.emissive_count.x, 32u); i++) {")
-        .expect("terrain emissive lookup");
+    let Some(start) =
+        source.find("    for (var i = 0u; i < min(globals.emissive_count.x, 128u); i++) {")
+    else {
+        // The shader and this lowering are separate files; a shader change must
+        // not turn every GLES start into a panic. The test below pins the loop
+        // this branch expects.
+        log::warn!("GLES terrain shader: emissive lookup loop changed; leaving it dynamic");
+        return source;
+    };
     let body = source[start..].find('{').unwrap() + start;
     let mut depth = 1;
     let mut end = body + 1;
@@ -100,26 +79,20 @@ fn unroll_emissive_lookup(mut source: String) -> String {
         }
         end += 1;
     }
-    let mut branches = String::new();
-    for i in 0..32 {
-        let branch = if i == 0 { "if" } else { "else if" };
+    // The pairs are sorted by base layer, so a later pair cannot equal
+    // `sprite_layer` after the first pair past it; the found guard therefore
+    // keeps the loop's first match without its early break. Flat statements
+    // keep the 128 branches out of a deeply nested WGSL expression (the
+    // validator's stack, and some drivers').
+    let mut branches = String::from("    var emissive_found = false;\n");
+    for i in 0..128 {
         branches.push_str(&format!(
-            "    {branch} globals.emissive_count.x > {i}u && globals.emissive_layers[{i}].x == (layer & 0x7fffu) {{\n        out.emissive_layer = globals.emissive_layers[{i}].y;\n    }}\n"
+            "    if !emissive_found && globals.emissive_count.x > {i}u && globals.emissive_layers[{i}].x == sprite_layer {{\n        out.emissive_layer = globals.emissive_layers[{i}].y;\n        emissive_found = true;\n    }}\n"
         ));
     }
     source.replace_range(start..end, &branches);
     source
 }
-
-const PACKED_INTERFACE: &str = "struct TerrainOut {
-    @builtin(position) clip: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) @interpolate(flat) codes: vec4<u32>,
-    @location(2) color: vec4<f32>,
-    @location(3) distances: vec4<f32>,
-    @location(4) local: vec3<f32>,
-}
-";
 
 #[cfg(test)]
 #[path = "terrain_source/hdr_gpu_tests.rs"]
@@ -130,10 +103,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_changed_emissive_loop_leaves_the_source_alone() {
+        // A shader edit must not turn every GLES start into a panic.
+        let source = "fn sprite_level() {}\n";
+        assert_eq!(unroll_emissive_lookup(source.to_owned()), source);
+    }
+
+    #[test]
     fn vulkan_source_is_unchanged_and_gles_validates_every_entrypoint() {
         assert!(matches!(terrain_shader(false), Cow::Borrowed(_)));
         assert_eq!(terrain_shader(false), include_str!("../terrain.wgsl"));
-        let source = terrain_shader(true);
+        let vulkan = include_str!("../hdr_light.wgsl").to_owned() + terrain_shader(false).as_ref();
+        let module = naga::front::wgsl::parse_str(&vulkan).unwrap();
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap();
+        // The renderer creates the module from the HDR prelude plus this source.
+        let source = include_str!("../hdr_light.wgsl").to_owned() + terrain_shader(true).as_ref();
         let original = include_str!("../terrain.wgsl").replace("\r\n", "\n");
         assert_eq!(
             &source[source.find("struct SkyOut {").unwrap()..],
@@ -141,15 +130,22 @@ mod tests {
             "sky and outline shader bodies must remain unchanged"
         );
         assert!(!source.contains("array<array<"));
-        assert!(!source.contains("switch layer / SPRITE_SPLIT"));
-        assert!(!source.contains("uv + offsets[i] * pixel"));
         for index in 0..7 {
             assert!(source.contains(&format!("array_index == {index}u")));
         }
-        assert!(source.contains("let whole = in.codes.y > 4u"));
-        assert!(source.contains("if in.codes.w != 0xffffffffu"));
-        assert!(!source.contains("in.height"));
-        assert!(!source.contains("out.emissive_layer"));
+        assert!(source.contains("let whole = in.emission > 4u"));
+        // The GLES source keeps one definition of the terrain entry points;
+        // the old packed-interface copy was invalid WGSL.
+        assert_eq!(source.matches("fn opaque_quad(").count(), 1);
+        assert_eq!(source.matches("@vertex fn vs_terrain_opaque(").count(), 1);
+        // The GLES lowering replaces the 128-entry dynamic lookup with
+        // constant-index branches; finding no loop (or only 32 entries) would
+        // crash pipeline creation on every GLES device.
+        assert!(source.contains("globals.emissive_layers[127].x == sprite_layer"));
+        assert!(!source.contains("i < min(globals.emissive_count.x, 128u)"));
+        // Adreno 304 crashes on the local indexed RGSS offsets.
+        assert!(!source.contains("fn rotated_grid("));
+        assert!(!source.contains("uv + offsets[i] * pixel"));
         let module = naga::front::wgsl::parse_str(&source).unwrap();
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),

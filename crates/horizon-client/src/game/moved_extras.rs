@@ -32,6 +32,7 @@ mod with_mods {
     impl Game<'_> {
         /// At start: remembers the moved extras that were off, and installs
         /// the ones that were on, in the background.
+        #[allow(dead_code)]
         pub(in crate::game) fn start_moved_extras(&mut self) {
             let off = moved_extras::nothing_to_do(&self.settings.extras);
             let pending = moved_extras::pending(&self.settings.extras);

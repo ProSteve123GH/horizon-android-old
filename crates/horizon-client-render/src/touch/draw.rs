@@ -308,7 +308,7 @@ fn button(
 }
 
 /// How far the mining disc reaches inside a marker of `radius`, by progress.
-fn mining_radius(radius: f32, progress: f32) -> f32 {
+pub(super) fn mining_radius(radius: f32, progress: f32) -> f32 {
     if progress.is_finite() {
         (radius - 1.5).max(0.0) * progress.clamp(0.0, 1.0)
     } else {

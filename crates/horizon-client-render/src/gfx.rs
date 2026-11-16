@@ -1025,7 +1025,10 @@ pub struct ReplacementContext {
     surface: Option<wgpu::Surface<'static>>,
     device_lost: Arc<std::sync::atomic::AtomicBool>,
     config: wgpu::SurfaceConfiguration,
+    // Kept for a replacement window on desktop; the Android context reads neither.
+    #[allow(dead_code)]
     present_modes: Vec<wgpu::PresentMode>,
+    #[allow(dead_code)]
     hdr_output: Option<hdr::Output>,
     /// The modules, layouts and pipelines of the renderer this replaces (if any).
     reuse: Arc<reuse::Reuse>,
@@ -1047,8 +1050,12 @@ pub struct ScreenshotRequest {
 }
 /// Vanilla sky at the far depth after solid terrain in the same pass.
 struct LateSky {
+    // The pipelines stay alive with the struct; not every target reads them.
+    #[allow(dead_code)]
     sky: wgpu::RenderPipeline,
+    #[allow(dead_code)]
     dark_disc: wgpu::RenderPipeline,
+    #[allow(dead_code)]
     celestial: wgpu::RenderPipeline,
 }
 /// A solid terrain pipeline without HDR output's lighting (terrain.wgsl's `HDR_LIGHTING`),
@@ -2649,7 +2656,7 @@ impl Renderer {
         forcefield: (&[u8], u32),
         panorama_faces: Arc<panorama::Faces>,
         prepared: Option<PreparedTextures>,
-        mut previous: Option<ReplacementContext>,
+        previous: Option<ReplacementContext>,
         api: GraphicsApi,
         translucent_batching: bool,
         shader_pack: bool,
@@ -2814,7 +2821,9 @@ impl Renderer {
         let terrain_source_gl =
             cfg!(target_os = "android") && adapter.get_info().backend == wgpu::Backend::Gl;
         let terrain_source_wgsl = if terrain_source_gl {
-            terrain_source::terrain_shader(true).into_owned()
+            // The HDR prelude defines HDR_WRITE_LIGHT and the frame's colour helpers.
+            include_str!("hdr_light.wgsl").to_owned()
+                + terrain_source::terrain_shader(true).as_ref()
         } else {
             terrain_shader()
         };
@@ -3019,7 +3028,8 @@ impl Renderer {
             // coverage or without.
             if hud == Some(true) {
                 let terrain_source_wgsl = if terrain_source_gl {
-                    terrain_source::terrain_shader(true).into_owned()
+                    include_str!("hdr_light.wgsl").to_owned()
+                        + terrain_source::terrain_shader(true).as_ref()
                 } else {
                     terrain_shader()
                 };
@@ -3032,36 +3042,6 @@ impl Renderer {
             } else {
                 kept.create_render_pipeline(&desc)
             }
-        };
-        let specialized_pipeline = |layout: &wgpu::PipelineLayout,
-                                    label: &str,
-                                    vertex: &str,
-                                    fragment: &str,
-                                    buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
-                                    topology: wgpu::PrimitiveTopology,
-                                    cull: Option<wgpu::Face>,
-                                    depth_write: bool,
-                                    depth_test: bool,
-                                    blend: Option<wgpu::BlendState>,
-                                    settled: bool| {
-            let mut constants = sprite_constants.to_vec();
-            if settled {
-                constants.extend([("TERRAIN_FILTERING", 0.0), ("TERRAIN_FULLY_VISIBLE", 1.0)]);
-            }
-            pipeline_with(
-                &constants,
-                layout,
-                label,
-                vertex,
-                fragment,
-                buffers,
-                topology,
-                cull,
-                depth_write,
-                depth_test,
-                blend,
-                None,
-            )
         };
         // A solid terrain pipeline (back faces culled, depth written, no blend) without HDR
         // output's lighting, and with it where the display offers HDR output.
@@ -3101,7 +3081,8 @@ impl Renderer {
                            depth_write: bool,
                            depth_test: bool,
                            blend: Option<wgpu::BlendState>| {
-            specialized_pipeline(
+            pipeline_with(
+                &sprite_constants,
                 layout,
                 label,
                 vertex,
@@ -3112,7 +3093,7 @@ impl Renderer {
                 depth_write,
                 depth_test,
                 blend,
-                false,
+                None,
             )
         };
         let pipeline = |label: &str,
@@ -3208,60 +3189,10 @@ impl Renderer {
                 }
             })
             .flatten();
-        let static_cutout = opaque_terrain.as_ref().and_then(|_| {
-            let checks = GpuChecks::push(&device);
-            let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
-            let candidate = pipeline(
-                "Terrain cutout without LOD fade",
-                "vs_terrain_cutout",
-                "fs_cutout_static",
-                &terrain_buffers,
-                tri,
-                Some(wgpu::Face::Back),
-                true,
-                true,
-                None,
-            );
-            if let Some(error) = pollster::block_on(internal.pop()).or(checks.pop()) {
-                log::warn!("Static cutout pipeline unavailable; retaining fade shader: {error}");
-                None
-            } else {
-                Some(candidate)
-            }
-        });
-        let settled_terrain = opaque_terrain.as_ref().and_then(|_| {
-            let checks = GpuChecks::push(&device);
-            let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
-            let make = |label, vertex, fragment| {
-                specialized_pipeline(
-                    &layout,
-                    label,
-                    vertex,
-                    fragment,
-                    &terrain_buffers,
-                    tri,
-                    Some(wgpu::Face::Back),
-                    true,
-                    true,
-                    None,
-                    true,
-                )
-            };
-            let pair = (
-                make("Settled opaque terrain", "vs_terrain_opaque", "fs_opaque"),
-                make(
-                    "Settled cutout terrain",
-                    "vs_terrain_cutout",
-                    "fs_cutout_static",
-                ),
-            );
-            if let Some(error) = pollster::block_on(internal.pop()).or(checks.pop()) {
-                log::warn!("Settled terrain unavailable; retaining ordinary shader: {error}");
-                None
-            } else {
-                Some(pair)
-            }
-        });
+        // The static and settled pipelines need the packed entry points; the
+        // base shader uses the upstream wire interface instead.
+        let static_cutout = None;
+        let settled_terrain = None;
         crate::mesher::group_parts(opaque_terrain.is_some());
         // The water mirror's camera sees the world from the other side of the plane, which
         // flips the winding: its solid terrain culls the front.
@@ -4985,7 +4916,6 @@ impl Renderer {
                 |layout, label, vertex, fragment| solid_in(layout, label, vertex, fragment, &[]),
             )
         });
-        let sorted_indices = arena::Arena::indices(&device, 1 << 16, flat.is_some());
         let base_vertex = adapter
             .get_downlevel_capabilities()
             .flags
@@ -12302,7 +12232,7 @@ impl Renderer {
                 self.readback
                     .finish(&self.device, &mut encoder, image, screenshot)
             });
-        let (target_texture, view_target, overlay_format) = match finished {
+        let (target_texture, view_target, _overlay_format) = match finished {
             Some(texture) => {
                 let view = texture.create_view(&wgpu::TextureViewDescriptor {
                     format: Some(self.output.frame.overlay_format),

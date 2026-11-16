@@ -1529,8 +1529,11 @@ pub(crate) enum Act {
     ResetKeys,
     KeyboardProfile,
     /// Controller binds: wait for a button, reset one, reset all.
+    #[allow(dead_code)]
     PadKey(&'static str),
+    #[allow(dead_code)]
     ResetPadKey(&'static str),
+    #[allow(dead_code)]
     ResetPadKeys,
     ToggleMod(usize),
     /// PvP & HUD's PvP preset (`pvp::apply_preset`).
@@ -4633,7 +4636,7 @@ impl OptionsUi {
     /// Touch uses direct manipulation rather than sticky keyboard selection.
     /// Text-editor focus is independent and is retained for the IME.
     pub fn touch_start(&mut self) {
-        use crate::settings_shell::{Hosted as _, Screen as _};
+        use crate::settings_shell::Hosted as _;
         self.focus = None;
         self.graphics.clear_focus();
     }
@@ -6427,6 +6430,7 @@ mod tests {
             description: String::new(),
             problem: None,
             dev: false,
+            has_settings: false,
             native: Some(crate::mod_list::NativePage {
                 keys: vec![["zoom".into(), "Zoom".into(), "key.keyboard.z".into()]],
                 buttons: Vec::new(),
@@ -7730,6 +7734,7 @@ mod tests {
                 description: String::new(),
                 problem: None,
                 dev: false,
+                has_settings: false,
                 native,
             };
         s.mods.installed = vec![

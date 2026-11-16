@@ -625,6 +625,7 @@ pub fn mebibytes(bytes: u64) -> String {
 }
 /// `tasklist /FO CSV /NH`'s last field (`"512,345 K"`, in any locale's
 /// digit grouping) as bytes.
+#[cfg_attr(target_os = "android", allow(dead_code))]
 pub fn parse_tasklist(output: &str) -> Option<u64> {
     let row = output.lines().find(|l| l.starts_with('"'))?;
     let field = row

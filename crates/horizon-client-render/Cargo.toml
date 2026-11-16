@@ -87,6 +87,9 @@ horizon-extras = []
 workspace = true
 
 [dev-dependencies]
+# Termux's host target is Android; tests there need winit's activity backend,
+# which the normal Android build enables from horizon-android.
+winit = { version = "0.30.13", features = ["android-native-activity"] }
 horizon-perf = { path = "../horizon-perf" }
 # Tests: a TrueType font to load, and the design system the menus' motion curves match.
 horizon-theme = { path = "../horizon-theme" }
