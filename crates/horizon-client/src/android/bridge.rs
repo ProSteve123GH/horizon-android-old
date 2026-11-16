@@ -117,6 +117,7 @@ impl Controller {
             installation,
             worker: None,
             diagnostic_export: None,
+            storage_worker: None,
             server_pings: Arc::default(),
             error: None,
         };

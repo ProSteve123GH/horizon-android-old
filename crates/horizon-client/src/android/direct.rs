@@ -326,7 +326,7 @@ impl ApplicationHandler for DirectGame {
         }
     }
 
-    fn suspended(&mut self, _events: &ActiveEventLoop) {
+    fn suspended(&mut self, events: &ActiveEventLoop) {
         crate::diagnostics::heartbeat("suspended", || serde_json::json!({}));
         if let Some(game) = &mut self.game {
             return game.suspended(events);
