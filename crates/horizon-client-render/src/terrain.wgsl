@@ -199,7 +199,6 @@ fn sprite_at(tiled: vec2<f32>, layer: u32, du: vec2<f32>, dv: vec2<f32>) -> vec4
     if TERRAIN_FILTERING == 1u || (TERRAIN_FILTERING == 3u && u32(globals.filtering.x) == 1u) {
         return sample_rgss(uv, layer, pixel, du, dv, texel_screen, tiled_face);
     }
-    }
     return sample_nearest(uv, layer, pixel, du, dv, texel_screen, tiled_face);
 }
 
