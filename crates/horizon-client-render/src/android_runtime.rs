@@ -1,58 +1,82 @@
-//! Android renderer and platform policy.
-#[path = "graphics_startup.rs"]
-pub mod graphics_startup;
-use crate::android_gamepad::{Devices, InputMode};
+// Adapted from Starling (https://github.com/starling-client/starling, `android` branch at
+// 150a414b09a1, the input part of `crates/horizon-client-render/src/android_runtime.rs`), written
+// by Vasysik and the Starling contributors. Copyright (c) 2026 Ludovic Marie and the Horizon
+// contributors, under the same MIT license as Horizon (LICENSE at the repository root).
+
+//! The Android input runtime: which input device is in charge, the connected
+//! controllers and the keypad profile, held once for the whole process. The
+//! Android event backend, the options screen and the game all reach the same
+//! state through these functions, from whichever thread delivers the event.
+//!
+//! Pure state over [`android_gamepad`](crate::android_gamepad) and
+//! [`keypad`](crate::keypad): nothing here talks to the OS, so it builds and is
+//! tested on every platform; only the Android build feeds it.
+use crate::android_gamepad::{Devices, InputMode, Selection};
+use crate::gamepad::PadState;
+use crate::keypad::{Keypad, Settings};
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(target_os = "android")]
-static CACHE_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-#[cfg(target_os = "android")]
-pub fn configure_cache_dir(path: std::path::PathBuf) {
-    let _ = CACHE_DIR.set(path);
+use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
+use winit::event::{DeviceEvent, ElementState};
+use winit::keyboard::KeyCode;
+
+static SELECTION: LazyLock<Mutex<Selection>> = LazyLock::new(Mutex::default);
+static GAMEPADS: LazyLock<Mutex<Devices>> = LazyLock::new(Mutex::default);
+static KEYPAD: LazyLock<Mutex<Keypad>> = LazyLock::new(Mutex::default);
+static KEYPAD_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// A lock that a panic elsewhere never makes unusable: the state stays
+/// consistent between calls, so input keeps working.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
-#[cfg(target_os = "android")]
-pub(crate) fn cache_dir() -> Option<&'static std::path::Path> {
-    CACHE_DIR.get().map(std::path::PathBuf::as_path)
-}
-static INPUT_MODE: std::sync::Mutex<(InputMode, InputMode)> =
-    std::sync::Mutex::new((InputMode::Auto, InputMode::Touch));
-static GAMEPADS: std::sync::LazyLock<std::sync::Mutex<Devices>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(Devices::default()));
+
+/// The input mode picked in the options.
 pub fn input_mode() -> InputMode {
-    INPUT_MODE.lock().unwrap().0
+    lock(&SELECTION).mode()
 }
+
+/// The device in charge now (never `Auto`).
 pub fn active_input() -> InputMode {
-    INPUT_MODE.lock().unwrap().1
+    lock(&SELECTION).active()
 }
+
+/// Pick an input mode. A change lets go of every held controller and keypad
+/// input, so nothing stays pressed across the switch.
 pub fn configure_input(mode: InputMode) {
-    let mut input = INPUT_MODE.lock().unwrap();
-    if input.0 != mode {
-        *input = (
-            mode,
-            if mode == InputMode::Auto {
-                InputMode::Touch
-            } else {
-                mode
-            },
-        );
+    let changed = lock(&SELECTION).configure(mode);
+    if changed {
         clear_gamepads();
         clear_keypad();
     }
 }
+
+/// A device of `kind` was used: in `Auto` it takes over. Returns whether it
+/// may act (false when the player picked another mode). Leaving the
+/// controller lets go of its held buttons.
 pub fn note_input(kind: InputMode) -> bool {
-    let mut input = INPUT_MODE.lock().unwrap();
-    if input.0 != InputMode::Auto && input.0 != kind {
-        return false;
-    }
-    if input.1 == InputMode::Controller && kind != InputMode::Controller {
+    let (accepted, left_controller) = {
+        let mut selection = lock(&SELECTION);
+        let was = selection.active();
+        let accepted = selection.note(kind);
+        (
+            accepted,
+            accepted && was == InputMode::Controller && kind != InputMode::Controller,
+        )
+    };
+    if left_controller {
         clear_gamepads();
     }
-    input.1 = kind;
-    true
+    accepted
 }
-pub fn gamepad_event(id: i32, event: &winit::event::DeviceEvent) -> bool {
-    use winit::event::{DeviceEvent, ElementState};
+
+/// A raw event of the controller with Android device id `id`: motion axes
+/// and buttons by Android code. Returns whether the event was a controller's
+/// (the caller then keeps it from other handlers); a meaningful one also
+/// notes the controller as used. A removed device forgets every controller,
+/// the platform then lists those still there ([`retain_gamepads`]).
+pub fn gamepad_event(id: i32, event: &DeviceEvent) -> bool {
     let activity = {
-        let mut devices = GAMEPADS.lock().unwrap();
+        let mut devices = lock(&GAMEPADS);
         match *event {
             DeviceEvent::Motion { axis, value } => devices.axis(id, axis, value),
             DeviceEvent::Button { button, state } => {
@@ -70,24 +94,88 @@ pub fn gamepad_event(id: i32, event: &winit::event::DeviceEvent) -> bool {
     }
     true
 }
+
+/// Forget the controllers that are no longer connected.
 pub fn retain_gamepads(ids: &[i32]) {
-    GAMEPADS.lock().unwrap().retain(ids);
+    lock(&GAMEPADS).retain(ids);
 }
+
+/// Let go of every controller's held input.
 pub fn clear_gamepads() {
-    GAMEPADS.lock().unwrap().clear();
+    lock(&GAMEPADS).clear();
 }
+
+/// The Android device id of the controller in charge (for its rumble), if a
+/// controller is the active input.
 pub fn active_gamepad_id() -> Option<i32> {
-    (active_input() == InputMode::Controller)
-        .then(|| GAMEPADS.lock().unwrap().active_id())
-        .flatten()
-}
-pub fn gamepad_state() -> crate::gamepad::PadState {
-    if active_input() == InputMode::Controller {
-        GAMEPADS.lock().unwrap().poll()
-    } else {
-        crate::gamepad::PadState::default()
+    if active_input() != InputMode::Controller {
+        return None;
     }
+    lock(&GAMEPADS).active_id()
 }
+
+/// The controller in charge as a pad, once per frame; nothing while another
+/// device is the active input.
+pub fn gamepad_state() -> PadState {
+    if active_input() != InputMode::Controller {
+        return PadState::default();
+    }
+    lock(&GAMEPADS).poll()
+}
+
+/// Use this keypad profile, on or off as it says.
+pub fn configure_keypad_settings(settings: &Settings) {
+    lock(&KEYPAD).configure(settings);
+    KEYPAD_ENABLED.store(settings.enabled, Ordering::Relaxed);
+}
+
+/// Turn the keypad profile on or off, letting go of its held keys.
+pub fn configure_keypad(enabled: bool) {
+    KEYPAD_ENABLED.store(enabled, Ordering::Relaxed);
+    clear_keypad();
+}
+
+pub fn keypad_enabled() -> bool {
+    KEYPAD_ENABLED.load(Ordering::Relaxed)
+}
+
+/// A key event for the keypad profile. Returns true when the profile is on
+/// and the key is one of its own (the caller keeps it from the game's
+/// keyboard input).
+pub fn keypad_key(key: KeyCode, down: bool) -> bool {
+    keypad_enabled() && lock(&KEYPAD).key(key, down)
+}
+
+/// Let go of every key the keypad profile holds.
+pub fn clear_keypad() {
+    lock(&KEYPAD).clear();
+}
+
+/// The keypad profile's held actions as a pad, once per frame.
+pub fn keypad_state() -> PadState {
+    lock(&KEYPAD).poll()
+}
+
+// ---- Android platform policy kept from the Android fork (renderer startup,
+// storage, GPU compatibility, cache budgets). Not in upstream's input-only
+// runtime; used by the android renderer and optionally by the launcher.
+
+#[path = "graphics_startup.rs"]
+pub mod graphics_startup;
+
+#[cfg(target_os = "android")]
+static CACHE_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+/// The launcher tells the game where its cache folder is.
+#[cfg(target_os = "android")]
+pub fn configure_cache_dir(path: std::path::PathBuf) {
+    let _ = CACHE_DIR.set(path);
+}
+/// The cache folder, once the launcher set it.
+#[cfg(target_os = "android")]
+pub(crate) fn cache_dir() -> Option<&'static std::path::Path> {
+    CACHE_DIR.get().map(std::path::PathBuf::as_path)
+}
+
 static ATLAS_LIMIT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(16384);
 /// The launcher opens the adapter before the resource worker builds the game atlas.
 pub fn configure_atlas_limit(limit: u32) {
@@ -96,6 +184,7 @@ pub fn configure_atlas_limit(limit: u32) {
 pub fn atlas_limit() -> u32 {
     ATLAS_LIMIT.load(Ordering::Relaxed)
 }
+
 // Zero preserves the engine's automatic/manual worker selection.
 static WORKER_LIMIT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 pub fn configure_worker_limit(limit: u32) {
@@ -121,30 +210,7 @@ mod worker_limit_tests {
         assert_eq!(super::worker_limit(0, 0), 1);
     }
 }
-static GPU_BATCHING: AtomicBool = AtomicBool::new(false);
-static KEYPAD_ENABLED: AtomicBool = AtomicBool::new(false);
-static KEYPAD: std::sync::LazyLock<std::sync::Mutex<crate::keypad::Keypad>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(crate::keypad::Keypad::default()));
-pub fn configure_keypad_settings(settings: &crate::keypad::Settings) {
-    KEYPAD.lock().unwrap().configure(settings);
-    KEYPAD_ENABLED.store(settings.enabled, Ordering::Relaxed);
-}
-pub fn configure_keypad(enabled: bool) {
-    KEYPAD_ENABLED.store(enabled, Ordering::Relaxed);
-    clear_keypad();
-}
-pub fn keypad_enabled() -> bool {
-    KEYPAD_ENABLED.load(Ordering::Relaxed)
-}
-pub fn keypad_key(key: winit::keyboard::KeyCode, down: bool) -> bool {
-    keypad_enabled() && KEYPAD.lock().unwrap().key(key, down)
-}
-pub fn clear_keypad() {
-    KEYPAD.lock().unwrap().clear();
-}
-pub fn keypad_state() -> crate::gamepad::PadState {
-    KEYPAD.lock().unwrap().poll()
-}
+
 static OPEN_GL: AtomicBool = AtomicBool::new(cfg!(target_pointer_width = "32"));
 pub fn configure_graphics(open_gl: bool) {
     OPEN_GL.store(open_gl, Ordering::Relaxed);
@@ -156,14 +222,16 @@ pub fn graphics_api() -> crate::graphics::GraphicsApi {
         crate::graphics::GraphicsApi::Vulkan
     }
 }
+
+static GPU_BATCHING: AtomicBool = AtomicBool::new(false);
 pub fn configure_gpu(batching: bool) {
     GPU_BATCHING.store(batching, Ordering::Relaxed);
 }
+/// Compatibility mode: Android without the batched-GPU path (the setting for weak GPUs and
+/// driver bugs in it). Anything the batched path requests is left out of the device request.
 pub fn compatibility() -> bool {
     cfg!(target_os = "android") && !GPU_BATCHING.load(Ordering::Relaxed)
 }
-
-pub use crate::clipboard::{ClipboardHooks, clipboard_get, clipboard_set, install_clipboard};
 
 static RETURN_TO_LAUNCHER: AtomicBool = AtomicBool::new(false);
 pub fn return_to_launcher() {
@@ -173,49 +241,7 @@ pub fn take_launcher_return() -> bool {
     RETURN_TO_LAUNCHER.swap(false, Ordering::AcqRel)
 }
 
-#[cfg(test)]
-mod input_tests {
-    use super::*;
-    #[test]
-    fn explicit_modes_reject_other_devices_and_auto_follows_activity() {
-        configure_input(InputMode::Touch);
-        assert!(!note_input(InputMode::Controller));
-        assert_eq!(active_input(), InputMode::Touch);
-        gamepad_event(
-            2,
-            &winit::event::DeviceEvent::Button {
-                button: 96,
-                state: winit::event::ElementState::Pressed,
-            },
-        );
-        assert_eq!(gamepad_state(), crate::gamepad::PadState::default());
-        configure_input(InputMode::Controller);
-        assert!(!note_input(InputMode::Touch));
-        configure_input(InputMode::Auto);
-        assert!(note_input(InputMode::KeyboardMouse));
-        assert_eq!(active_input(), InputMode::KeyboardMouse);
-        gamepad_event(
-            2,
-            &winit::event::DeviceEvent::Motion {
-                axis: 0,
-                value: 0.05,
-            },
-        );
-        assert_eq!(active_input(), InputMode::KeyboardMouse);
-        gamepad_event(
-            2,
-            &winit::event::DeviceEvent::Motion {
-                axis: 0,
-                value: 1.0,
-            },
-        );
-        assert_eq!(active_input(), InputMode::Controller);
-        assert!(note_input(InputMode::Touch));
-        assert_eq!(gamepad_state(), crate::gamepad::PadState::default());
-        clear_gamepads();
-        configure_input(InputMode::Auto);
-    }
-}
+pub use crate::clipboard::{ClipboardHooks, clipboard_get, clipboard_set, install_clipboard};
 
 // Disposable decoded-audio and empty mesh buffers only, not total RAM/VRAM.
 static CACHE_BUDGET_MIB: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -246,3 +272,12 @@ mod cache_budget_tests {
         }
     }
 }
+
+/// The keypad profile and the controller in charge together, once per frame:
+/// what the game's controller path reads on Android.
+pub fn pad_state() -> PadState {
+    keypad_state().merge(&gamepad_state())
+}
+
+#[cfg(test)]
+mod tests;

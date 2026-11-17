@@ -166,16 +166,19 @@ content folder (`game_home`, default the same):
 | --- | --- |
 | `game_home/horizon-native-mods/<id>.hnmod` | The imported bundle (moves with the game files). |
 | `game_home/horizon-native-mods/enabled.json` | `{"enabled": ["<id>", …]}` — the Compile selection; missing file = all enabled. |
-| `native/current.json` | The selected build: `{"id", "version", "lib", "stock", "abi", "versionCode", "sha256", "mods":[{"id","version","sha256"}]}`. |
+| `native/current.json` | The selected build: `{"id", "version", "lib", "stock", "abi", "versionCode", "sha256", "mods":[{"id","version","sha256"}]}`, plus optional `engine_commit`, `api_level` and `min_apk_version` for the compatibility gate (absent = accept). |
 | `native/active.json` | Written on **every** start by Java: `{"lib": …, "stock": …}`. The trampoline reads this; installs read `stock` from it when present. |
 | `native/active.json.tmp` | Staging file for the atomic rename that publishes `active.json`. |
 | `native/builds/<job>/libhorizon_android.so` | The library the build service produced for job `<job>`. |
 | `native/builds/<job>/libhorizon_android.so.partial` | Interrupted download, resumed with `Range:` when possible. |
 | `native/build.json` | The in-flight build (job id, mods, hashes, APK identity, `stock`) so the launcher can resume after a restart. Deleted on success. |
 | `native/pending_crash` | Marker left on every start that uses a modded build; the game deletes it on its first frame. |
+| `native/first-frame` | Universal marker written atomically on the game's first `about_to_wait` (stock and modded starts alike). The launcher's launch overlay waits for this file, and Java removes any stale copy at process start. |
 | `native/crash_streak` | How many starts in a row died before the first frame (`0` on a clean start). |
 | `native/current.json.rejected` | A set-aside build, kept for the error message. |
 | `native/last_rejected` | Human-readable reason the build was set aside; the launcher shows it in a banner. |
+| `native/last_known_good.json` | A healthy `current.json` saved on the first frame; restored when no build is selected and the last one was not just rejected. |
+| `native/last_failed_mod` | Mod ids recorded when a build crashed early, included in the rejection reason. |
 
 ## The load chain
 
@@ -193,11 +196,14 @@ content folder (`game_home`, default the same):
 2. The trampoline (`crates/horizon-trampoline`, a cdylib with no game code)
    reads `active.json`, sets `HORIZON_GAME_LIB` and
    `HORIZON_NATIVE_PENDING` (the `pending_crash` path) in the environment,
-   `dlopen()`s the named library and calls its `android_main` — the game, either
-   the stock build or a modded one.
-3. On its first `about_to_wait`, the game deletes `pending_crash` and writes
-   `crash_streak = 0` when those variables are set and the marker exists,
-   marking the start clean. Missing variables mean a normal stock run.
+   `dlopen()`s the named library and forwards Android's own
+   `ANativeActivity_onCreate` to it — the game, either the stock build or a
+   modded one, with the same JNI setup as a stock start.
+3. On its first `about_to_wait`, the game clears the crash guard once: it
+   writes `native/first-frame` (temp file + rename), deletes `pending_crash`
+   when `HORIZON_NATIVE_PENDING` names it, saves a healthy `current.json` to
+   `last_known_good.json`, and leaves `crash_streak` for Java to reset. The
+   launcher's splash overlay disappears when `first-frame` appears.
 
 ## The crash guard
 

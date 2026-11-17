@@ -1,173 +1,164 @@
-//! Horizon native client: resources, world streaming, rendering and the
-//! bindings between the validated simulation pieces and the game loop.
-#![forbid(unsafe_code)]
-pub mod advancements;
-pub mod ambience;
-pub mod android_resources;
-pub mod animate_tick;
-pub mod arrows;
-pub mod block_contact;
-pub use horizon_client_render::{
-    assets, atlas_sources, audio, auth, ban_notice, bidi, biome, block_entities, block_entity_anim,
-    block_entity_render, border_render, breaking, brewing, camera, chat, chunk, chunk_map, clouds,
-    collisions, command_block, containers, crash, datapack, dynamic_light, effects, environment,
-    extras, fast_hash, fog, font, gfx, graphics, graphics_style, graphics_ui, hdr_calibration, hud,
-    hud_layout, hud_overlays, inventory_effects, java_text, jigsaw_block, level_loading, light,
-    lod, logging, menu_blur, mesher, minimap, mipmap, mod_list, model_library, models,
-    multiline_edit, native_emissive, options_file, options_fixes, options_ui, overlay, pack_screen,
-    packs, par, particles, poi_sections, post_chain, potent_sulfur, preedit, providers,
-    screen_draw, screen_effects, sculk, section_mask, settings, shader_options, shader_pack_list,
-    signs, skins, sound_engine, sound_events, sound_preview, spans, split_layout, split_profiles,
-    sprites, streaming, structure_block, tab_list, telemetry, test_block, test_instance_block,
-    testgen, title_edition, trims, ui, vault, weather, widgets, world, worldborder, zip,
-};
-pub mod attack_strength;
-pub mod attribute_updates;
-pub mod auto_jump;
-pub mod banner;
-pub mod beehive;
-pub mod benchmark;
-pub mod block_entity_item;
-pub mod block_pattern;
-pub mod block_transform;
-pub mod boss_overlay;
-pub mod cauldron;
-pub mod chunk_io;
-pub mod clock;
-pub mod command_storage;
-pub mod confirm_screen;
-pub mod container_screen;
-pub mod content_files;
-pub mod content_identity;
-pub mod control;
-pub mod crafting;
-pub mod creative;
-pub mod cushion;
-pub mod data_cmd;
-pub mod debug_chart;
-pub mod debug_entries;
-pub mod debug_keys;
-pub mod debug_overlay;
-pub mod debugworld;
-pub mod dialog;
-pub mod dialog_screen;
-pub mod discord_presence;
-pub mod end_crystal;
-pub mod end_gateway;
-pub mod entities;
-pub mod entity_culling;
-pub mod entity_nbt;
-pub mod extras_hud;
-pub mod falling_block;
-pub mod fire_render;
-pub mod first_person;
-pub mod flatgen;
-pub mod friends_screen;
-pub mod furnace;
-pub mod game_mode_switcher;
-pub mod game_rules_screen;
-pub mod gizmos;
-pub mod gossip;
-pub mod health;
-pub mod heartbeat;
-pub mod hotbar;
-pub mod hunger;
-pub mod ime_edit;
-pub mod inv_sort;
-pub mod item_activation;
-pub mod item_render;
-pub mod item_sync;
-pub mod item_tooltip;
-pub mod lan;
-pub mod landing;
-pub mod locator_bar;
-pub mod menu;
-pub mod merchant;
-pub mod minecraft_import;
-pub mod mobs;
-pub mod mod_content;
-pub mod motion;
-pub mod moved_extras;
-pub mod multiplayer;
-pub mod music;
-pub mod native_data;
-pub mod net;
-pub mod nether_portal;
-pub mod no_resources;
-pub mod official_install;
-pub mod offline_name;
-pub mod old_world;
-pub mod osk;
-pub mod patrol;
-pub mod perf_overlay;
-pub mod pick_item;
-pub mod player_sync;
-pub mod portal_sections;
-pub mod pose;
-pub mod pregen;
-pub mod projectiles;
-pub mod raid;
-pub mod random_tick_sections;
-pub mod recipe_book;
-pub mod recipe_book_screen;
-pub mod reconnect;
-pub mod resource_install;
-pub mod save;
-pub mod scoreboard_cmd;
-pub mod screen_layout;
-pub mod screen_narrator;
-pub mod touch_ui;
-pub use horizon_server_files as server;
-pub mod server_packs;
-pub mod shadows;
-pub mod spear;
-pub mod spectator_menu;
-pub mod sprint;
-pub mod stations;
-pub mod stopwatches;
-pub mod structure_blocks;
-pub mod text_display;
-pub mod tick_chunk_membership;
-pub mod ticket_levels;
-pub mod title;
-pub mod toasts;
-pub mod ui_text;
-pub mod ui_theme;
-pub mod vanillagen;
-pub mod win_screen;
-pub mod world_spawn;
-pub use horizon_client_core::Result;
-pub use horizon_client_core::block_entity_nbt;
-pub use horizon_client_core::bossbar;
-pub use horizon_client_core::component;
-pub use horizon_client_core::fastutil_order;
-pub use horizon_client_core::gamerules;
-pub use horizon_client_core::lang;
-pub use horizon_client_core::nbt_path;
-pub use horizon_client_core::scoreboard;
-pub use horizon_client_core::snbt;
-pub use horizon_client_core::text;
-pub use horizon_client_input::clipboard;
-pub use horizon_client_input::gamepad;
-pub use horizon_client_input::input;
-pub use horizon_client_input::interaction_input;
-pub use horizon_client_input::key_names;
-pub use horizon_client_input::keybinds;
-pub use horizon_client_input::keymapping;
-pub use horizon_client_input::mouse;
-pub use horizon_client_input::window;
-pub use horizon_command as command;
-pub use horizon_items::blocks;
-pub use horizon_items::bundle;
-pub use horizon_items::cooldowns;
-pub use horizon_items::enchant;
-pub use horizon_items::flowers;
-pub use horizon_items::item_data;
-pub use horizon_items::items;
-pub use horizon_items::random_sequences;
-
-pub use horizon_client_render::{android_gamepad, android_runtime, file_lock, keypad, touch};
+//! Gameplay and startup, above the reusable client library.
+// No `#![recursion_limit]` or other inner attribute horizon-mixins doesn't know here: the
+// launcher's horizon-mixins then rejects every native mod targeting this crate (#8169).
+#![cfg_attr(not(target_os = "android"), forbid(unsafe_code))]
+extern crate self as horizon_client;
+pub use horizon_client_lib::*;
+pub mod entry;
+pub mod game;
+mod horizon_look;
+pub mod mod_api;
 
 #[cfg(test)]
+mod brewing_speed_load_tests;
+#[cfg(test)]
+mod living_death_tests;
+
+
+// Android's host glue. game.rs is compiled both into this library and into the
+// horizon-android cdylib (which declares the same modules in android_main.rs);
+// the library copy needs the same crate-root paths to resolve on Android. The
+// cdylib is the one that drives the app, so the library copy of these hosts is
+// never called at runtime.
+#[cfg(target_os = "android")]
+thread_local! {
+    /// The Android activity, set by the cdylib's entry point; the library copy
+    /// of the host glue reads it the same way.
+    pub(crate) static APP: std::cell::RefCell<
+        Option<winit::platform::android::activity::AndroidApp>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(target_os = "android")]
+#[path = "android/platform.rs"]
+mod platform;
+#[cfg(target_os = "android")]
+#[path = "android/display.rs"]
+mod display;
+#[cfg(target_os = "android")]
+#[path = "android/device_runtime.rs"]
+mod device_runtime;
+#[cfg(target_os = "android")]
+#[path = "android/document_bridge.rs"]
+mod document_bridge;
+#[cfg(target_os = "android")]
+#[path = "android/documents.rs"]
+mod documents;
+#[cfg(target_os = "android")]
+#[path = "android/gallery.rs"]
+mod gallery;
+#[cfg(target_os = "android")]
+#[path = "android/native_ime.rs"]
+mod native_ime;
+#[cfg(target_os = "android")]
+#[path = "android/performance.rs"]
+mod performance;
+#[cfg(target_os = "android")]
+#[path = "android/diagnostics.rs"]
+mod diagnostics;
+#[cfg(target_os = "android")]
+#[path = "android/document_store.rs"]
+mod document_store;
+#[cfg(target_os = "android")]
+#[path = "android/shared_storage.rs"]
+mod shared_storage;
+#[cfg(target_os = "android")]
 #[path = "android/device_preferences.rs"]
-mod android_device_preferences;
+mod device_preferences;
+
+#[cfg(target_os = "android")]
+mod backend {
+    pub const VERSION: &str = if crate::PUBLIC_BUILD {
+        "0.7.7"
+    } else {
+        "0.7.7-dev"
+    };
+    static HOME: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    pub fn initialize(home: std::path::PathBuf) {
+        let _ = HOME.set(home);
+    }
+    pub fn game_home() -> std::path::PathBuf {
+        data_dir()
+    }
+    pub fn game_mod_api_level() -> Option<u32> {
+        Some(horizon_mods::api_level::LEVEL)
+    }
+    pub fn data_dir() -> std::path::PathBuf {
+        HOME.get().expect("android_main sets account home").clone()
+    }
+    pub fn try_data_dir() -> Option<std::path::PathBuf> {
+        HOME.get().cloned()
+    }
+}
+
+// Only the pieces of the launcher's catalog the host glue names. The full
+// catalog lives in the cdylib, which is where the Android launcher runs.
+#[cfg(target_os = "android")]
+mod catalog {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub enum Orientation {
+        #[default]
+        Landscape,
+        Portrait,
+        ReverseLandscape,
+        ReversePortrait,
+        Auto,
+    }
+    impl Orientation {
+        pub fn android_value(self) -> i32 {
+            match self {
+                Self::Landscape => 0,
+                Self::Portrait => 1,
+                Self::ReverseLandscape => 8,
+                Self::ReversePortrait => 9,
+                Self::Auto => -1,
+            }
+        }
+    }
+}
+
+// The cdylib owns the ContentProvider; the library copy only needs the change
+// flag the documents module asks for.
+#[cfg(target_os = "android")]
+mod document_provider {
+    pub fn take_changes() -> bool {
+        false
+    }
+}
+
+#[cfg(target_os = "android")]
+pub(crate) const PUBLIC_BUILD: bool = match option_env!("HORIZON_ANDROID_PUBLIC") {
+    Some(value) => value.len() == 1 && value.as_bytes()[0] == b'1',
+    None => false,
+};
+
+#[cfg(target_os = "android")]
+mod android_host {
+    // The cdylib owns the AndroidApp and the launcher config; this library copy
+    // of the game never drives the app, so only the input state it reads at
+    // runtime needs to be honest.
+    pub(crate) fn android_event_loop(
+    ) -> Result<winit::event_loop::EventLoop<()>, winit::error::EventLoopError> {
+        winit::event_loop::EventLoop::new()
+    }
+    pub(crate) fn keyboard_mouse_input() -> bool {
+        horizon_client::android_runtime::active_input()
+            == horizon_client::android_gamepad::InputMode::KeyboardMouse
+    }
+    pub(crate) fn touch_visible() -> bool {
+        horizon_client::android_runtime::active_input()
+            == horizon_client::android_gamepad::InputMode::Touch
+    }
+    pub(crate) fn touch_input(touch: bool) {
+        horizon_client::android_runtime::note_input(if touch {
+            horizon_client::android_gamepad::InputMode::Touch
+        } else {
+            horizon_client::android_gamepad::InputMode::KeyboardMouse
+        });
+    }
+    pub(crate) fn save_input_mode() {}
+}
+#[cfg(target_os = "android")]
+pub(crate) use android_host::{
+    android_event_loop, keyboard_mouse_input, save_input_mode, touch_input, touch_visible,
+};

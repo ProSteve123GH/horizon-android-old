@@ -55,7 +55,7 @@ impl TouchControls {
         }
         if started {
             if layout::contains([0.02, 0.04, 0.105, 0.075], p) {
-                match self.settings.save() {
+                match self.settings.save_to(std::path::Path::new("horizon-touch.json")) {
                     Ok(()) => {
                         self.clear();
                         return true;

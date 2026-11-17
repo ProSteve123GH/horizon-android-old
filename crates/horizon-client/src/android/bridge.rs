@@ -203,7 +203,7 @@ impl Controller {
                 }
             }
         }
-        if let Some(notice) = crate::minecraft_import::poll() {
+        if let Some(notice) = crate::android_minecraft_import::poll() {
             self.catalog.status = notice.text;
             if let Some(error) = notice.error {
                 self.error = Some(error);
@@ -515,7 +515,7 @@ impl Controller {
             self.catalog.status = note;
         }
         self.poll();
-        let imported = crate::minecraft_import::snapshot();
+        let imported = crate::android_minecraft_import::snapshot();
         let installed = self.installation.installed;
         let installing = self.worker.is_some() || imported.is_some();
         let progress = *self.install.lock().unwrap_or_else(|e| e.into_inner());
@@ -866,18 +866,18 @@ impl Controller {
                 let index = arg.parse::<usize>().map_err(|e| e.to_string())?;
                 self.catalog.install(&home, index);
             }
-            "cancel_import" => crate::minecraft_import::cancel(),
+            "cancel_import" => crate::android_minecraft_import::cancel(),
             "repair_installation" => {
-                if self.worker.is_some() || crate::minecraft_import::busy() {
+                if self.worker.is_some() || crate::android_minecraft_import::busy() {
                     return Err("Finish the current installation first".into());
                 }
-                crate::minecraft_import::start_repair(self.home.clone())?;
+                crate::android_minecraft_import::start_repair(self.home.clone())?;
                 self.error = None;
                 self.catalog.status =
                     "Checking Minecraft resources and downloading anything missing...".into();
             }
             "remove_installation" => {
-                if self.worker.is_some() || crate::minecraft_import::busy() {
+                if self.worker.is_some() || crate::android_minecraft_import::busy() {
                     return Err("Finish or cancel the current installation first".into());
                 }
                 horizon_client::minecraft_import::remove(&home)
@@ -918,7 +918,7 @@ impl Controller {
                 }
                 if self.worker.is_some()
                     || self.storage_worker.is_some()
-                    || crate::minecraft_import::busy()
+                    || crate::android_minecraft_import::busy()
                     || crate::documents::busy()
                 {
                     return Err("Finish the current task first".into());
@@ -949,7 +949,7 @@ impl Controller {
             "storage_restore" => {
                 if self.worker.is_some()
                     || self.storage_worker.is_some()
-                    || crate::minecraft_import::busy()
+                    || crate::android_minecraft_import::busy()
                     || crate::documents::busy()
                 {
                     return Err("Finish the current task first".into());
@@ -976,7 +976,7 @@ impl Controller {
             "storage_recreate" => {
                 if self.worker.is_some()
                     || self.storage_worker.is_some()
-                    || crate::minecraft_import::busy()
+                    || crate::android_minecraft_import::busy()
                     || crate::documents::busy()
                 {
                     return Err("Finish the current task first".into());
@@ -1729,13 +1729,13 @@ impl Controller {
     /// Imports a folder or ZIP picked in the Compose launcher.
     fn start_import(
         &mut self,
-        kind: crate::minecraft_import::Kind,
+        kind: crate::android_minecraft_import::Kind,
         uri: String,
     ) -> Result<Value, String> {
-        if self.worker.is_some() || crate::minecraft_import::busy() {
+        if self.worker.is_some() || crate::android_minecraft_import::busy() {
             return Err("Finish the current installation first".into());
         }
-        crate::minecraft_import::start(self.home.clone(), kind, uri)?;
+        crate::android_minecraft_import::start(self.home.clone(), kind, uri)?;
         self.error = None;
         self.catalog.status = "Reading the selected Minecraft installation...".into();
         Ok(json!({"started": true}))
@@ -1841,7 +1841,7 @@ impl Controller {
     }
 
     fn play(&mut self, world: Option<&str>) -> Result<Value, String> {
-        if self.worker.is_some() || crate::minecraft_import::busy() || self.login.pending() {
+        if self.worker.is_some() || crate::android_minecraft_import::busy() || self.login.pending() {
             return Ok(json!({"launch": false}));
         }
         if crate::shared_storage::busy() {
@@ -2141,7 +2141,7 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_importNativeDocumen
     crate::native_mods::import_external(&mut env, &activity, home, uri);
 }
 
-fn import_minecraft(env: &mut JNIEnv<'_>, kind: crate::minecraft_import::Kind, uri: JString<'_>) {
+fn import_minecraft(env: &mut JNIEnv<'_>, kind: crate::android_minecraft_import::Kind, uri: JString<'_>) {
     if uri.is_null() {
         return;
     }
@@ -2166,7 +2166,7 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_importMinecraftFold
     _class: JClass<'_>,
     uri: JString<'_>,
 ) {
-    import_minecraft(&mut env, crate::minecraft_import::Kind::Folder, uri);
+    import_minecraft(&mut env, crate::android_minecraft_import::Kind::Folder, uri);
 }
 
 /// `NativeBridge.importMinecraftZip(String uri)`: a picked ZIP document.
@@ -2176,7 +2176,7 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_importMinecraftZip(
     _class: JClass<'_>,
     uri: JString<'_>,
 ) {
-    import_minecraft(&mut env, crate::minecraft_import::Kind::Zip, uri);
+    import_minecraft(&mut env, crate::android_minecraft_import::Kind::Zip, uri);
 }
 
 /// `NativeBridge.screenshots(String order)`: the gallery list. The Compose

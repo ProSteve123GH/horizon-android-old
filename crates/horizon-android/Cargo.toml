@@ -15,8 +15,22 @@ horizon-narrator = { path = "../horizon-narrator" }
 horizon-client-input = { path = "../horizon-client-input" }
 horizon-anticheat = { path = "../horizon-anticheat" }
 horizon-client = { path = "../horizon-client", default-features = false }
+# Upstream's split engine crates, used by the shared gameplay/Android host glue.
+horizon-hooks = { path = "../horizon-hooks" }
+horizon-cosmetics = { path = "../horizon-cosmetics" }
+horizon-client-core = { path = "../horizon-client-core" }
+horizon-perf-format = { path = "../horizon-perf-format" }
+# launcher/src/worlds.rs and server_list.rs read level.dat / servers.dat through
+# horizon-platform's NBT view, so the Android cdylib needs the `world` feature too.
+horizon-platform = { path = "../horizon-platform", features = ["world"] }
+horizon-system = { path = "../horizon-system" }
+horizon-optifine = { path = "../horizon-optifine" }
+chacha20poly1305 = "0.10"
+toml = "1.1"
 android_logger = "0.15"
 regex = "1"
+# launcher/src/i18n.rs asks the OS for the player's locale.
+sys-locale = "0.3"
 horizon-hdr = { path = "../horizon-hdr" }
 horizon-shader-api = { path = "../horizon-shader-api" }
 jni = "0.21"
@@ -65,7 +79,8 @@ horizon-theme = { path = "../horizon-theme" }
 # the anonymous "I'm playing" ping the game sends itself (`heartbeat.rs`).
 horizon-telemetry = { path = "../horizon-telemetry", default-features = false, features = ["live"] }
 horizon-bench = { path = "../horizon-bench" }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+# Match horizon-client-lib's zip: the shared world-management source passes its ZipWriter here.
+zip = { version = "9.1.3", default-features = false, features = ["deflate"] }
 # Controllers (evdev + libudev on Linux, IOKit on macOS, Windows.Gaming.Input); the `controllers` feature.
 # The DualSense's rumble, adaptive triggers and lights over HID (gilrs only reads it).
 # HTTPS to the Minecraft services (online-mode session join).

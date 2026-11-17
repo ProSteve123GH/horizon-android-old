@@ -22,6 +22,74 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+// TODO(keep-consistency): the desktop launcher's shared native-mod browser reads build records
+// written by its local Rust toolchain. Android builds through the hosted service above instead,
+// so it has neither a `native-mods.json` nor a GitHub origin for a build; the shared launcher
+// modules need these names to compile, and report "no native build" on this platform.
+/// The folder the desktop launcher also uses for `.hnmod` bundles.
+pub const INSTALLED: &str = "horizon-native-mods";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    Client,
+    Server,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LeftOut {
+    pub id: String,
+    pub version: String,
+    pub why: String,
+}
+
+impl LeftOut {
+    pub fn label(&self) -> String {
+        String::new()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct About {
+    pub base: String,
+    pub horizon: String,
+    pub target: Target,
+    pub base_horizon: Option<String>,
+    pub pinned_by: Vec<String>,
+    pub on_base: bool,
+    pub left_out: Vec<LeftOut>,
+}
+
+impl About {
+    pub fn off_its_nightly(&self) -> bool {
+        false
+    }
+}
+
+/// No desktop-style native build record exists on Android.
+pub fn about(_version: &str) -> Option<About> {
+    None
+}
+
+pub fn is_native(version: &str) -> bool {
+    version.starts_with("native-")
+}
+
+pub fn base_for(_current: Option<&str>, _installed: &[String], _update: bool) -> Option<String> {
+    None
+}
+
+pub fn revision_of(_version: &str) -> Result<String, String> {
+    Err("Android has no desktop native build record".into())
+}
+
+pub fn hooks_at(_revision: &str) -> Option<u32> {
+    None
+}
+
+pub fn digest<'a>(_files: impl Iterator<Item = (&'a str, &'a [u8])>) -> String {
+    String::new()
+}
+
 pub(crate) const MAX_BUNDLE: u64 = 64 << 20;
 /// The build service accepts at most 32 MiB; refuse to start the upload
 /// beyond a comfortable margin.

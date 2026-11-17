@@ -94,6 +94,7 @@ pub fn from_packet(packet: &Commands, local: &Dispatcher) -> Dispatcher {
             // The server sent only what the player may use.
             permission: 0,
             suggests,
+            restricted: node.restricted,
         });
     }
     let mut d = Dispatcher::new();
@@ -112,16 +113,33 @@ fn provider(id: &str) -> Option<Suggests> {
     }
 }
 
+/// The longest registry id kept, and how many distinct ones: a game knows a few hundred
+/// registries, with ids far shorter.
+const MAX_NAME: usize = 256;
+const MAX_NAMES: usize = 1024;
+
 /// A registry name kept for the life of the game (argument types hold
-/// `&'static str`): each distinct name is stored once.
+/// `&'static str`): each distinct name is stored once. The names come from the server's command
+/// tree, so a server sending trees of new 32 KiB names packet after packet leaked memory until
+/// the client ran out: a name too long, not a resource location, or past [`MAX_NAMES`] is kept
+/// as "" instead (no suggestions for that argument), where vanilla's tree frees its keys anyway.
 fn intern(name: &str) -> &'static str {
     static NAMES: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
     let mut names = NAMES
         .get_or_init(Default::default)
         .lock()
         .unwrap_or_else(|e| e.into_inner());
+    intern_in(&mut names, name)
+}
+fn intern_in(names: &mut HashSet<&'static str>, name: &str) -> &'static str {
     if let Some(&n) = names.get(name) {
         return n;
+    }
+    let resource_location = name
+        .bytes()
+        .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-' | b'.' | b'/' | b':'));
+    if name.len() > MAX_NAME || !resource_location || names.len() >= MAX_NAMES {
+        return "";
     }
     let n: &'static str = Box::leak(name.to_owned().into_boxed_str());
     names.insert(n);
@@ -279,6 +297,28 @@ pub fn argument_type(id: i32, props: &[u8]) -> ArgType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_servers_registry_names_are_kept_within_bounds() {
+        // A set of its own: the game's is shared with every other test.
+        let mut names = HashSet::new();
+        let item = intern_in(&mut names, "minecraft:item");
+        assert_eq!(item, "minecraft:item");
+        assert!(std::ptr::eq(item, intern_in(&mut names, "minecraft:item")));
+        // Too long, or not a resource location: not kept.
+        assert_eq!(intern_in(&mut names, &"a".repeat(32767)), "");
+        assert_eq!(intern_in(&mut names, "Not A Registry"), "");
+        // However many distinct names a server sends, the set stops growing.
+        for i in 0..2 * MAX_NAMES {
+            intern_in(&mut names, &format!("evil:registry_{i}"));
+        }
+        assert_eq!(names.len(), MAX_NAMES);
+        assert_eq!(intern_in(&mut names, "evil:one_more_after_the_cap"), "");
+        assert!(
+            std::ptr::eq(item, intern_in(&mut names, "minecraft:item")),
+            "kept names stay"
+        );
+    }
     use horizon_protocol::{
         buf::{Codec, Reader, Writer},
         packets::play::CommandNode,
@@ -337,6 +377,55 @@ mod tests {
             ],
             root: 4,
         }
+    }
+
+    /// `stop` runs but is restricted, `say <message>` signs, `list` is plain.
+    fn tree_for_checks() -> Dispatcher {
+        let mut stop = literal("stop", Vec::new(), true);
+        stop.restricted = true;
+        let tree = Commands {
+            nodes: vec![
+                stop,
+                literal("say", vec![2], false),
+                argument("message", "minecraft:message", Vec::new(), true),
+                literal("list", Vec::new(), true),
+                CommandNode {
+                    kind: 0,
+                    executable: false,
+                    restricted: false,
+                    children: vec![0, 1, 3],
+                    redirect: None,
+                    name: String::new(),
+                    parser: None,
+                    suggestions: None,
+                },
+            ],
+            root: 4,
+        };
+        from_packet(&tree, &Dispatcher::new())
+    }
+
+    #[test]
+    fn is_valid_needs_a_whole_command_that_runs() {
+        let tree = tree_for_checks();
+        let reg = crate::Registries::default();
+        assert!(tree.parse("list", &reg).is_valid());
+        assert!(tree.parse("say hello", &reg).is_valid());
+        // Unknown, stopping short of a command, and with something left over.
+        assert!(!tree.parse("nosuchcommand", &reg).is_valid());
+        assert!(!tree.parse("say", &reg).is_valid());
+        assert!(!tree.parse("list extra", &reg).is_valid());
+    }
+
+    #[test]
+    fn without_restricted_drops_only_restricted_nodes() {
+        let tree = tree_for_checks();
+        let reg = crate::Registries::default();
+        assert!(tree.parse("stop", &reg).is_valid());
+        let restricted = tree.without_restricted();
+        assert!(!restricted.parse("stop", &reg).is_valid());
+        assert!(restricted.parse("list", &reg).is_valid());
+        assert!(restricted.parse("say hello", &reg).is_valid());
     }
 
     #[test]
