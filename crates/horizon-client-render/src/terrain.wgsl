@@ -779,7 +779,8 @@ fn hdr_mark(tier: u32, y: f32) -> f32 {
 }
 // Identical alpha cutout, HDR and fog for sections with fade_code == 0.
 // Selecting this entrypoint is a CPU-side proof, never a quality option.
-@fragment fn fs_cutout_static(in: TerrainOut) -> @location(0) vec4<f32> {
+@fragment fn fs_cutout_static(wire: TerrainWire) -> @location(0) vec4<f32> {
+    let in = from_wire(wire);
     let texel = sprite(in.uv, in.layer & 0x7fffu);
     var color = texel * in.color;
     if !TERRAIN_FULLY_VISIBLE {
