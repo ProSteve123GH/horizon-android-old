@@ -686,16 +686,6 @@ var<private> hdr_normal: vec3<f32>;
 fn hdr_facing() -> f32 {
     return mix(0.45, 1.0, max(dot(hdr_normal, globals.sun.xyz), 0.0));
 }
-@vertex fn vs_terrain_flat_cutout(
-    @builtin(vertex_index) vertex: u32,
-    @location(0) position: vec3<f32>, @location(1) uv: vec2<u32>,
-    @location(2) layer: u32, @location(3) color: vec4<f32>, @location(4) light: vec2<u32>
-) -> TerrainOut {
-    let origin = slot_origins[block_slots[vertex >> 8u]];
-    if opaque_quad(layer, origin.w) { return left_out(); }
-    return terrain_vertex(position, terrain_uv(uv, origin.w), layer, color, light, origin.xyz,
-        origin.w);
-}
 fn terrain_vertex(position: vec3<f32>, uv: vec2<f32>, layer: u32, color: vec4<f32>,
     light: vec2<u32>, origin: vec3<f32>, w: f32) -> TerrainOut {
     // [world warp vertex]
