@@ -115,6 +115,7 @@ sealed interface Overlay {
     data object Performance : Overlay
     data object Servers : Overlay
     data object TouchLayouts : Overlay
+    data object GameFiles : Overlay
     data object Appearance : Overlay
     data class Choose(val id: String, val options: Options) : Overlay
     data class Edit(val id: String, val title: String, val value: String, val hint: String) : Overlay
@@ -273,8 +274,12 @@ private fun LauncherContent(
             act("dismiss_status")
         }
     }
-    BackHandler(enabled = settingsOpen || destination != Destination.Play) {
-        if (settingsOpen) settingsOpen = false else destination = Destination.Play
+    BackHandler(enabled = overlay != null || settingsOpen || destination != Destination.Play) {
+        when {
+            overlay != null -> overlay = null
+            settingsOpen -> settingsOpen = false
+            else -> destination = Destination.Play
+        }
     }
 
     val actions = LauncherActions(
@@ -291,6 +296,7 @@ private fun LauncherContent(
             settingsOpen = false
             destination = Destination.Screenshots
         },
+        openGameFiles = { overlay = Overlay.GameFiles },
         openAppearance = {
             backgroundError = null
             overlay = Overlay.Appearance
@@ -336,7 +342,17 @@ private fun LauncherContent(
             Overlay.Profiles -> InstancesSheet(onDismiss = { overlay = null }, onPlay = onPlay)
             Overlay.Worlds -> WorldsSheet(onDismiss = { overlay = null }, onPlay = onPlay)
             Overlay.Performance -> PerformanceSheet(onDismiss = { overlay = null })
-            Overlay.TouchLayouts -> TouchLayoutsSheet(onDismiss = { overlay = null })
+            Overlay.TouchLayouts -> TouchLayoutsSheet(
+                onDismiss = { overlay = null },
+                onImportTouch = { uri -> onImport("touch", uri) },
+                onEditInGame = { actions.play(); overlay = null },
+            )
+            Overlay.GameFiles -> Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+                    val root = state.storage.dir?.let { java.io.File(it) } ?: sharedStorageDir()
+                    GameFilesScreen(root = root, onBack = { overlay = null })
+                }
+            }
             Overlay.Servers -> ServersSheet(onDismiss = { overlay = null }, onPlay = onPlay)
             Overlay.Appearance -> AppearanceSheet(
                 appearance = appearance,
@@ -394,6 +410,8 @@ fun LauncherScaffold(
         ) { padding ->
             BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
                 val wide = maxWidth >= 600.dp
+                // Tablets, DeX and Android TV get more settings columns and bigger targets.
+                val extraWide = maxWidth >= 1280.dp
                 // Phones held sideways are ~400 dp tall: tighter header, no rail logo.
                 val short = maxHeight < 520.dp
                 if (state == null) {
@@ -449,7 +467,15 @@ fun LauncherScaffold(
                         Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
                             Column(Modifier.fillMaxSize().padding(horizontal = if (wide) 24.dp else 16.dp)) {
                                 Header(Destination.Settings, state, short, actions)
-                                Box(Modifier.weight(1f).fillMaxWidth()) { SettingsScreen(state, wide, actions) }
+                                Box(Modifier.weight(1f).fillMaxWidth()) {
+                                    SettingsScreen(
+                                        state = state,
+                                        wide = wide,
+                                        extraWide = extraWide,
+                                        actions = actions,
+                                        onGameFiles = actions.openGameFiles,
+                                    )
+                                }
                             }
                             Box(Modifier.align(Alignment.BottomCenter)) { snackbarHost() }
                         }
@@ -472,6 +498,7 @@ class LauncherActions(
     val openTouchLayouts: () -> Unit,
     val openServers: () -> Unit,
     val openScreenshots: () -> Unit,
+    val openGameFiles: () -> Unit,
     val openAppearance: () -> Unit,
     val choose: (String) -> Unit,
     val edit: (id: String, title: String, value: String, hint: String) -> Unit,

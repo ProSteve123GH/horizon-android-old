@@ -81,7 +81,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -92,14 +91,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import dev.horizon.android.R
 import android.Manifest
 import android.content.Intent
 import android.net.Uri
@@ -116,126 +116,30 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import java.io.File
 
-private fun settingIcon(id: String): ImageVector = when (id) {
-    "renderer" -> Icons.Rounded.Monitor
-    "render_scale" -> Icons.Rounded.HighQuality
-    "display_hz" -> Icons.Rounded.Speed
-    "performance_hints" -> Icons.Rounded.Memory
-    "performance_presets" -> Icons.Rounded.Speed
-    "appearance" -> Icons.Rounded.Palette
-    "screenshots" -> Icons.Rounded.PhotoLibrary
-    "worker_limit" -> Icons.Rounded.Memory
-    "cache_budget_mib" -> Icons.Rounded.Storage
-    "storage" -> Icons.Rounded.FolderOpen
-    "game_files" -> Icons.Rounded.Folder
-    "world_files" -> Icons.Rounded.Public
-    "orientation" -> Icons.Rounded.ScreenRotation
-    "aspect" -> Icons.Rounded.AspectRatio
-    "immersive" -> Icons.Rounded.Fullscreen
-    "cutout" -> Icons.Rounded.Smartphone
-    "profile" -> Icons.Rounded.Person
-    "input_host" -> Icons.Rounded.Gamepad
-    "touch_layouts" -> Icons.Rounded.TouchApp
-    "name" -> Icons.Rounded.Badge
-    "server" -> Icons.Rounded.Dns
-    "servers" -> Icons.Rounded.Dns
-    "gpu_profile" -> Icons.Rounded.BugReport
-    "record_performance" -> Icons.Rounded.Timer
-    "export_diagnostics" -> Icons.Rounded.Archive
-    "export_performance" -> Icons.Rounded.Insights
-    else -> Icons.Rounded.History
-}
-
+/**
+ * Entry point kept for the rest of the launcher. The landing page, category
+ * cards, detail pages, search and footer live in [SettingsRoot] and its
+ * `settings/sections` helpers; this wrapper only owns the storage dialog.
+ */
 @Composable
-fun SettingsScreen(state: Snapshot, wide: Boolean, actions: LauncherActions) {
+fun SettingsScreen(
+    state: Snapshot,
+    wide: Boolean,
+    extraWide: Boolean,
+    actions: LauncherActions,
+    onGameFiles: () -> Unit,
+) {
     var storageOpen by remember { mutableStateOf(false) }
-    // Each group is one block; sideways the blocks sit in two columns instead of one long list.
-    LazyVerticalStaggeredGrid(
-        columns = StaggeredGridCells.Fixed(if (wide) 2 else 1),
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalItemSpacing = 4.dp,
-    ) {
-        items(state.settings, key = { "group-${it.name}" }) { group -> SettingGroup(group, state, actions, onStorage = { storageOpen = true }) }
-        item(key = "source", span = StaggeredGridItemSpan.FullLine) {
-            FilledTonalButton(
-                onClick = { act("repository") },
-                modifier = Modifier.fillMaxWidth().padding(top = 16.dp).height(48.dp),
-            ) {
-                Icon(Icons.Rounded.OpenInBrowser, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Source code")
-            }
-        }
-    }
+    dev.horizon.android.launcher.settings.SettingsRoot(
+        state = state,
+        wide = wide,
+        extraWide = extraWide,
+        actions = actions,
+        onGameFiles = onGameFiles,
+        onStorage = { storageOpen = true },
+    )
     if (storageOpen) {
         StorageDialog(state.storage, onDismiss = { storageOpen = false })
-    }
-}
-
-@Composable
-private fun SettingGroup(group: SettingGroup, state: Snapshot, actions: LauncherActions, onStorage: () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(
-            group.name,
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 6.dp),
-        )
-        group.rows.forEachIndexed { i, row ->
-            // A connected group: large corners at its ends, small ones between rows.
-            Surface(
-                shape = connectedShape(i, group.rows.size, outer = 24),
-                color = MaterialTheme.colorScheme.surfaceContainer,
-                onClick = {
-                    when (row.kind) {
-                        "switch" -> act("toggle", row.id)
-                        "choice" -> actions.choose(row.id)
-                        "text" -> actions.edit(
-                            row.id,
-                            row.title,
-                            if (row.id == "name") state.config.name else state.config.server,
-                            if (row.id == "server") "Leave empty for singleplayer" else "Up to 16 characters",
-                        )
-                        else -> when (row.id) {
-                            "performance_presets" -> actions.openPerformance()
-                            "touch_layouts" -> actions.openTouchLayouts()
-                            "servers" -> actions.openServers()
-                            "storage" -> onStorage()
-                            "screenshots" -> actions.openScreenshots()
-                            "appearance" -> actions.openAppearance()
-                            else -> act(row.id)
-                        }
-                    }
-                },
-            ) {
-                ListItem(
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    leadingContent = {
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            modifier = Modifier.size(40.dp),
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(settingIcon(row.id), null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                            }
-                        }
-                    },
-                    headlineContent = { Text(row.title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    supportingContent = { Text(row.value, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                    trailingContent = {
-                        when (row.kind) {
-                            "switch" -> HorizonSwitch(checked = row.on, onCheckedChange = { act("toggle", row.id) })
-                            "choice" -> Icon(Icons.Rounded.UnfoldMore, null)
-                            else -> Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null)
-                        }
-                    },
-                )
-            }
-        }
     }
 }
 
@@ -804,9 +708,6 @@ private fun hasStorageAccess(context: android.content.Context): Boolean =
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-/** The one shared folder, for every build: the dev/release distinction is gone. */
-private fun sharedStorageDir(): File = File(Environment.getExternalStorageDirectory(), "Horizon-Android")
-
 /** The request lambda and whether the last attempt failed to open settings. */
 private class StorageGrant(val request: () -> Unit, val error: Boolean)
 
@@ -853,65 +754,10 @@ private fun rememberStorageGrant(onGranted: () -> Unit): StorageGrant {
     return StorageGrant(request, grantError)
 }
 
-@Composable
-private fun StorageOption(
-    title: String,
-    detail: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    error: String? = null,
-) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            RadioButton(selected = selected, onClick = null)
-            Column(Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(title, fontWeight = FontWeight.SemiBold)
-                    if (selected) {
-                        Text(
-                            "Current",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                }
-                Text(
-                    detail,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (error != null) {
-                    Text(
-                        error,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            }
-        }
-    }
-}
-
 /**
- * The game files location, as a two-option chooser. Internal storage
- * (`/storage/emulated/0/Horizon-Android`) is the recommended default; app
- * storage keeps the files private and opens through system Files (SAF) only.
- * The move needs the all-files access Android grants in system settings.
- * The SAF mode keeps working fully when that grant never happens. Private
- * files (logs, accounts, downloaded engine files, caches) stay in app
- * storage either way.
+ * Game files location: shared storage is the only mode. The dialog reports the
+ * one folder, offers the one-way private-to-shared move (still needed for old
+ * installs) and can re-create a missing folder. There is no SAF chooser.
  */
 @Composable
 private fun StorageDialog(storage: StorageState, onDismiss: () -> Unit) {
@@ -920,11 +766,11 @@ private fun StorageDialog(storage: StorageState, onDismiss: () -> Unit) {
     val state = storage.state
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Game files location", fontWeight = FontWeight.Bold) },
+        title = { Text(stringResource(R.string.storage_dialog_title), fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (state == "moving") {
-                    Text("Moving the game files… keep Horizon open.")
+                    Text(stringResource(R.string.storage_dialog_moving))
                     val fraction = if (storage.total > 0) (storage.done.toFloat() / storage.total) else null
                     if (fraction != null) {
                         LinearWavyProgressIndicator(
@@ -936,34 +782,27 @@ private fun StorageDialog(storage: StorageState, onDismiss: () -> Unit) {
                     }
                 } else {
                     val recorded = storage.dir ?: sharedDir.absolutePath
-                    StorageOption(
-                        title = "Internal storage (recommended)",
-                        detail = "$recorded — any file manager can open the worlds, mods, packs, shaders, options and shareable reports directly.",
-                        selected = state == "shared" || state == "missing",
-                        error = if (state == "missing") "Folder missing or not readable. The game cannot open your worlds until this is resolved." else null,
-                        onClick = { if (state == "private") grant.request() },
+                    Text(stringResource(R.string.storage_dialog_shared), fontWeight = FontWeight.SemiBold)
+                    Text(
+                        stringResource(R.string.storage_dialog_shared_detail, recorded),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    StorageOption(
-                        title = "App storage (SAF)",
-                        detail = "Kept inside Horizon. Reach the worlds, mods, packs, shaders and options through system Files as Horizon Android; nothing moves without the grant below.",
-                        selected = state == "private",
-                        onClick = { if (state == "shared" || state == "missing") act("storage_restore") },
-                    )
-                    when (state) {
-                        "missing" -> Text(
-                            "If the folder was deleted by accident, restore its contents from your file manager's Trash first. Re-creating it makes an empty folder.",
+                    if (state == "missing") {
+                        Text(
+                            stringResource(R.string.storage_dialog_missing),
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        else -> Text(
-                            "Logs, downloaded Minecraft files, accounts and caches always stay private.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.error,
                         )
                     }
+                    Text(
+                        stringResource(R.string.storage_dialog_private_note),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     if (grant.error) {
                         Text(
-                            "Could not open the settings page. Open Settings → Apps → Horizon Android (dev builds: Horizon Android Dev) → All files access instead.",
+                            stringResource(R.string.storage_dialog_error),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
@@ -974,23 +813,15 @@ private fun StorageDialog(storage: StorageState, onDismiss: () -> Unit) {
         confirmButton = {
             when (state) {
                 "private" -> FilledTonalButton(onClick = grant.request) {
-                    Text("Move to internal storage")
+                    Text(stringResource(R.string.storage_dialog_move))
                 }
-                "shared" -> FilledTonalButton(onClick = { act("storage_restore") }) {
-                    Text("Move back to app storage")
-                }
-                "missing" -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { act("storage_recreate") }) {
-                        Text("Re-create empty folder")
-                    }
-                    FilledTonalButton(onClick = { act("storage_restore") }) {
-                        Text("Move back to app storage")
-                    }
+                "missing" -> OutlinedButton(onClick = { act("storage_recreate") }) {
+                    Text(stringResource(R.string.storage_dialog_recreate))
                 }
                 else -> {}
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.storage_dialog_close)) } },
     )
 }
 
@@ -1020,7 +851,7 @@ fun StoragePromptDialog(onDismiss: () -> Unit) {
                     "Horizon can keep worlds, mods, packs, shaders, options and shareable reports in /storage/emulated/0/Horizon-Android, so any file manager can open them directly.",
                 )
                 Text(
-                    "Grant the access Android shows and the files move right away. Nothing moves without that grant. Logs, downloaded Minecraft files, accounts and caches stay private, and you can move back in Settings → Storage → Game files location.",
+                    stringResource(R.string.storage_prompt_move_back),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

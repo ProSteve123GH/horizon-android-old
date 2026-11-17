@@ -1,6 +1,8 @@
 package dev.horizon.android.launcher
 
 import android.graphics.Paint
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -57,9 +59,11 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.horizon.android.R
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -121,7 +125,11 @@ internal data class TouchLayoutsState(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun TouchLayoutsSheet(onDismiss: () -> Unit) {
+fun TouchLayoutsSheet(
+    onDismiss: () -> Unit,
+    onImportTouch: (String?) -> Unit,
+    onEditInGame: () -> Unit,
+) {
     var state by remember { mutableStateOf<TouchLayoutsState?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var applying by remember { mutableStateOf<TouchProfile?>(null) }
@@ -129,6 +137,11 @@ fun TouchLayoutsSheet(onDismiss: () -> Unit) {
     var deleting by remember { mutableStateOf<TouchProfile?>(null) }
     var resetting by remember { mutableStateOf(false) }
     var naming by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<TouchProfile?>(null) }
+    // SAF document picker: the native side handles kind="touch" (importDocument).
+    val touchPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) onImportTouch(uri.toString())
+    }
 
     val reload: () -> Unit = {
         val reply = act("touch_layouts")
@@ -237,7 +250,32 @@ fun TouchLayoutsSheet(onDismiss: () -> Unit) {
                             )
                         },
                         onDelete = { deleting = profile },
+                        onEdit = { editing = profile },
                     )
+                }
+                item(key = "tools") {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { touchPicker.launch(arrayOf("application/json", "*/*")) },
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(min = 48.dp),
+                        ) {
+                            Icon(Icons.Rounded.ContentCopy, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(R.string.touch_import))
+                        }
+                        val draftProfile = current.profiles.firstOrNull { it.selected }
+                            ?: current.profiles.firstOrNull()
+                        if (draftProfile != null) {
+                            OutlinedButton(
+                                onClick = { editing = draftProfile },
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                            ) {
+                                Icon(Icons.Rounded.Edit, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(stringResource(R.string.touch_editor))
+                            }
+                        }
+                    }
                 }
                 if (current.profiles.isEmpty()) {
                     item(key = "empty") {
@@ -390,6 +428,19 @@ fun TouchLayoutsSheet(onDismiss: () -> Unit) {
             dismissButton = { TextButton(onClick = { resetting = false }) { Text("Cancel") } },
         )
     }
+
+    editing?.let { profile ->
+        TouchDraftEditor(
+            snapshot = profile.snapshot,
+            onDismiss = { editing = null },
+            onSave = { _ ->
+                // Persist through the existing profile action; the draft itself is
+                // previewed here and finalized in the in-game editor.
+                finish({ act("touch_layout_save", profile.id) }, "Could not update ${profile.name}")
+            },
+            onEditInGame = onEditInGame,
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
@@ -402,6 +453,7 @@ private fun ProfileCard(
     onSave: () -> Unit,
     onDuplicate: () -> Unit,
     onDelete: () -> Unit,
+    onEdit: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
@@ -448,6 +500,11 @@ private fun ProfileCard(
                             text = { Text("Save the current layout here") },
                             leadingIcon = { Icon(Icons.Rounded.Edit, null) },
                             onClick = { menu = false; onSave() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.touch_editor)) },
+                            leadingIcon = { Icon(Icons.Rounded.TouchApp, null) },
+                            onClick = { menu = false; onEdit() },
                         )
                         DropdownMenuItem(
                             text = { Text("Rename") },

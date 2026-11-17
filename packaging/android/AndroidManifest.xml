@@ -12,11 +12,6 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <application android:label="${appLabel}" android:appCategory="game" android:requestLegacyExternalStorage="true" android:icon="@drawable/launcher_icon" android:banner="@drawable/tv_banner" android:extractNativeLibs="true" android:usesCleartextTraffic="false">
-        <provider android:name="dev.horizon.android.HorizonDocumentsProvider" android:authorities="${applicationId}.documents" android:exported="true" android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS">
-            <intent-filter>
-                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
-            </intent-filter>
-        </provider>
         <!-- Share one screenshot through a temporary read grant; never a private path. -->
         <provider android:name="dev.horizon.android.ScreenshotProvider" android:authorities="${applicationId}.screenshots" android:exported="false" android:grantUriPermissions="true" />
         <!-- The Compose launcher. The game runs in its own process, which exits when the game closes. -->

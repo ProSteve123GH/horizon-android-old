@@ -194,6 +194,11 @@ mod run {
     }
 
     impl Game<'_> {
+        /// The acting player's profile id, as the mod API carries it.
+        fn player_uuid(&self) -> u128 {
+            horizon_client::lan::playerdata::ints_uuid(self.acting_uuid())
+        }
+
         /// The players on this game's server: the window's own player
         /// in-frame, then every connection's. `host` is the hub when it is
         /// out of `self.lan`.
@@ -388,7 +393,7 @@ mod run {
                         continue;
                     }
                 };
-                if let Err(e) = self.place_state([b.x, b.y, b.z], state, false) {
+                if let Err(e) = self.place_state([b.x, b.y, b.z], state, false, false) {
                     log::debug!(
                         "Horizon: a server mod's block at {} {} {}: {e:?}",
                         b.x,

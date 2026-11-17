@@ -1,6 +1,15 @@
 //! Android's native entry point. The simulation and renderer are shared with desktop.
 #![cfg(target_os = "android")]
 
+// The shared gameplay source is compiled twice: into `horizon-client` and into this cdylib.
+// Its generated host code spells the API types as `horizon_client::mod_api::*`, so inside this
+// crate that path must reach *this* copy, not the library's. Everything else the game uses is
+// re-exported from the real dependency below; explicitly declared modules (game, mod_api) shadow
+// the glob's copies.
+extern crate self as horizon_client;
+// The real library is reached through a second alias; `::horizon_client` would hit the alias above.
+extern crate horizon_client as horizon_client_dep;
+
 #[allow(dead_code, clippy::collapsible_match)]
 // Shared vanilla match structure and desktop harnesses.
 mod game;
@@ -61,8 +70,10 @@ mod instances;
 #[allow(dead_code)]
 #[path = "../../../launcher/src/worlds.rs"]
 mod worlds;
+// Named `android_minecraft_import` so the library's `minecraft_import` (re-exported below) is
+// what `horizon_client::minecraft_import` reaches from the shared gameplay source.
 #[path = "android/minecraft_import.rs"]
-mod minecraft_import;
+mod android_minecraft_import;
 #[path = "android/native_ime.rs"]
 mod native_ime;
 #[path = "android/native_mods.rs"]
@@ -101,6 +112,50 @@ mod touch_layouts;
 #[allow(dead_code)]
 #[path = "../../../launcher/src/skins.rs"]
 mod skins;
+// Upstream split the gameplay library into horizon-client-lib; the shared
+// gameplay source compiled here still uses the old crate-root paths.
+#[path = "mod_api.rs"]
+pub mod mod_api;
+pub use horizon_client_dep::*;
+#[rustfmt::skip]
+#[allow(dead_code)]
+#[path = "../../../launcher/src/i18n.rs"]
+mod i18n;
+#[rustfmt::skip]
+#[allow(dead_code)]
+#[path = "../../../launcher/src/native_fit.rs"]
+mod native_fit;
+#[rustfmt::skip]
+#[allow(dead_code)]
+#[path = "../../../launcher/src/native_status.rs"]
+mod native_status;
+// TODO(keep-consistency): the shared native-mod browser reads Nightly build records and GitHub
+// origins when it says whether a native mod fits. Android builds through its own service and has
+// neither, so report an unknown origin and use the launcher's date parsing for labels.
+#[allow(dead_code)]
+mod nightly {
+    /// The date of a nightly's version (`nightly-2026-10-28-0c02067`).
+    pub fn date_of(version: &str) -> Option<&str> {
+        let date = version.strip_prefix("nightly-")?.get(..10)?;
+        let digits = date
+            .bytes()
+            .enumerate()
+            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit());
+        (digits && date.as_bytes()[4] == b'-' && date.as_bytes()[7] == b'-').then_some(date)
+    }
+}
+
+#[allow(dead_code)]
+mod github_mods {
+    /// Where a native mod installed from a GitHub link came from. Android has no such sidecars.
+    #[derive(Clone, Debug)]
+    pub struct Origin;
+
+    pub fn origin(_home: &std::path::Path, _id: &str) -> Option<Origin> {
+        None
+    }
+}
+
 // The shared account protocol needs only the launcher's version and data path.
 mod backend {
     pub const VERSION: &str = if crate::PUBLIC_BUILD {
@@ -123,6 +178,22 @@ mod backend {
     }
     pub fn try_data_dir() -> Option<std::path::PathBuf> {
         HOME.get().cloned()
+    }
+    /// Installed game versions, newest tag first (the launcher's `backend::installed`).
+    pub fn installed() -> Vec<String> {
+        let dir = data_dir().join("versions");
+        let mut tags: Vec<String> = std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().join(".installed").exists())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        tags.sort_by(|a, b| b.cmp(a));
+        tags
+    }
+    pub fn version_dir(tag: &str) -> std::path::PathBuf {
+        data_dir().join("versions").join(tag)
     }
 }
 
@@ -181,7 +252,9 @@ thread_local! {
     static APP: RefCell<Option<AndroidApp>> = const { RefCell::new(None) };
 }
 
-pub(crate) fn android_event_loop() -> Result<EventLoop<()>, winit::error::EventLoopError> {
+// `crate::Result` is the engine's one-parameter alias; this host returns winit's own error.
+pub(crate) fn android_event_loop(
+) -> std::result::Result<EventLoop<()>, winit::error::EventLoopError> {
     APP.with(|app| {
         EventLoop::builder()
             .with_android_app(

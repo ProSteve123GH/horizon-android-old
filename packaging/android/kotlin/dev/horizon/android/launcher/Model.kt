@@ -210,6 +210,10 @@ data class Snapshot(
     val local: List<LocalItem>,
     val documents: Documents,
     val nativeMods: NativeMods,
+    /** Optional build stamp for the Settings footer. Absent keys simply show a dash. */
+    val engineCommit: String = "",
+    val buildAbi: String = "",
+    val buildDate: String = "",
 ) {
     companion object {
         fun parse(text: String): Snapshot? {
@@ -418,6 +422,12 @@ data class Snapshot(
                         },
                     )
                 } ?: NativeMods(emptyList(), null, null),
+                engineCommit = root.optString("engine_commit")
+                    .ifBlank { root.optJSONObject("build")?.optString("engine_commit").orEmpty() },
+                buildAbi = root.optString("build_abi")
+                    .ifBlank { root.optJSONObject("build")?.optString("abi").orEmpty() },
+                buildDate = root.optString("build_date")
+                    .ifBlank { root.optJSONObject("build")?.optString("date").orEmpty() },
             )
         }
     }

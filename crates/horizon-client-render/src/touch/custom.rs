@@ -2,7 +2,7 @@
 use super::*;
 use layout::Placement;
 use serde::{Deserialize, Serialize};
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CustomButton {
     pub key: String,
     pub layouts: [Placement; 3],
@@ -87,22 +87,12 @@ impl TouchControls {
         }
         false
     }
-    pub(super) fn fit_placement(&self, mut p: Placement) -> Placement {
-        p.size = (p.size * self.settings.button_scale)
-            .min(self.aspect())
-            .min(1.0);
-        let half = [p.size / self.aspect() / 2.0, p.size / 2.0];
-        for (i, half) in half.into_iter().enumerate() {
-            p.center[i] = p.center[i].clamp(half, 1.0 - half);
-        }
-        p
-    }
     pub(super) fn custom_placement(&self, index: usize) -> Placement {
         let mut p = self.settings.custom_buttons[index].layouts[self.settings.mode.index()];
         if self.settings.left_handed {
             p.center[0] = 1.0 - p.center[0];
         }
-        self.fit_placement(p)
+        self.fit(p)
     }
     pub fn custom_at(&self, point: [f32; 2]) -> Option<usize> {
         (0..self.settings.custom_buttons.len())
@@ -144,9 +134,6 @@ impl TouchControls {
     }
     pub fn held_custom_tokens(&self) -> impl Iterator<Item = &str> {
         self.custom_fingers.values().map(String::as_str)
-    }
-    pub fn key_events(&mut self) -> Vec<(String, bool)> {
-        std::mem::take(&mut self.custom_events)
     }
     pub(super) fn clear_custom(&mut self) {
         let keys: std::collections::BTreeSet<_> = std::mem::take(&mut self.custom_fingers)

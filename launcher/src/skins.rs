@@ -14,6 +14,12 @@ pub mod library;
 #[path = "skins/preview.rs"]
 pub mod preview;
 
+// The Android cdylib compiles the shared gameplay source with this launcher module shadowing the
+// library's `skins`; let `horizon_client::skins::*` reach the library's API there too.
+#[cfg(target_os = "android")]
+#[allow(unused_imports)]
+pub use crate::horizon_client_dep::skins::*;
+
 pub const SKIN_ENV: &str = "HORIZON_OFFLINE_SKIN";
 pub const MODEL_ENV: &str = "HORIZON_OFFLINE_SKIN_MODEL";
 pub const CAPE_ENV: &str = "HORIZON_OFFLINE_CAPE";

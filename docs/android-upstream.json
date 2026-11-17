@@ -16,14 +16,14 @@
   "compared_source_files": 3147,
   "modified_existing_files": 41,
   "branch": "android",
-  "merged_upstream_commit": "8c02c0b8534e11b7bb8be14238b140a8534280a0",
+  "merged_upstream_commit": "9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0",
   "merged_upstream_commits": 8887,
-  "last_reviewed_date": "2026-11-02",
+  "last_reviewed_date": "2026-11-17",
   "last_update_commits": 1846,
   "latest_fetched_commit": "549d6b9cd53e4ea0c9eb388f4e99fad8175deda1",
   "review": "Integrated the published 2026-11-01 nightly, not the moving main branch. Reconciled 26 conflict files across rendering, EventLoopCtl/splitscreen wrappers, keyboard focus, native content hooks, sandboxed hmod runtime and account session recovery. Preserved Android system DNS, IME/SAF/DocumentsProvider, launcher-selected graphics, lifecycle return, optional worker/cache limits and fixed opt-in mod bundle. GLES terrain packs all current varying fields and lowers colored-light nested arrays without changing uniform bytes; Vulkan now additionally adapts the reviewed opaque/cutout terrain optimization, with ordering guards and shader/LOD/culling fallbacks; the merged upstream baseline is unchanged. Kept deployment workflows disabled. ARM64 Clippy, optimized ARM64/ARMv7 builds and targeted input/content/account/GPU tests passed. Tablet Vulkan Compatibility world, inventory, Home/resume, launcher return and provider root were exercised. Final F-03L GLES retest is recorded in docs/android-0.7.7-testing.md; other ABIs and final release APKs still need validation. No blanket resolution of low-end crashes or performance reports is claimed.",
   "pending_review_commits": 3680,
-  "selected_upstream_release": "nightly-2026-11-01",
+  "selected_upstream_release": "nightly-source/2026-11-13-9f42064",
   "reviewed_render_optimizations": [
     "aa4622805",
     "de59ab97c568168d14718a1b27880cead8134997"
@@ -45,5 +45,43 @@
     ],
     "moving_main_merged": false,
     "notes": "Reviewed newer account-save reporting and desktop encrypted-file storage changes. Android retains its Keystore AES/GCM store and reports sign-in save failures through the existing shared task. The selected stable nightly baseline is unchanged; no experimental UI branches were merged."
+  },
+  "integration_branch": "feature/integration-2026-11-13",
+  "engine_merge": {
+    "branch": "dev/android-upstream-2026-11-13",
+    "merge_commit": "ec5aac870b",
+    "source_tag": "nightly-source/2026-11-13-9f42064",
+    "status": "Merged into an isolated dev branch; not promoted to android or main.",
+    "conflicts": "88 conflicted files resolved: upstream base kept, fork/Android wiring reapplied. Upstream split its gameplay library and changed the mod API; the Android cdylib compiles the shared gameplay source twice and needed generated API files plus crate-root shims.",
+    "checks": "cargo metadata --locked, tools/check_public_tree.py and CARGO_INCREMENTAL=0 cargo check -p horizon-android --offline pass (exit 0, warnings only). Full build, CI APK and device verification not yet done.",
+    "preserved": "Android shared-storage default and journaled migration, .hnmod loader/trampoline, Compose launcher, offline names/accounts, deployment workflows disabled."
+  },
+  "feature_integration": {
+    "status": "Merged onto the engine branch in feature/integration-2026-11-13; compile-checked, not device/CI verified.",
+    "branches": [
+      "feature/android-touch-profiles",
+      "feature/android-launcher-ux",
+      "feature/android-native-hooks"
+    ],
+    "checks": "CARGO_INCREMENTAL=0 cargo check -p horizon-android --offline -j1 passes (exit 0). horizon-trampoline unit tests pass (4/4). Touch-layout unit tests were NOT run: the full test binary was killed by Android LMK/OOM twice (default features also hit missing libudev); CI must run them.",
+    "features": [
+      "CloudStream-style settings landing page with search, category cards, detail pages and build-info footer; all text in string resources.",
+      "Storage permission gate: all-files access is mandatory, Settings intent prompt on missing grant, status row for revocation.",
+      "Launch splash overlay in HorizonActivity that hides on the native first-frame marker with a 30s fallback.",
+      "Crash guard repaired: first about_to_wait writes native/first-frame, clears pending_crash and records last_known_good; trampoline marker contract pinned by unit test.",
+      "Mod compatibility gate fields in current.json (engine_commit/api_level/min_apk_version); ENGINE_COMMIT is still a TODO constant until build wiring exists.",
+      "Screenshot: launcher gallery kept and renamed; touch camera button added and routed to screenshot_action; F2 exception in the Android key filter.",
+      "Touch controls: import raw horizon-touch.json/profile exports, no-wipe apply, new-from-current, duplicate rename, launcher draft editor.",
+      "SAF documents provider and app-private storage mode removed; in-app Game files browser shows friendly labels over unchanged disk names.",
+      "Responsive tiers: 600dp rail/nav, 520dp short header, 1280dp four-column settings for DeX/TV."
+    ],
+    "remaining_risks": [
+      "Touch-layout unit tests are unexecuted on-device (LMK/OOM); CI must run them.",
+      "No APK build or on-device verification yet; all claims are compile/test level only.",
+      "ENGINE_COMMIT is a placeholder; bundles declaring engine_commit are refused until it is wired from the build.",
+      "Launcher draft touch editor cannot persist arbitrary coordinates through a bridge action; precise placement still uses the in-game editor.",
+      "Bedrock controls JSON import is detected with an explicit error, not converted.",
+      "Upstream deployment workflows remain disabled; only the Android dev/source workflows are active."
+    ]
   }
 }

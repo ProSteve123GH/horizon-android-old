@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.mutableStateOf
 import dev.horizon.android.HorizonActivity
 import dev.horizon.android.NativeBridge
 import java.io.File
@@ -12,26 +13,53 @@ import java.io.File
 /**
  * The launcher players see first: Jetpack Compose over the Rust launcher logic.
  * The game itself runs in [HorizonActivity] in the separate `:game` process.
+ *
+ * All-files access is mandatory: the shared game folder is the only storage
+ * mode. Until it is granted we show [StorageAccessGate] and do not start the
+ * native bridge, so no native call ever sees a half-configured launcher.
  */
 class LauncherActivity : ComponentActivity() {
+    private val granted = mutableStateOf(false)
+    private var bridgeStarted = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         copyEngineData()
-        NativeBridge.start(this, filesDir.absolutePath)
+        granted.value = hasAllFilesAccess(this)
+        if (granted.value) startBridge()
         setContent {
-            LauncherApp(
-                onPlay = ::startGame,
-                onImport = { kind, uri -> NativeBridge.importDocument(this, kind, uri) },
-                onImportNative = { uri -> NativeBridge.importNativeDocument(this, uri) },
-            )
+            if (granted.value) {
+                LauncherApp(
+                    onPlay = ::startGame,
+                    onImport = { kind, uri -> NativeBridge.importDocument(this, kind, uri) },
+                    onImportNative = { uri -> NativeBridge.importNativeDocument(this, uri) },
+                )
+            } else {
+                StorageAccessGate(onRecheck = ::recheck)
+            }
         }
     }
 
     override fun onResume() {
         super.onResume()
-        // Coming back from the game: reload settings, content and the last error.
-        NativeBridge.call("resume", "")
+        recheck()
+    }
+
+    /** Re-check the grant after returning from the system settings page. */
+    private fun recheck() {
+        val now = hasAllFilesAccess(this)
+        if (now && !bridgeStarted) startBridge()
+        granted.value = now
+        // The launcher's own "resume" reload only makes sense once the bridge is up.
+        if (now) NativeBridge.call("resume", "")
+    }
+
+    /** NativeBridge.start registers the Activity and prepares the launcher once. */
+    private fun startBridge() {
+        if (bridgeStarted) return
+        NativeBridge.start(this, filesDir.absolutePath)
+        bridgeStarted = true
     }
 
     private fun startGame() {

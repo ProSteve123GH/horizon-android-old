@@ -7,8 +7,46 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+// TODO(keep-consistency): the shared mod browser describes a registry mod against the desktop
+// launcher's Instance (a separate game folder, maybe a Java instance). Android plays one game per
+// profile and builds native mods in the cloud, so expose the active profile as a native instance
+// with the version the launcher has installed. The fit checks then report "unknown" on Android.
+#[derive(Clone, Debug)]
+pub struct JavaGame;
+
+#[derive(Clone, Debug)]
+pub struct Instance {
+    pub home: PathBuf,
+    pub java: Option<JavaGame>,
+    pub version: Option<String>,
+}
+
+impl Instance {
+    pub fn resolve_version(&self, requested: Option<&str>) -> Result<String, String> {
+        requested
+            .map(str::to_owned)
+            .or_else(|| self.version.clone())
+            .ok_or_else(|| "No game version is installed".to_owned())
+    }
+}
+
+/// The active profile as the desktop launcher's `instances::selected()`.
+pub fn selected() -> Instance {
+    Instance {
+        home: crate::backend::game_home(),
+        java: None,
+        version: crate::backend::installed().into_iter().next(),
+    }
+}
+
+/// The profiles the desktop launcher's `instances::list()` would show: Android has one active
+/// game home per process.
+pub fn list() -> Vec<Instance> {
+    vec![selected()]
+}
 
 /// The longest instance name the launcher stores.
 pub const MAX_NAME: usize = 32;

@@ -2,7 +2,7 @@
 //! up, copying and deleting them. Backups are made as vanilla's Make Backup makes them
 //! (`LevelStorageAccess.makeWorldBackup`): `backups/<yyyy-MM-dd_HH-mm-ss>_<folder>.zip` in the
 //! game folder, every file under `<folder>/` but the world's `session.lock`.
-use horizon_world::nbt::{self, Limits, Tag};
+use horizon_platform::world::nbt::{self, Limits, Tag};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -10,6 +10,28 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// The lock a running game holds on a world; vanilla's backups leave it out.
 const LOCK: &str = "session.lock";
+
+struct WorldLock(fs::File);
+
+impl Drop for WorldLock {
+    fn drop(&mut self) {
+        // A concurrent process spawn can inherit the file before exec closes it.
+        // Release the lock explicitly rather than waiting for every handle to close.
+        let _ = self.0.unlock();
+    }
+}
+
+/// Hold the same exclusive lock as the game until a filesystem operation finishes.
+fn lock_world(world: &World) -> Result<WorldLock, String> {
+    let lock = fs::File::options()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(world.path.join(LOCK))
+        .map_err(|e| e.to_string())?;
+    lock.try_lock().map_err(|e| e.to_string())?;
+    Ok(WorldLock(lock))
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct World {
@@ -73,8 +95,8 @@ fn read(path: &Path) -> Option<World> {
 }
 
 fn read_with(path: &Path, sized: bool, lenient: bool) -> Option<World> {
-    // A lenient listing shows recoverable world folders, not stray files or
-    // links: deleting through one must never leave the saves tree.
+    // A lenient listing shows recoverable world folders, not stray files or links:
+    // deleting through one must never leave the saves tree.
     if lenient {
         if !path.is_dir()
             || path
@@ -116,16 +138,12 @@ fn read_with(path: &Path, sized: bool, lenient: bool) -> Option<World> {
     // 26.3 keeps hardcore with the difficulty; older saves at the top of Data.
     let hardcore = number(field("difficulty_settings").and_then(|d| d.get("hardcore"))) != 0
         || number(field("hardcore")) != 0;
-    let mode = if root.is_none() {
-        "Unknown"
-    } else {
-        match (hardcore, number(field("GameType"))) {
-            (true, _) => "Hardcore",
-            (_, 1) => "Creative",
-            (_, 2) => "Adventure",
-            (_, 3) => "Spectator",
-            _ => "Survival",
-        }
+    let mode = match (hardcore, number(field("GameType"))) {
+        (true, _) => "Hardcore",
+        (_, 1) => "Creative",
+        (_, 2) => "Adventure",
+        (_, 3) => "Spectator",
+        _ => "Survival",
     };
     let last_played = match number(field("LastPlayed")) {
         millis if millis > 0 => UNIX_EPOCH + Duration::from_millis(millis as u64),
@@ -211,6 +229,7 @@ fn backup_at(
     world: &World,
     now: chrono::DateTime<chrono::Local>,
 ) -> Result<PathBuf, String> {
+    let _lock = lock_world(world)?;
     let dir = home.join("backups");
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let prefix = format!("{}_{}", now.format("%Y-%m-%d_%H-%M-%S"), world.folder);
@@ -265,14 +284,11 @@ pub fn copy_lenient(world: &World) -> Result<World, String> {
 }
 
 fn copy_with(world: &World, sized: bool) -> Result<World, String> {
+    let _lock = lock_world(world)?;
     let saves = world.path.parent().ok_or("A world folder has a parent")?;
     let folder = free_name(saves, &world.name, "", 1);
     let to = saves.join(&folder);
-    // Create the destination exclusively. If a folder appeared after the name
-    // check, stop without touching it: a duplicate never merges into, or
-    // deletes, another world.
-    fs::create_dir(&to).map_err(|e| format!("Could not create {}: {e}", to.display()))?;
-    let made = copy_contents(&world.path, &to).and_then(|()| rename_level(&to, &folder));
+    let made = copy_dir(&world.path, &to).and_then(|()| rename_level(&to, &folder));
     if let Err(e) = made {
         let _ = fs::remove_dir_all(&to);
         return Err(format!("Could not copy {}: {e}", world.name));
@@ -280,19 +296,13 @@ fn copy_with(world: &World, sized: bool) -> Result<World, String> {
     read_with(&to, sized, false).ok_or_else(|| format!("{} has no level.dat", to.display()))
 }
 
-/// Copies the contents into an already-created destination. Links are skipped,
-/// and a running world's session lock is left behind.
-fn copy_contents(from: &Path, to: &Path) -> std::io::Result<()> {
+fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(to)?;
     for e in fs::read_dir(from)? {
         let e = e?;
-        let kind = e.file_type()?;
-        if kind.is_symlink() {
-            continue;
-        }
         let target = to.join(e.file_name());
-        if kind.is_dir() {
-            fs::create_dir(&target)?;
-            copy_contents(&e.path(), &target)?;
+        if e.file_type()?.is_dir() {
+            copy_dir(&e.path(), &target)?;
         } else if e.file_name() != LOCK {
             fs::copy(e.path(), target)?;
         }
@@ -347,12 +357,20 @@ pub fn rename(world: &World, new_name: &str) -> Result<World, String> {
     read_with(&world.path, false, false).ok_or_else(|| format!("{} has no level.dat", world.folder))
 }
 
-/// Deletes the world. Android has no system trash, so the launcher removes the
-/// folder only after its own confirmation; desktop moves it to the trash.
+/// Deletes the world. There is no system trash on Android, so the launcher
+/// removes the folder after its own confirmation; desktop moves it to the trash.
 pub fn delete(world: &World) -> Result<(), String> {
+    let lock = lock_world(world)?;
+    // Match server deletion: Windows cannot move the folder with this handle open.
+    // If the game opens it after the probe, its handle prevents the move instead.
+    #[cfg(windows)]
+    drop(lock);
+    #[cfg(not(windows))]
+    let _lock = lock;
     #[cfg(target_os = "android")]
     {
-        fs::remove_dir_all(&world.path).map_err(|e| format!("Could not delete {}: {e}", world.name))
+        fs::remove_dir_all(&world.path)
+            .map_err(|e| format!("Could not delete {}: {e}", world.name))
     }
     #[cfg(not(target_os = "android"))]
     {
