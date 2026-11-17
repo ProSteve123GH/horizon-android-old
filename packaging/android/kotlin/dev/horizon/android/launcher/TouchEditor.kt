@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -253,11 +254,12 @@ fun TouchDraftEditor(
             }
         }
         Spacer(Modifier.height(8.dp))
+        val customKeyLabel = stringResource(R.string.touch_editor_custom_key)
         OutlinedButton(
             onClick = {
                 controls += EditableControl(
                     slot = controls.count { it.custom },
-                    label = stringResource(R.string.touch_editor_custom_key),
+                    label = customKeyLabel,
                     custom = true,
                     x = 0.85f,
                     y = 0.5f,

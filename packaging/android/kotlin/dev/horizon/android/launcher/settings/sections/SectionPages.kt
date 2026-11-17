@@ -9,6 +9,7 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.horizon.android.R
@@ -27,32 +28,32 @@ internal data class SectionScope(
 )
 
 @Composable
-fun GeneralSection(rows: List<SettingRow>, scope: SectionScope) {
+internal fun GeneralSection(rows: List<SettingRow>, scope: SectionScope) {
     SettingsRowList(rows, scope.state, scope.actions, scope.extraWide, scope.onStorage, scope.onGameFiles)
 }
 
 @Composable
-fun GraphicsSection(rows: List<SettingRow>, scope: SectionScope) {
+internal fun GraphicsSection(rows: List<SettingRow>, scope: SectionScope) {
     SettingsRowList(rows, scope.state, scope.actions, scope.extraWide, scope.onStorage, scope.onGameFiles)
 }
 
 @Composable
-fun DisplaySection(rows: List<SettingRow>, scope: SectionScope) {
+internal fun DisplaySection(rows: List<SettingRow>, scope: SectionScope) {
     SettingsRowList(rows, scope.state, scope.actions, scope.extraWide, scope.onStorage, scope.onGameFiles)
 }
 
 @Composable
-fun AppearanceSection(rows: List<SettingRow>, scope: SectionScope) {
+internal fun AppearanceSection(rows: List<SettingRow>, scope: SectionScope) {
     SettingsRowList(rows, scope.state, scope.actions, scope.extraWide, scope.onStorage, scope.onGameFiles)
 }
 
 @Composable
-fun DiagnosticsSection(rows: List<SettingRow>, scope: SectionScope) {
+internal fun DiagnosticsSection(rows: List<SettingRow>, scope: SectionScope) {
     SettingsRowList(rows, scope.state, scope.actions, scope.extraWide, scope.onStorage, scope.onGameFiles)
 }
 
 @Composable
-fun StorageSection(rows: List<SettingRow>, scope: SectionScope) {
+internal fun StorageSection(rows: List<SettingRow>, scope: SectionScope) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         StorageAccessRow(scope.extraWide, scope.onAccessChanged)
         SettingsRowList(rows, scope.state, scope.actions, scope.extraWide, scope.onStorage, scope.onGameFiles)
@@ -67,7 +68,7 @@ fun StorageSection(rows: List<SettingRow>, scope: SectionScope) {
 }
 
 @Composable
-fun ModsSection(rows: List<SettingRow>, scope: SectionScope) {
+internal fun ModsSection(rows: List<SettingRow>, scope: SectionScope) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (rows.isNotEmpty()) {
             SettingsRowList(rows, scope.state, scope.actions, scope.extraWide, scope.onStorage, scope.onGameFiles)
@@ -82,7 +83,7 @@ fun ModsSection(rows: List<SettingRow>, scope: SectionScope) {
 }
 
 @Composable
-fun AccountsSection(rows: List<SettingRow>, scope: SectionScope) {
+internal fun AccountsSection(rows: List<SettingRow>, scope: SectionScope) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (rows.isNotEmpty()) {
             SettingsRowList(rows, scope.state, scope.actions, scope.extraWide, scope.onStorage, scope.onGameFiles)
