@@ -410,3 +410,19 @@ fn android_main(app: AndroidApp) {
     APP.with(|slot| *slot.borrow_mut() = None);
     std::process::exit(0);
 }
+
+/// Conventional JNI entry for an SAF result restored before the IME bridge is
+/// ready. Only the cdylib exports this symbol; the shared gameplay library
+/// contains the implementation without the export name, so a modded build
+/// (which links both) does not hit a duplicate-symbol linker error.
+#[cfg(target_os = "android")]
+#[unsafe(export_name = "Java_dev_horizon_android_HorizonActivity_nativeDocumentResult")]
+pub extern "system" fn native_document_result(
+    mut env: jni::JNIEnv<'_>,
+    activity: jni::objects::JObject<'_>,
+    request: i32,
+    result: i32,
+    uri: jni::objects::JString<'_>,
+) {
+    documents::document_result(env, activity, request, result, uri);
+}
