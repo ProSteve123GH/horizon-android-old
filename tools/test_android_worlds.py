@@ -16,6 +16,7 @@ edition = "2024"
 [workspace]
 [dependencies]
 horizon-world = { path = "../../../crates/horizon-world" }
+horizon-platform = { path = "../../../crates/horizon-platform" }
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs", "runtime_detection"] }
 zip = { version = "9.1.3", default-features = false, features = ["deflate"] }
