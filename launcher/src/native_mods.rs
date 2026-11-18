@@ -44,8 +44,9 @@ pub use isolate::LeftOut;
 
 const PREFIX: &str = "native-";
 /// horizon-mixins, for bundles that don't name the revision they were tested with.
-const MIXINS_GIT: &str = "https://github.com/horizon-rust/horizon-mixins";
-pub const MIXINS_REV: &str = "5a64af938ec86b00d53d16a408aabc0038fb3e57";
+// Patched fork: target-aware cfg handling and Android staging support.
+const MIXINS_GIT: &str = "https://github.com/ProSteve123GH/horizon-mixins";
+pub const MIXINS_REV: &str = "6267cbf75294e26b365845a83ff261a57c18e954";
 /// The features of the release's own game (game-build.yml).
 const FEATURES: &str = "horizon-client/mods";
 
@@ -2247,7 +2248,7 @@ fn pipeline(
         |b| b.mixins.as_ref(),
         || Ok(MIXINS_REV.into()),
         Some(MIXINS_REV),
-        |r| committed("horizon-rust/horizon-mixins", r),
+        |r| committed("ProSteve123GH/horizon-mixins", r),
     )?;
     let version = version_for(
         &revision,

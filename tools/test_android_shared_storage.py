@@ -22,7 +22,8 @@ rustix = { version = "1", features = ["fs"] }
 #[path = "../../../../crates/horizon-client/src/android/shared_storage.rs"]
 pub mod shared_storage;
 ''', encoding='utf-8')
-    subprocess.run(['cargo', 'test', '--manifest-path', str(harness / 'Cargo.toml')],
+    subprocess.run(['cargo', 'test', '--manifest-path', str(harness / 'Cargo.toml'),
+                    '--', '--test-threads=1'],
                    cwd=ROOT, check=True)
 
 

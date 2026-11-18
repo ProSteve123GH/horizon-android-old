@@ -544,16 +544,16 @@ fn a_no_from_the_services_blocks_at_once() {
     assert!(accounts.has_owner(&store));
     assert_eq!(
         launch(&ep, Some("test-client"), &store, &mut accounts).unwrap_err(),
-        NoOwner
+        NoOwner::default()
     );
     // The answer is kept beside the tokens: offline now, it still says no.
     assert!(!kept(&store).owns && !accounts.has_owner(&store));
     assert_eq!(
         launch(&offline(), Some("test-client"), &store, &mut accounts).unwrap_err(),
-        NoOwner
+        NoOwner::default()
     );
     assert_eq!(
-        NoOwner.to_string(),
+        NoOwner::default().to_string(),
         "Sign in with a Microsoft account that owns Minecraft: Java Edition to play."
     );
 }
@@ -650,15 +650,15 @@ fn the_developer_option_off_is_the_owner_gate() {
     assert_eq!(refused.unwrap_err(), OFFLINE_NEEDS_OWNER);
     assert_eq!(accounts, Accounts::default());
     let (_, ep) = mock(|m| m.owns_game = false);
-    let refused = launch_for_game(&ep, Some("test-client"), &store, &mut accounts, false);
-    assert_eq!(refused.unwrap_err(), NoOwner);
+    let refused = launch_for_game(&ep, Some("test-client"), &store, &mut accounts);
+    assert_eq!(refused.unwrap_err(), NoOwner::default());
     let mut accounts = signed_in(&store, &secrets("mc-token", true));
-    let refused = launch_for_game(&ep, Some("test-client"), &store, &mut accounts, false);
-    assert_eq!(refused.unwrap_err(), NoOwner);
+    let refused = launch_for_game(&ep, Some("test-client"), &store, &mut accounts);
+    assert_eq!(refused.unwrap_err(), NoOwner::default());
 }
 
 #[test]
-fn the_developer_option_plays_offline_names_without_an_owner() {
+fn offline_names_still_need_an_owner() {
     let store = MemoryStore::default();
     let mut accounts = Accounts::default();
     accounts
@@ -666,24 +666,16 @@ fn the_developer_option_plays_offline_names_without_an_owner() {
         .unwrap();
     assert_eq!(accounts.player(), Player::Offline("Builder_1".into()));
     assert_eq!(accounts.name_arg(), Some("Builder_1"));
-    // The game starts offline: no request, no session, and no owner to download the game for.
-    let (m, ep) = mock(|_| {});
-    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts, true).unwrap();
-    assert!(pass.session.is_none() && pass.owner.is_none() && pass.offline.is_none());
-    assert!(m.lock().unwrap().log.is_empty());
-    // Beside an account the services say doesn't own the game: the same, still no owner.
-    let (_, ep) = mock(|m| m.owns_game = false);
-    let mut accounts = signed_in(&store, &secrets("mc-token", true));
-    accounts
-        .play_as_with(&store, Player::Offline("Builder_1".into()), true)
-        .unwrap();
-    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts, true).unwrap();
-    assert!(pass.session.is_none() && pass.owner.is_none());
-    assert!(!accounts.has_owner(&store));
-    // A real owner is still found and brings what it brings without the option.
+    // An offline name alone never opens the owner gate.
+    let (_, ep) = mock(|_| {});
+    assert_eq!(
+        launch_for_game(&ep, Some("test-client"), &store, &mut accounts).unwrap_err(),
+        NoOwner::default()
+    );
+    // A real owner is still found and brings what it brings.
     let (_, ep) = mock(|_| {});
     let mut accounts = signed_in(&store, &secrets("mc-token", true));
-    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts, true).unwrap();
+    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts).unwrap();
     assert_eq!(pass.owner.unwrap().0.name, "Notch");
 }
 
@@ -1185,7 +1177,7 @@ fn the_java_edition_plays_as_an_owner_even_offline() {
     let mut accounts = signed_in(&store, &secrets("mc-token", false));
     assert_eq!(
         java_player_with(&offline(), Some("test-client"), &store, &mut accounts).unwrap_err(),
-        NoOwner.to_string()
+        NoOwner::default().to_string()
     );
 }
 
@@ -1591,21 +1583,17 @@ fn a_launch_as_another_account_leaves_the_selected_one() {
         skin: None,
         cape: None,
     });
-    // This launch plays as Alex: Notch's ownership opens the gate, and it is Alex who is told
-    // to sign in again, so Alex played. Notch is still the one `account select` picked.
-    let pass = launch_as(
+    // Alex has no session on this computer: the launch is refused, and Notch is
+    // still the one `account select` picked.
+    let refused = launch_as(
         &offline(),
         Some("test-client"),
         &store,
         &mut accounts,
-        &Player::Microsoft(alex.into()),
+        alex,
     )
-    .unwrap();
-    assert!(pass.session.is_none());
-    assert!(pass
-        .offline
-        .unwrap()
-        .starts_with("Alex is no longer signed in"));
+    .unwrap_err();
+    assert!(refused.starts_with("Alex is no longer signed in"));
     assert_eq!(accounts.player(), Player::Microsoft(UUID.into()));
     // An account that isn't in the launcher is refused, and changes nothing either.
     let gone = launch_as(
@@ -1613,7 +1601,7 @@ fn a_launch_as_another_account_leaves_the_selected_one() {
         Some("test-client"),
         &store,
         &mut accounts,
-        &Player::Microsoft("not-signed-in".into()),
+        "not-signed-in",
     );
     assert_eq!(gone.unwrap_err(), "That account isn't signed in.");
     assert_eq!(accounts.player(), Player::Microsoft(UUID.into()));

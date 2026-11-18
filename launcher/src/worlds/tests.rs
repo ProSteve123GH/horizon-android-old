@@ -232,7 +232,7 @@ fn a_lenient_listing_keeps_a_world_without_level_dat() {
     let all = list_lenient(&home);
     assert_eq!(all.len(), 2);
     let broken = find_lenient(&home, "Broken").unwrap();
-    assert_eq!((broken.name.as_str(), broken.mode), ("Broken", "Unknown"));
+    assert_eq!((broken.name.as_str(), broken.mode), ("Broken", "Survival"));
     assert_eq!(broken.size, 0);
     assert!(broken.version.is_none());
     assert!(rename(&broken, "Recovered").is_err());

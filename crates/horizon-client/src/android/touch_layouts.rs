@@ -1327,8 +1327,8 @@ mod tests {
     #[test]
     fn importing_a_raw_snapshot_creates_a_validated_profile_with_a_preview() {
         let scratch = Scratch::new();
-        let snapshot = sample_snapshot("dpad", [0.3, 0.6], [0.8, 0.5]);
-        let bytes = serde_json::to_vec(&snapshot).unwrap();
+        let raw = sample_snapshot("dpad", [0.3, 0.6], [0.8, 0.5]);
+        let bytes = serde_json::to_vec(&raw).unwrap();
         let (preview, profile) = import_profile(scratch.path(), &bytes, "Backup").unwrap();
         assert_eq!(preview.shape, "snapshot");
         assert_eq!(preview.name, "Backup");
@@ -1423,14 +1423,14 @@ mod tests {
             serde_json::to_vec_pretty(&current).unwrap(),
         )
         .unwrap();
-        let snapshot = live_snapshot(scratch.path()).unwrap();
-        assert_eq!(snapshot["mode"], "tap");
+        let live = live_snapshot(scratch.path()).unwrap();
+        assert_eq!(live["mode"], "tap");
         assert_eq!(
-            snapshot["custom_buttons"][0]["layouts"][0]["center"],
+            live["custom_buttons"][0]["layouts"][0]["center"],
             json!([0.42, 0.58])
         );
         // A "new from current" profile keeps the live custom button.
-        let profile = create(scratch.path(), "From current", &snapshot).unwrap();
+        let profile = create(scratch.path(), "From current", &live).unwrap();
         assert_eq!(
             snapshot(scratch.path(), &profile.id).unwrap()["custom_buttons"][0]["key"],
             "key.keyboard.z"
