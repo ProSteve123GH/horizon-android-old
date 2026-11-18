@@ -5,6 +5,9 @@
 extern crate self as horizon_client;
 pub use horizon_client_lib::*;
 pub mod entry;
+// On Android the cdylib drives gameplay; this library copy of game is compiled
+// for shared paths but has no entry point of its own here. Desktop is unaffected.
+#[cfg_attr(target_os = "android", allow(dead_code))]
 pub mod game;
 mod horizon_look;
 pub mod mod_api;
@@ -29,44 +32,61 @@ thread_local! {
     > = const { std::cell::RefCell::new(None) };
 }
 
+// Android-only JNI/entry boundary: these host modules give the shared gameplay
+// source its crate-root paths in this copy. The cdylib owns the real entry
+// point, so nothing here is called at runtime and dead-code lint is noise.
 #[cfg(target_os = "android")]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 #[path = "android/platform.rs"]
 mod platform;
 #[cfg(target_os = "android")]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 #[path = "android/display.rs"]
 mod display;
 #[cfg(target_os = "android")]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 #[path = "android/device_runtime.rs"]
 mod device_runtime;
 #[cfg(target_os = "android")]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 #[path = "android/document_bridge.rs"]
 mod document_bridge;
 #[cfg(target_os = "android")]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 #[path = "android/documents.rs"]
 mod documents;
 #[cfg(target_os = "android")]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 #[path = "android/gallery.rs"]
 mod gallery;
 #[cfg(target_os = "android")]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 #[path = "android/native_ime.rs"]
 mod native_ime;
 #[cfg(target_os = "android")]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 #[path = "android/performance.rs"]
 mod performance;
 #[cfg(target_os = "android")]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 #[path = "android/diagnostics.rs"]
 mod diagnostics;
 #[cfg(target_os = "android")]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 #[path = "android/document_store.rs"]
 mod document_store;
 #[cfg(target_os = "android")]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 #[path = "android/shared_storage.rs"]
 mod shared_storage;
 #[cfg(target_os = "android")]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 #[path = "android/device_preferences.rs"]
 mod device_preferences;
 
+// Android-only stub backend, used only to resolve paths from the cdylib copy.
 #[cfg(target_os = "android")]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 mod backend {
     pub const VERSION: &str = if crate::PUBLIC_BUILD {
         "0.7.7"
@@ -94,6 +114,7 @@ mod backend {
 // Only the pieces of the launcher's catalog the host glue names. The full
 // catalog lives in the cdylib, which is where the Android launcher runs.
 #[cfg(target_os = "android")]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 mod catalog {
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub enum Orientation {

@@ -513,6 +513,10 @@ impl Game<'_> {
         }
         self.ui.options.pad_glyphs = Glyphs::of(&self.settings.controller, self.pad.style);
         self.ui.options.pad_driving = self.pad.in_use && self.pad_focus_mode();
+        // `state` must stay mutable for the desktop stick-deadzone loop below.
+        // On Android it is only read before being shadowed by the touch state,
+        // so silence that target's `unused_mut` here rather than dropping `mut`.
+        #[cfg_attr(target_os = "android", allow(unused_mut))]
         let mut state = hardware.merge(&self.pad.injected);
         #[cfg(target_os = "android")]
         let mut state = {

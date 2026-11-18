@@ -54,6 +54,45 @@ sharing. ZIPs retain at most 4 MiB of text payload, 256 KiB per ordinary input,
 32 selected files and the three latest exported archives. The manifest records
 included/omitted files and source timestamps/truncation.
 
+## Kotlin launcher crash report
+
+The Compose launcher has its own last-resort `Thread.UncaughtExceptionHandler`
+(`CrashHandler.kt`, installed by `HorizonApplication` before anything else runs).
+When an uncaught Kotlin exception ends the launcher, a bounded report is written
+synchronously to `filesDir/performance/kotlin-crash-<utc_ms>.txt` in private app
+storage. On the next launch the launcher shows a short one-time notice
+("A previous launch crashed. Diagnostics are available in Settings."); it is
+dismissed with `CrashHandler.clear` after being shown and never reveals stack
+details in the UI.
+
+- **Where to view/export:** reports are picked up by the diagnostic ZIP
+  allowlist, so **Settings > Diagnostic report > Export ZIP** includes them in
+  the shareable archive alongside the other diagnostics. No separate step is
+  needed. `kotlin-crash-*.txt` files are ordinary text you can inspect first.
+- **Limits:** at most four reports are retained (oldest removed first). Each is
+  capped at about 64 KiB; the stack is limited to 64 lines / 8 KiB and metadata
+  fields to 2 KiB. If an existing report is already oversized, no new one is
+  written so a runaway crash loop cannot fill the device. Writes use
+  `FileOutputStream` followed by `fd.sync()`.
+- **Privacy:** each line containing a token, password, authorization or session
+  marker is dropped; absolute `/data/`, `/storage/` and `/sdcard/` paths, URLs
+  and URIs of any scheme and IP addresses are replaced with `[redacted]`. The
+  handler never records Intent extras, URIs, account names or
+  `filesDir.absolutePath`, and never calls back into Rust/NativeBridge.
+  Redaction is best effort — review before sharing.
+- **Process scope:** the handler is installed only in the launcher (default)
+  process. The Rust game process (`:game`) keeps its own panic hook, native
+  tombstone collection and `last-rust-panic.txt` behaviour unchanged; the two
+  never write a report for the same failure. Installation is guarded by a
+  once-per-process atomic flag and wrapped in try/catch so it cannot break
+  startup, and handling is guarded against recursion. Without a prior system
+  handler the process is stopped with `Runtime.halt(1)` after writing.
+
+Verification is host-side: `python3 -m unittest discover -s tests -p 'test_android*.py'`
+exercises the format, redaction, bounding, rotation and notice contract with an
+independent reference implementation. The Kotlin compiles in CI (no Android SDK
+locally).
+
 ## Native symbols for maintainers
 
 Release packaging preserves private `.debug` ELF files and matching metadata in

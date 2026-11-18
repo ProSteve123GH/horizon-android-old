@@ -28,6 +28,10 @@ pub mod lock;
 #[path = "browser/modrinth.rs"]
 pub mod modrinth;
 
+// The desktop launcher's Mods pages call `try_lock_home` and name
+// `HomeLockGuard` through this re-export; the Android JNI build only needs
+// `lock_home`, so the other two appear unused there.
+#[allow(unused_imports)]
 pub use lock::{lock_home, try_lock_home, HomeLockGuard};
 
 use serde::{Deserialize, Serialize};

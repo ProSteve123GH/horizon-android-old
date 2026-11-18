@@ -18,12 +18,14 @@ class LauncherActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         copyEngineData()
+        val crashNotice = CrashHandler.pendingReport(this)
         NativeBridge.start(this, filesDir.absolutePath)
         setContent {
             LauncherApp(
                 onPlay = ::startGame,
                 onImport = { kind, uri -> NativeBridge.importDocument(this, kind, uri) },
                 onImportNative = { uri -> NativeBridge.importNativeDocument(this, uri) },
+                crashNotice = crashNotice,
             )
         }
     }

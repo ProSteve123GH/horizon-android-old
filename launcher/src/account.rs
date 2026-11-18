@@ -2366,7 +2366,7 @@ pub fn launch(
     order.sort_by_key(|a| Some(&a.key()) != selected.as_ref());
     let mut pass = Launch::default();
     let mut owned = false;
-    let mut unreadable = None;
+    let unreadable = None;
     for account in order {
         if owned {
             break;

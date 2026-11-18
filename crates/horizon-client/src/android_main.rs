@@ -10,8 +10,10 @@ extern crate self as horizon_client;
 // The real library is reached through a second alias; `::horizon_client` would hit the alias above.
 extern crate horizon_client as horizon_client_dep;
 
-#[allow(dead_code, clippy::collapsible_match)]
-// Shared vanilla match structure and desktop harnesses.
+// Shared vanilla match structure and desktop harnesses. It intentionally shadows
+// the library's `game` in the glob re-export below: this is the Android JNI entry
+// crate, so its own copy wins.
+#[allow(dead_code, clippy::collapsible_match, hidden_glob_reexports)]
 mod game;
 #[path = "android/game_launch.rs"]
 mod game_launch;
@@ -40,6 +42,8 @@ mod android_dns;
 mod appearance;
 #[path = "android/bridge.rs"]
 mod bridge;
+// Android-only JNI glue: unused catalog helpers are kept for the bridge's paths.
+#[allow(dead_code)]
 #[path = "android/catalog.rs"]
 mod catalog;
 #[path = "android/device_preferences.rs"]
@@ -48,6 +52,8 @@ mod device_preferences;
 mod device_runtime;
 #[path = "android/diagnostics.rs"]
 mod diagnostics;
+// Android-only JNI glue: display helpers are driven from the entry boundary.
+#[allow(dead_code)]
 #[path = "android/display.rs"]
 mod display;
 #[path = "android/document_bridge.rs"]
@@ -56,6 +62,8 @@ mod document_bridge;
 mod document_provider;
 #[path = "android/document_store.rs"]
 mod document_store;
+// Android-only SAF/JNI glue: several document helpers are reached from other glue.
+#[allow(dead_code)]
 #[path = "android/documents.rs"]
 mod documents;
 #[path = "android/exit_reports.rs"]
@@ -74,14 +82,20 @@ mod worlds;
 // what `horizon_client::minecraft_import` reaches from the shared gameplay source.
 #[path = "android/minecraft_import.rs"]
 mod android_minecraft_import;
+// Android-only JNI glue for the system keyboard; some entry points are unused here.
+#[allow(dead_code)]
 #[path = "android/native_ime.rs"]
 mod native_ime;
+// Android-only JNI glue for native mods; the cdylib uses a subset of its entry points.
+#[allow(dead_code)]
 #[path = "android/native_mods.rs"]
 mod native_mods;
 #[path = "android/performance.rs"]
 mod performance;
 #[path = "android/performance_presets.rs"]
 mod performance_presets;
+// Android-only JNI platform bridge; unused helpers stay for the entry boundary.
+#[allow(dead_code)]
 #[path = "android/platform.rs"]
 mod platform;
 #[rustfmt::skip]
@@ -106,10 +120,13 @@ pub(crate) mod shared_storage;
 mod servers;
 #[path = "android/shader_catalog.rs"]
 mod shader_catalog;
+// Android-only JNI glue for touch layouts; some constants are not wired up on this target.
+#[allow(dead_code)]
 #[path = "android/touch_layouts.rs"]
 mod touch_layouts;
+// Android-only JNI glue; this module also shadows the library's `skins` glob export.
 #[rustfmt::skip]
-#[allow(dead_code)]
+#[allow(dead_code, hidden_glob_reexports)]
 #[path = "../../../launcher/src/skins.rs"]
 mod skins;
 // Upstream split the gameplay library into horizon-client-lib; the shared

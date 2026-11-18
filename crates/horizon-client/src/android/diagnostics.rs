@@ -330,6 +330,8 @@ pub fn export(home: &Path) -> Result<PathBuf, String> {
                             || (name.starts_with("horizon-performance-")
                                 && name.ends_with(".jsonl"))
                             || name.starts_with("crash-")
+                            // Kotlin launcher reports from CrashHandler.kt (already bounded/redacted).
+                            || name.starts_with("kotlin-crash-")
                             || matches!(
                                 name.as_str(),
                                 "android-exits.json"

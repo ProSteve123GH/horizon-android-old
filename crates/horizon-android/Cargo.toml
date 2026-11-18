@@ -93,6 +93,11 @@ default = ["mods", "audio"]
 audio = ["horizon-client/audio"]
 controllers = []
 mods = ["horizon-client/mods", "horizon-mods/runtime"]
+# Shared gameplay source gates these; Android intentionally keeps them off.
+# Declaring them here makes the `cfg(feature = "...")` checks in game.rs known
+# to the cdylib build instead of reporting an unexpected `cfg` condition value.
+friends = []
+horizon-extras = []
 
 [lints]
 workspace = true

@@ -28,8 +28,8 @@ import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.Face
 import androidx.compose.material.icons.rounded.HideImage
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.RotateLeft
-import androidx.compose.material.icons.rounded.RotateRight
+import androidx.compose.material.icons.automirrored.rounded.RotateLeft
+import androidx.compose.material.icons.automirrored.rounded.RotateRight
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.ZoomIn
@@ -141,10 +141,10 @@ private fun PreviewCard(wardrobe: WardrobeState, short: Boolean) {
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SmallIconButton(Icons.Rounded.RotateLeft, "Rotate left") {
+                SmallIconButton(Icons.AutoMirrored.Rounded.RotateLeft, "Rotate left") {
                     act("wardrobe_rotate", "-1")
                 }
-                SmallIconButton(Icons.Rounded.RotateRight, "Rotate right") {
+                SmallIconButton(Icons.AutoMirrored.Rounded.RotateRight, "Rotate right") {
                     act("wardrobe_rotate", "1")
                 }
                 SmallIconButton(Icons.Rounded.ZoomOut, "Zoom out") {
