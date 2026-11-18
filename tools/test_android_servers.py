@@ -19,6 +19,7 @@ base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 horizon-world = { path = "../../../crates/horizon-world" }
+horizon-platform = { path = "../../../crates/horizon-platform", features = ["world"] }
 horizon-telemetry = { path = "../../../crates/horizon-telemetry", default-features = false }
 ''', encoding='utf-8')
     (root / 'src/main.rs').write_text(RUST, encoding='utf-8')
