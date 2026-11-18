@@ -50,6 +50,7 @@ unsafe fn dispatch(
     // are present. The layout of the process is unchanged from a stock start.
     unsafe {
         std::env::set_var("HORIZON_GAME_LIB", &lib);
+        std::env::set_var("HORIZON_NATIVE_DIR", root.join("native"));
         std::env::set_var(
             "HORIZON_NATIVE_PENDING",
             root.join("native").join("pending_crash"),

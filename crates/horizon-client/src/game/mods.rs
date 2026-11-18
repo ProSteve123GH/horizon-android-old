@@ -571,6 +571,26 @@ fn build_lists_mods(built: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// The launcher's record of the mods in the running game. On Android there is no
+/// `[BUILD_INFO]` beside `current_exe()`: the record is app-private, and the
+/// trampoline exports its folder (Starling reads the same build record).
+fn build_info() -> String {
+    #[cfg(target_os = "android")]
+    {
+        let dir = std::env::var_os("HORIZON_NATIVE_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default();
+        std::fs::read_to_string(dir.join("current.json")).unwrap_or_default()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| std::fs::read_to_string(exe.with_file_name(BUILD_INFO)).ok())
+            .unwrap_or_default()
+    }
+}
+
 /// Whether the game playing was built with native mods: horizon-mixins applied bundles to its
 /// source (`HORIZON_MIXIN_MODS`, set by the build script from the record it leaves, as with a mod
 /// author's own build that has no [`BUILD_INFO`]), trait mods are installed, or the launcher wrote
@@ -578,10 +598,7 @@ fn build_lists_mods(built: &str) -> bool {
 pub(super) fn built_with_native_mods() -> bool {
     option_env!("HORIZON_MIXIN_MODS").is_some_and(|mods| !mods.is_empty())
         || !crate::mod_api::mods().is_empty()
-        || std::env::current_exe()
-            .ok()
-            .and_then(|exe| std::fs::read_to_string(exe.with_file_name(BUILD_INFO)).ok())
-            .is_some_and(|built| build_lists_mods(&built))
+        || build_lists_mods(&build_info())
 }
 
 /// The native mods the launcher built this game with, `id version, id version`, for the crash
@@ -774,10 +791,7 @@ impl Game<'_> {
         // A mod with a native version built in says so instead, and isn't news.
         self.list_native_mods();
         self.sync_native_switches();
-        let built = std::env::current_exe()
-            .ok()
-            .and_then(|exe| std::fs::read_to_string(exe.with_file_name(BUILD_INFO)).ok())
-            .unwrap_or_default();
+        let built = build_info();
         let built_mods = native_mods_detail(&built);
         let built_with_mods = built_mods.is_some();
         if let Some(list) = built_mods {

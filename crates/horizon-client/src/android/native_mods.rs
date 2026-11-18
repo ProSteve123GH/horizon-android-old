@@ -1505,7 +1505,7 @@ fn download_library(home: &Path, job: &str, expected_sha: &str) -> Result<(PathB
 /// Install the finished build: download, verify, then publish `current.json`
 /// in exactly the shape the Java loader reads.
 pub(crate) fn install_from_state(home: &Path) {
-    let (job, expected_sha, size, mods, version_code, abi, engine_commit, api_level, min_apk_version) = {
+    let (job, expected_sha, size, mods, version_code, abi, api_level, min_apk_version) = {
         let state = build_lock();
         (
             state.job.clone(),
@@ -1514,7 +1514,6 @@ pub(crate) fn install_from_state(home: &Path) {
             state.mods.clone(),
             state.version_code,
             state.abi.clone(),
-            state.engine_commit.clone(),
             state.api_level.clone(),
             state.min_apk_version.clone(),
         )
@@ -1568,8 +1567,9 @@ pub(crate) fn install_from_state(home: &Path) {
                 "abi": abi,
                 "versionCode": version_code,
                 "sha256": sha256,
-                // Optional compat gate; `null` means "old bundle, no constraint".
-                "engine_commit": engine_commit,
+                // Kept for old readers; the loader now matches the APK install
+                // stamp instead, so this is never a "null" string gate.
+                "engine_commit": "",
                 "api_level": api_level,
                 "min_apk_version": min_apk_version,
                 "mods": mods.iter().map(|m| json!({
@@ -1584,6 +1584,22 @@ pub(crate) fn install_from_state(home: &Path) {
                 .and_then(|bytes| atomic_write(&target, &bytes));
             match written {
                 Ok(()) => {
+                    // Stamp the build with the APK install it was made under,
+                    // as Starling does. Java wrote this into active.json at the
+                    // last start; the game process has no PackageManager.
+                    if let Some(stamp) =
+                        read_json(&priv_native(home).join("active.json")).and_then(|value| {
+                            value
+                                .get("apkStamp")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned)
+                        })
+                    {
+                        let stamped = lib.with_file_name("apk");
+                        if let Err(error) = atomic_write(&stamped, stamp.as_bytes()) {
+                            log::warn!("cannot stamp modded build {}: {error}", stamped.display());
+                        }
+                    }
                     forget_build(home);
                     let mut state = build_lock();
                     state.phase = BuildPhase::Ready;

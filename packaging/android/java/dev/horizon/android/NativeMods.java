@@ -37,19 +37,21 @@ import org.json.JSONObject;
  * `last_rejected` records why, `last_failed_mod` records the mod ids that were
  * active) and a healthy build recorded in `last_known_good.json` is restored.
  *
- * <p>Compatibility: `current.json` may carry `engine_commit`, `api_level` and
- * `min_apk_version`. Older bundles omit them and are accepted; when present a
- * mismatch is refused with a reason the launcher shows. `abi`, `versionCode` and
- * `sha256` are always checked.
+ * <p>Compatibility: a build only loads under the APK install it was made under
+ * (the `apk` stamp beside its library, like Starling). `current.json` may also
+ * carry `api_level` and `min_apk_version`; when present a mismatch is refused
+ * with a reason the launcher shows. `abi`, `versionCode` and `sha256` are
+ * always checked.
  */
 final class NativeMods {
     private static final String TAG = "HorizonNativeMods";
 
-    // TODO(android-build): replace with the APK's build-time engine commit
-    // (generated BuildConfig field or resource) once the build exposes one.
-    // Until then any bundle that declares engine_commit is refused, which is
-    // the safe side of the gate: absence is still accepted for old bundles.
-    private static final String ENGINE_COMMIT = "unknown";
+    // Like Starling, a build is only loaded by the APK install it was made
+    // under. lastUpdateTime changes on every install/update even when the
+    // version code does not, so the stamp is stored beside the library and
+    // checked here instead of comparing an engine-commit string that is not
+    // available to this process.
+    private static final String APK_STAMP = "apk";
     /** The native mod ABI/API this APK's engine understands. */
     private static final int NATIVE_API_LEVEL = 1;
 
@@ -63,8 +65,9 @@ final class NativeMods {
         // A first-frame marker from a previous process must not hide this run's splash.
         //noinspection ResultOfMethodCallIgnored
         new File(nativeDir, "first-frame").delete();
-        String chosen = select(context, nativeDir);
-        writeActive(nativeDir, chosen == null ? stock : chosen, stock);
+        String apkStamp = stamp(context);
+        String chosen = select(context, nativeDir, apkStamp);
+        writeActive(nativeDir, chosen == null ? stock : chosen, stock, apkStamp);
         if (chosen != null) {
             // Replace an existing marker atomically: this start has not proven itself yet.
             writeFileAtomic(new File(nativeDir, "pending_crash"), "");
@@ -80,7 +83,25 @@ final class NativeMods {
     }
 
     /** Returns the chosen library's absolute path, or {@code null} for the stock game. */
-    private static String select(Context context, File nativeDir) {
+    private static String select(Context context, File nativeDir, String apkStamp) {
+        // Older APKs had no build-time engine commit and rejected every build
+        // with "engine commit null/unknown". That gate is gone; clear the stale
+        // reason so the launcher stops showing a rejection that cannot be fixed.
+        File lastRejected = new File(nativeDir, "last_rejected");
+        try {
+            String oldReason = lastRejected.isFile()
+                    ? new String(Files.readAllBytes(lastRejected.toPath()), StandardCharsets.UTF_8).trim()
+                    : "";
+            if (oldReason.contains("engine commit")) {
+                //noinspection ResultOfMethodCallIgnored
+                lastRejected.delete();
+                //noinspection ResultOfMethodCallIgnored
+                new File(nativeDir, "current.json.rejected").delete();
+                Log.i(TAG, "Cleared stale engine-commit rejection from an older APK");
+            }
+        } catch (IOException ignored) {
+            // A stale notice is harmless; the next real rejection overwrites it.
+        }
         File current = new File(nativeDir, "current.json");
         // A build that proved healthy once is the rollback target after a bad build
         // is set aside. Restore it here, before any other check, but never restore
@@ -106,7 +127,6 @@ final class NativeMods {
         long versionCode;
         String abi;
         String sha256;
-        String engineCommit;
         String apiLevel;
         String minApkVersion;
         JSONObject json;
@@ -118,9 +138,8 @@ final class NativeMods {
             versionCode = json.getLong("versionCode");
             abi = json.getString("abi");
             sha256 = json.optString("sha256", "").trim();
-            // All three are optional: bundles built before the compat gate existed
+            // Both are optional: bundles built before the compat gate existed
             // carry none of them and keep working.
-            engineCommit = json.optString("engine_commit", "").trim();
             apiLevel = json.optString("api_level", "").trim();
             minApkVersion = json.optString("min_apk_version", "").trim();
         } catch (Exception error) {
@@ -147,11 +166,12 @@ final class NativeMods {
         if (!supported) {
             return rejectSoft(nativeDir, current, "modded build abi " + abi + " is not in " + Arrays.toString(Build.SUPPORTED_ABIS));
         }
-        // Compatibility gate. Absent fields are fine; a present field that does
-        // not match is a hard rejection with a reason the launcher can display.
-        if (!engineCommit.isEmpty() && !engineCommit.equalsIgnoreCase(ENGINE_COMMIT)) {
-            return rejectHard(nativeDir, current, "Mod requires engine commit " + engineCommit
-                    + " but this APK has " + ENGINE_COMMIT + " (rebuild required)");
+        // A build only runs under the APK install that made it (Starling's
+        // model). The stamp is written by the installer beside the library.
+        String buildStamp = read(new File(new File(lib).getParentFile(), APK_STAMP));
+        if (apkStamp == null || buildStamp == null || !apkStamp.equals(buildStamp)) {
+            return rejectSoft(nativeDir, current,
+                    "Modded build was made for a different APK install (rebuild required)");
         }
         if (!apiLevel.isEmpty()) {
             int level;
@@ -304,10 +324,35 @@ final class NativeMods {
         }
     }
 
-    private static void writeActive(File nativeDir, String lib, String stock) {
+    /** The APK install identity, like Starling: it changes on every install/update. */
+    private static String stamp(Context context) {
+        try {
+            PackageInfo info = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
+            return Long.toString(info.lastUpdateTime);
+        } catch (Exception error) {
+            Log.w(TAG, "Cannot read APK install stamp: " + error);
+            return null;
+        }
+    }
+
+    private static String read(File file) {
+        try {
+            return file.isFile()
+                    ? new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8).trim()
+                    : null;
+        } catch (IOException error) {
+            return null;
+        }
+    }
+
+    private static void writeActive(File nativeDir, String lib, String stock, String apkStamp) {
         final String json;
         try {
-            json = new JSONObject().put("lib", lib).put("stock", stock).toString();
+            JSONObject value = new JSONObject().put("lib", lib).put("stock", stock);
+            if (apkStamp != null) {
+                value.put("apkStamp", apkStamp);
+            }
+            json = value.toString();
         } catch (org.json.JSONException error) {
             Log.w(TAG, "Cannot encode active.json: " + error);
             return;
