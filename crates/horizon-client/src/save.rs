@@ -188,10 +188,7 @@ impl SessionLock {
             );
         }
         if hard_fail {
-            return Err(format!(
-                "{} is already open in another instance",
-                world.display()
-            ));
+            return Err(format!("{} is already open in another instance", world.display()).into());
         }
         file.set_len(0)?;
         file.write_all(&[0x26, 0x03])?;
