@@ -141,6 +141,12 @@ pub fn controls_with_progress(root: &Path, progress: impl Fn(u64, u64)) -> Resul
         .as_str()
         .ok_or("Missing control revision")?;
     let target = root.join("assets/minecraft/textures/gui/bedrock");
+    // The HUD atlas reads PNGs through horizon-data.bin when that snapshot
+    // exists. These controls are installed after the resource root is staged,
+    // so a snapshot made before they existed would hide them from the atlas
+    // and every touch button would silently draw nothing. Drop it; the idle
+    // writer rebuilds it with the controls included.
+    let _ = fs::remove_file(root.join(horizon_core::prepared_files::FILE_NAME));
     let agent = ureq::AgentBuilder::new()
         .redirects(0)
         .timeout_connect(std::time::Duration::from_secs(30))

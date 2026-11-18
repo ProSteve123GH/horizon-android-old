@@ -270,6 +270,17 @@ jobs:
           "$ANDROID_HOME/build-tools/${BUILD_TOOLS_VERSION}/aapt2" dump badging \
             "dist/$(ls dist | grep '\.apk$')" | head -3
 
+      # Keep the downloadable ZIP as well as the raw release asset: mobile
+      # downloads of a single APK sometimes fail, and the ZIP bundles the
+      # checksum and build provenance with it.
+      - name: Upload the signed Horizon Android dev APK artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: horizon-dev-${{ github.run_number }}-${{ matrix.abi }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Publish the signed dev APK as a raw release asset
         env:
           GH_TOKEN: ${{ github.token }}

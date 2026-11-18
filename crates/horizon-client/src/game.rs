@@ -9553,7 +9553,6 @@ impl Game<'_> {
             Vec::new()
         };
         pr.lap("pr_outline");
-        let mut hud = horizon_client::spans::time("hud", || self.hud(size));
         #[cfg(target_os = "android")]
         {
             self.pad.touch.auxiliary_only =
@@ -9572,19 +9571,7 @@ impl Game<'_> {
             self.pad.touch.shield_available = self.touch_shield_available();
             self.pad.touch.sneaking = self.keys.contains(&KeyCode::ShiftLeft);
             self.pad.touch.break_progress = self.touch_mining_progress();
-            self.pad.touch.draw(&mut hud, &self.gui.atlas);
         }
-        #[cfg(target_os = "android")]
-        {
-            if (crate::touch_visible() || self.settings.keypad.enabled)
-                && self.pad.touch.editor.is_none()
-            {
-                self.pad
-                    .touch_ui
-                    .draw(&mut hud, &self.gui.atlas, self.pad_in_menu());
-            }
-        }
-        self.flush_ime(&mut hud);
         let title = self.shows_panorama();
         let (yaw, pitch) = if title {
             // PanoramaRenderer: the title cube spins at 0.1 degrees per tick, pitched 10 degrees.
@@ -9651,6 +9638,25 @@ impl Game<'_> {
         self.flush_ime(&mut hud);
         self.native_gui_render_post(&mut hud, self.ui.hide_gui, self.focused);
         self.resolve_inline_profiles(&hud.inline_profiles);
+        // The touch overlay must land in the batch the renderer actually
+        // submits. The earlier HUD batch was rebuilt for the post-projection
+        // GUI hooks, so drawing into it would be discarded.
+        #[cfg(target_os = "android")]
+        {
+            if self.pad.touch.editor.is_some()
+                || ((crate::touch_visible() || self.settings.keypad.enabled)
+                    && (!self.pad_in_menu() || self.android_inventory_controls()))
+            {
+                self.pad.touch.draw(&mut hud, &self.gui.atlas);
+            }
+            if (crate::touch_visible() || self.settings.keypad.enabled)
+                && self.pad.touch.editor.is_none()
+            {
+                self.pad
+                    .touch_ui
+                    .draw(&mut hud, &self.gui.atlas, self.pad_in_menu());
+            }
+        }
         pr.lap("pr_hud");
         self.locator_camera =
             (!title).then_some((camera.to_array(), view_yaw, view_pitch, fov_degrees));

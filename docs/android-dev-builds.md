@@ -31,13 +31,16 @@ key supplied through the secret.
 1. Open **Actions → Horizon Android — Signed Dev APK Build, Audit & Artifact**
    in the fork.
 2. Open the successful run for the branch and commit you want.
-3. Open the run's **Publish the signed dev APK as a raw release asset** step.
-   The workflow uploads the raw assets (the APK, `SHA256SUMS.txt`, `LICENSE.txt`,
-   `THIRD_PARTY_NOTICES.md` and `BUILD.json`) to the prerelease tag `dev-latest`,
-   replacing whatever is there.
-4. Download `Horizon-Android-dev-*.apk` from the `dev-latest` release page and
-   install it. Android may require allowing installs from the browser or the
-   chosen file manager.
+3. Download the ZIP artifact named `horizon-dev-<run number>-<abi>` from that
+   run. It bundles the APK with `SHA256SUMS.txt`, `LICENSE.txt`,
+   `THIRD_PARTY_NOTICES.md` and `BUILD.json`, so one download carries the
+   checksum and the build provenance.
+4. The same files are also uploaded to the prerelease tag `dev-latest` as raw
+   assets. If you use that page, take `Horizon-Android-dev-<abi>.apk`: the
+   stable name is always the newest build. Old per-commit APKs left on the
+   page carry a lower version code and fail to install with a downgrade error.
+   Android may require allowing installs from the browser or the chosen file
+   manager.
 
 `BUILD.json` records the exact commit, branch, ABI, Rust profile, package,
 version code, signing source and workflow run.

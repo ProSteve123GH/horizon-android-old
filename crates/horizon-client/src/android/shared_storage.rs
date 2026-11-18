@@ -211,7 +211,13 @@ fn game_in_use(base: &Path) -> bool {
     #[cfg(unix)]
     {
         use rustix::fs::{FlockOperation, flock};
-        flock(&file, FlockOperation::NonBlockingLockExclusive).is_err()
+        // Only a genuine contention report means a game is running. On
+        // FUSE-backed /sdcard flock reports other errors, which must not be
+        // mistaken for a live game and block file moves.
+        matches!(
+            flock(&file, FlockOperation::NonBlockingLockExclusive),
+            Err(rustix::io::Errno::WOULDBLOCK)
+        )
     }
     #[cfg(not(unix))]
     {
