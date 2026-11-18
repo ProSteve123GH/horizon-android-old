@@ -301,15 +301,25 @@ pub fn redact(text: &str) -> String {
         .join("\n")
 }
 /// Explicit user action only. No accounts/configuration/worlds, no uploads.
+/// The ZIP lands in the active Reports location (the shared game folder when
+/// the player moved the game files there) so Files shows it directly.
 pub fn export(home: &Path) -> Result<PathBuf, String> {
     flush();
     let dir = home.join("performance");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join(format!("horizon-diagnostics-{}.zip", timestamp()));
+    let out_dir = crate::shared_storage::reports_dir(home);
+    fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+    let path = out_dir.join(format!("horizon-diagnostics-{}.zip", timestamp()));
     let stage = path.with_extension("partial");
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let mut files = Vec::new();
-        for folder in [&dir, &home.join("crash-reports")] {
+        // Raw diagnostics stay in the private home; the shareable reports may
+        // live in the shared game folder, so both locations are scanned.
+        let mut folders = vec![dir.clone(), home.join("crash-reports")];
+        if out_dir != dir {
+            folders.push(out_dir.clone());
+        }
+        for folder in &folders {
             if let Ok(entries) = fs::read_dir(folder) {
                 for entry in entries.flatten() {
                     let name = entry.file_name().to_string_lossy().into_owned();

@@ -52,6 +52,8 @@ jobs:
       fail-fast: false
       matrix:
         abi: ${{ fromJSON(inputs.all_abis && '["arm64-v8a","armeabi-v7a","x86","x86_64"]' || '["arm64-v8a"]') }}
+    permissions:
+      contents: write
     env:
       # Standard public runners have four vCPUs; two left half the machine idle.
       CARGO_BUILD_JOBS: '4'
@@ -129,7 +131,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             .local/ci-target
-          key: android-cargo-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
+          # Saved only on the Android main branch, and shared across branches. Do not re-add the sha: one entry per commit blew the 10 GB cache quota.
+          key: android-cargo-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
           # A feature branch cannot read another feature branch's cache, but it
           # can read the default branch's. Keep the older android-dev prefix too:
           # the Android branch produced those before this workflow was split.
@@ -143,7 +146,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .local/android/gradle-build
-          key: android-gradle-build-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('packaging/android/build.gradle') }}-${{ github.sha }}
+          key: android-gradle-build-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('packaging/android/build.gradle') }}
           restore-keys: |
             android-gradle-build-${{ runner.os }}-${{ matrix.abi }}-
 
@@ -247,7 +250,7 @@ jobs:
               'branch': os.environ['GITHUB_REF_NAME'],
               'abi': abi,
               'profile': os.environ['PROFILE'],
-              'package': 'dev.horizon.android.dev',
+              'package': 'dev.horizon.android.steve.dev',
               'version_code': 1000 + int(os.environ['GITHUB_RUN_NUMBER']),
               'experimental': True,
               'signing': os.environ['SIGNING'],
@@ -261,12 +264,15 @@ jobs:
                   f'Profile: `{os.environ["PROFILE"]}`. Signing: {os.environ["SIGNING"]}.\n\n'
                   f'SHA-256: `{digest}`\n\n'
                   'Download the APK artifact below. It installs separately from the release app '
-                  'as `dev.horizon.android.dev`; worlds and accounts are not copied automatically.\n')
+                  'as `dev.horizon.android.steve.dev`; worlds and accounts are not copied automatically.\n')
           PY
           # Convert the version code to the exact APK identity for the log.
           "$ANDROID_HOME/build-tools/${BUILD_TOOLS_VERSION}/aapt2" dump badging \
             "dist/$(ls dist | grep '\.apk$')" | head -3
 
+      # Keep the downloadable ZIP as well as the raw release asset: mobile
+      # downloads of a single APK sometimes fail, and the ZIP bundles the
+      # checksum and build provenance with it.
       - name: Upload the signed Horizon Android dev APK artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -274,6 +280,22 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish the signed dev APK as a raw release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # One stable asset name per ABI: the release page always shows the
+          # current dev APK, it does not accumulate old builds.
+          abi="${{ matrix.abi }}"
+          apk_src="$(ls dist/*.apk)"
+          apk="Horizon-Android-dev-${abi}.apk"
+          cp "$apk_src" "dist/$apk"
+          ( cd dist && sha256sum "$apk" > SHA256SUMS.txt )
+          gh release view dev-latest >/dev/null 2>&1 || gh release create dev-latest \
+            --title "Horizon Android Dev (auto-built)" --prerelease \
+            --notes "Latest branch-built dev APK for this fork. Not signed for distribution; install only if you trust the branch. One stable asset per ABI; old APKs do not accumulate here."
+          gh release upload dev-latest --clobber "dist/$apk" dist/BUILD.json dist/LICENSE.txt dist/THIRD_PARTY_NOTICES.md dist/SHA256SUMS.txt
 
       # Feature branches only read the default branch's cache. Saving a new
       # 600 MB cache per branch fills the repository's 10 GB cache budget and

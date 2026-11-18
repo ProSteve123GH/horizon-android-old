@@ -12,10 +12,12 @@ The default push build is `arm64-v8a`. A dispatch with **all_abis** builds
 `release` profile by default (ThinLTO), public payload checks and on-device
 Mojang downloads.
 
-The CI package is `dev.horizon.android.dev`, labelled **Horizon Android Dev**, so
-it installs beside a release app. The version name contains the workflow run and
-source commit; the version code is `1000 + run_number`. Test data is separate:
-worlds and accounts are not copied from the release app.
+The CI package is `dev.horizon.android.steve.dev`, labelled **Horizon Android Dev**, so
+it installs beside a release app. It changed from the old `dev.horizon.android.dev`
+identity, which installs as a separate app; its worlds and accounts are not carried
+over, so uninstall the old package manually. The version name contains the workflow
+run and source commit; the version code is `1000 + run_number`. Test data is
+separate: worlds and accounts are not copied from the release app.
 
 The workflow never publishes GitHub Releases, sends Discord messages or attaches
 raw Minecraft inputs, prepared resources, player data or signing keys to an
@@ -29,15 +31,19 @@ key supplied through the secret.
 1. Open **Actions → Horizon Android — Signed Dev APK Build, Audit & Artifact**
    in the fork.
 2. Open the successful run for the branch and commit you want.
-3. Download the artifact for the ABI, for example
-   `horizon-dev-123-arm64-v8a`.
-4. Unpack the artifact ZIP and install the APK. Android may require allowing
-   installs from the browser or file manager used to open it.
+3. Download the ZIP artifact named `horizon-dev-<run number>-<abi>` from that
+   run. It bundles the APK with `SHA256SUMS.txt`, `LICENSE.txt`,
+   `THIRD_PARTY_NOTICES.md` and `BUILD.json`, so one download carries the
+   checksum and the build provenance.
+4. The same files are also uploaded to the prerelease tag `dev-latest` as raw
+   assets. If you use that page, take `Horizon-Android-dev-<abi>.apk`: the
+   stable name is always the newest build. Old per-commit APKs left on the
+   page carry a lower version code and fail to install with a downgrade error.
+   Android may require allowing installs from the browser or the chosen file
+   manager.
 
-Each artifact contains the APK, `SHA256SUMS.txt`, `LICENSE.txt`,
-`THIRD_PARTY_NOTICES.md` and `BUILD.json`. `BUILD.json` records the exact commit,
-branch, ABI, Rust profile, package, version code, signing source and workflow run.
-Artifacts expire after 14 days. GitHub requires sign-in to download them.
+`BUILD.json` records the exact commit, branch, ABI, Rust profile, package,
+version code, signing source and workflow run.
 
 These are experimental builds. They have not automatically passed gameplay,
 graphics-driver or performance testing. Emulator frame rates are not phone
@@ -49,9 +55,9 @@ results.
   & Artifact**, then the **Signed dev APK · …** job.
   Each workflow step is named after the stage that failed; open it for the
   command and compiler output.
-- The artifact name ends in the ABI, for example
-  `horizon-dev-123-arm64-v8a`; `BUILD.json` repeats `abi`, `commit`, `package`,
-  `version_code`, `profile` and the signing source.
+- The release asset name carries the package flavor and ABI; `BUILD.json`
+  repeats `abi`, `commit`, `package`, `version_code`, `profile` and the
+  signing source.
 - On a machine with Android build tools, `aapt2 dump badging file.apk` shows the
   package, version code and native ABI. On any machine, `unzip -l file.apk` shows
   `lib/<abi>/libhorizon_android.so`.

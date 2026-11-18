@@ -40,7 +40,11 @@ pub const DIR: &str = "horizon-mods";
 /// game the launcher built with them.
 pub const NATIVE_DIR: &str = "horizon-native-mods";
 /// Why a native mod installed in [`NATIVE_DIR`] doesn't run in this game.
+#[cfg(not(target_os = "android"))]
 pub const NOT_BUILT: &str = "Installed, not built into this game: build the game with it in the launcher (Settings > Native mods), then play the instance that build is in.";
+/// On Android only the library is rebuilt: Compile in the launcher, then restart.
+#[cfg(target_os = "android")]
+pub const NOT_BUILT: &str = "Installed, not in this game yet: Compile in the launcher (Settings > Native mods), then restart the game.";
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModList {
@@ -166,6 +170,16 @@ impl ModList {
     /// Turns installed mod `i` on or off (a dev mod stays on). A native mod's
     /// line says `false` when off, so that the launcher's next build leaves
     /// it out, and `true` when on again.
+    /// Turn the installed mod `id` on (nothing when it isn't installed).
+    pub fn turn_on(&mut self, id: &str) {
+        let Some(m) = self.installed.iter().find(|m| m.id == id && !m.dev) else {
+            return;
+        };
+        if m.native.is_some() {
+            self.disabled.remove(&m.id);
+        }
+        self.enabled.insert(m.id.clone());
+    }
     pub fn toggle(&mut self, i: usize) {
         let Some(m) = self.installed.get(i).filter(|m| !m.dev) else {
             return;

@@ -29,7 +29,7 @@ struct Recorder {
 pub fn start(home: &Path, metadata: Value) -> horizon_client::Result<()> {
     stop();
     PROFILE_OWNS_RECORDER.store(false, Ordering::Relaxed);
-    let dir = home.join("performance");
+    let dir = crate::shared_storage::reports_dir(home);
     std::fs::create_dir_all(&dir)?;
     let mut files = reports(home);
     while files.len() >= 3 {
@@ -160,7 +160,7 @@ pub fn stop() {
     }
 }
 fn reports(home: &Path) -> Vec<PathBuf> {
-    let mut files: Vec<_> = std::fs::read_dir(home.join("performance"))
+    let mut files: Vec<_> = std::fs::read_dir(crate::shared_storage::reports_dir(home))
         .into_iter()
         .flatten()
         .flatten()

@@ -1,16 +1,14 @@
 //! The Compose launcher's bridge (`dev.horizon.android.NativeBridge`).
 //!
 //! The launcher Activity runs in the app's main process and the game runs in its
-//! own `:game` process. This bridge gives the Kotlin UI the Rust launcher's state
+//! own `:game` process. This bridge gives the Kotlin UI the launcher's state
 //! as one JSON snapshot and takes its actions by name. Every call comes from the
-//! Android main thread; slow work stays on the same worker threads the native
-//! launcher uses.
+//! Android main thread; slow work stays on the same worker threads the game
+//! process uses.
 use crate::catalog::{Catalog, Page};
 use crate::instances;
-use crate::launcher::{
-    login::Login,
-    wardrobe::{CloudAction, Wardrobe},
-};
+use crate::login::Login;
+use crate::wardrobe::{CloudAction, Wardrobe};
 use horizon_client::content_files::Kind;
 use jni::{
     JNIEnv,
@@ -36,6 +34,7 @@ struct Controller {
     installation: horizon_client::minecraft_import::InstallationInfo,
     worker: Option<mpsc::Receiver<Result<(), String>>>,
     diagnostic_export: Option<mpsc::Receiver<Result<String, String>>>,
+    storage_worker: Option<mpsc::Receiver<Result<String, String>>>,
     /// Manual server status checks, keyed by the address in `servers.dat`. The UI asks for one
     /// check and reads the result; nothing polls the network by itself.
     server_pings: Arc<Mutex<HashMap<String, crate::servers::Ping>>>,
@@ -76,14 +75,6 @@ fn page_name(page: Page) -> &'static str {
     }
 }
 
-fn profile_dir(home: &std::path::Path, id: u32) -> PathBuf {
-    if id == 0 {
-        home.into()
-    } else {
-        home.join("profiles").join(format!("profile-{id}"))
-    }
-}
-
 fn choice(
     label: impl Into<String>,
     detail: impl Into<String>,
@@ -104,8 +95,24 @@ impl Controller {
             }
         });
         let mut catalog = Catalog::new(&home);
+        // Finish or undo a migration the app was killed during, before any
+        // file is opened or moved again.
+        let recovery = match crate::shared_storage::recover(&home) {
+            Ok(note) => note,
+            Err(error) => {
+                log::error!("{error}");
+                Some(error)
+            }
+        };
         if crate::diagnostics::previous_unclean(&home) {
             catalog.status = crate::diagnostics::summary(&home);
+        }
+        if let Some(note) = recovery {
+            catalog.status = if catalog.status.is_empty() {
+                note
+            } else {
+                format!("{note} {}", catalog.status)
+            };
         }
         horizon_client::android_runtime::graphics_startup::configure(home.clone());
         if horizon_client::android_runtime::graphics_startup::recover(&home) {
@@ -126,10 +133,12 @@ impl Controller {
             installation,
             worker: None,
             diagnostic_export: None,
+            storage_worker: None,
             server_pings: Arc::default(),
             error: None,
         };
         controller.resume();
+        crate::native_mods::resume_build(&home);
         controller
     }
 
@@ -182,7 +191,19 @@ impl Controller {
                 Err(error) => format!("Diagnostic export failed: {error}"),
             };
         }
-        if let Some(notice) = crate::minecraft_import::poll() {
+        if let Some(result) = self.storage_worker.as_ref().and_then(|r| r.try_recv().ok()) {
+            self.storage_worker = None;
+            match result {
+                Ok(message) => {
+                    self.catalog.status = message;
+                    self.catalog.refresh(&self.home);
+                }
+                Err(error) => {
+                    self.catalog.status = format!("Moving the game files failed: {error}");
+                }
+            }
+        }
+        if let Some(notice) = crate::android_minecraft_import::poll() {
             self.catalog.status = notice.text;
             if let Some(error) = notice.error {
                 self.error = Some(error);
@@ -212,6 +233,51 @@ impl Controller {
         }
     }
 
+    /// One line for the Storage section: where the game files live right now.
+    fn storage_summary(&self) -> String {
+        if crate::shared_storage::busy() {
+            let (done, total) = crate::shared_storage::progress();
+            return match total.checked_div(100) {
+                Some(step) if step > 0 => format!("Moving… {}%", (done / step).min(100)),
+                _ => "Moving…".into(),
+            };
+        }
+        match crate::shared_storage::state(&self.home) {
+            crate::shared_storage::State::Private => "App storage".into(),
+            crate::shared_storage::State::Shared => crate::shared_storage::display_name(&self.home),
+            crate::shared_storage::State::Missing => "Folder missing".into(),
+        }
+    }
+
+    /// The `storage` object of the snapshot the Compose settings screen polls.
+    fn storage_snapshot(&self) -> Value {
+        let moving = crate::shared_storage::busy();
+        let (done, total) = crate::shared_storage::progress();
+        let prompted = crate::shared_storage::prompt_done(&self.home);
+        if moving {
+            return json!({"state": "moving", "dir": Value::Null, "done": done, "total": total,
+                "prompted": prompted});
+        }
+        match crate::shared_storage::state(&self.home) {
+            crate::shared_storage::State::Private => {
+                json!({"state": "private", "dir": Value::Null, "done": 0, "total": 0,
+                    "prompted": prompted})
+            }
+            crate::shared_storage::State::Shared => json!({
+                "state": "shared",
+                "dir": crate::shared_storage::resolve(&self.home).to_string_lossy(),
+                "done": done,
+                "total": total,
+                "prompted": prompted,
+            }),
+            crate::shared_storage::State::Missing => {
+                json!({"state": "missing", "dir": crate::shared_storage::recorded_dir(&self.home)
+                    .map(|dir| dir.to_string_lossy().into_owned()),
+                    "done": 0, "total": 0, "prompted": prompted})
+            }
+        }
+    }
+
     fn settings(&self) -> Value {
         let c = &self.catalog.config;
         let row = |id: &str, title: &str, value: String, kind: &str| json!({"id": id, "title": title, "value": value, "kind": kind});
@@ -238,7 +304,7 @@ impl Controller {
                 row("appearance", "Launcher appearance", self.appearance.summary(), "action"),
             ]},
             {"group": "Game", "rows": [
-                row("profile", "Instances", instances::display_name(&profile_dir(&self.home, c.profile), c.profile), "choice"),
+                row("profile", "Instances", instances::display_name(&crate::shared_storage::profile_dir(&self.home, c.profile), c.profile), "choice"),
                 row("input_host", "Input", c.input_host.label().into(), "choice"),
                 row("touch_layouts", "Touch layout profiles", crate::touch_layouts::summary(&c.game_home(&self.home)), "action"),
                 row("name", "Offline player name", if c.name.is_empty() { "Not set".into() } else { c.name.clone() }, "text"),
@@ -246,6 +312,7 @@ impl Controller {
                 row("servers", "Saved servers", "Add, edit and organize".into(), "action"),
             ]},
             {"group": "Storage", "rows": [
+                row("storage", "Game files location", self.storage_summary(), "action"),
                 row("screenshots", "Screenshots", "Browse, preview, share or delete".into(), "action"),
                 row("game_files", "Game files", "Open in system Files".into(), "action"),
                 row("world_files", "World files", "Import / copy / back up in Files".into(), "action"),
@@ -392,7 +459,7 @@ impl Controller {
             "profile" => {
                 let mut ids = vec![0, c.profile];
                 ids.extend(
-                    std::fs::read_dir(self.home.join("profiles"))
+                    std::fs::read_dir(crate::shared_storage::resolve(&self.home).join("profiles"))
                         .into_iter()
                         .flatten()
                         .flatten()
@@ -444,8 +511,11 @@ impl Controller {
 
     fn snapshot(&mut self) -> Value {
         use horizon_client::official_install::InstallStage;
+        if let Some(note) = crate::native_mods::take_result() {
+            self.catalog.status = note;
+        }
         self.poll();
-        let imported = crate::minecraft_import::snapshot();
+        let imported = crate::android_minecraft_import::snapshot();
         let installed = self.installation.installed;
         let installing = self.worker.is_some() || imported.is_some();
         let progress = *self.install.lock().unwrap_or_else(|e| e.into_inner());
@@ -562,8 +632,6 @@ impl Controller {
                     && p.source == crate::browser::SourceId::Modrinth;
                 let note = if java_mod {
                     Some("Java mod")
-                } else if crate::catalog::source_only_mod(p) {
-                    Some(".hnmod: later")
                 } else if p.kind == crate::browser::Kind::Mod && !cfg!(target_pointer_width = "64")
                 {
                     Some("64-bit required")
@@ -641,7 +709,7 @@ impl Controller {
                 "name": c.name,
                 "server": c.server,
                 "profile": c.profile,
-                "profile_name": instances::display_name(&profile_dir(&self.home, c.profile), c.profile),
+                "profile_name": instances::display_name(&crate::shared_storage::profile_dir(&self.home, c.profile), c.profile),
                 "renderer": c.renderer.label(),
                 "render_scale": c.render_scale.percent(),
                 "input": c.input_host.label(),
@@ -649,6 +717,7 @@ impl Controller {
                 "shader_source": if c.shader_source == crate::shader_catalog::Origin::Modrinth { "modrinth" } else { "horizon" },
             },
             "appearance": self.appearance.state(&self.home),
+            "storage": self.storage_snapshot(),
             "settings": self.settings(),
             "wardrobe": wardrobe,
             "catalog": {
@@ -661,6 +730,10 @@ impl Controller {
             "local": local,
             "documents": crate::documents::overlay(),
             "is_64_bit": cfg!(target_pointer_width = "64"),
+            "native": crate::native_mods::section(
+                &self.home,
+                &self.catalog.config.game_home(&self.home)
+            ),
         })
     }
 
@@ -672,7 +745,7 @@ impl Controller {
     fn profile_ids(&self) -> Vec<u32> {
         let mut ids = vec![0, self.catalog.config.profile];
         ids.extend(
-            std::fs::read_dir(self.home.join("profiles"))
+            std::fs::read_dir(crate::shared_storage::resolve(&self.home).join("profiles"))
                 .into_iter()
                 .flatten()
                 .flatten()
@@ -705,7 +778,7 @@ impl Controller {
             self.profile_ids()
                 .into_iter()
                 .map(|id| {
-                    let dir = profile_dir(&self.home, id);
+                    let dir = crate::shared_storage::profile_dir(&self.home, id);
                     json!({
                         "id": id,
                         "name": instances::display_name(&dir, id),
@@ -730,7 +803,7 @@ impl Controller {
         self.profile_ids()
             .into_iter()
             .map(|id| {
-                let dir = profile_dir(&self.home, id);
+                let dir = crate::shared_storage::profile_dir(&self.home, id);
                 (id, instances::display_name(&dir, id))
             })
             .collect()
@@ -793,18 +866,18 @@ impl Controller {
                 let index = arg.parse::<usize>().map_err(|e| e.to_string())?;
                 self.catalog.install(&home, index);
             }
-            "cancel_import" => crate::minecraft_import::cancel(),
+            "cancel_import" => crate::android_minecraft_import::cancel(),
             "repair_installation" => {
-                if self.worker.is_some() || crate::minecraft_import::busy() {
+                if self.worker.is_some() || crate::android_minecraft_import::busy() {
                     return Err("Finish the current installation first".into());
                 }
-                crate::minecraft_import::start_repair(self.home.clone())?;
+                crate::android_minecraft_import::start_repair(self.home.clone())?;
                 self.error = None;
                 self.catalog.status =
                     "Checking Minecraft resources and downloading anything missing...".into();
             }
             "remove_installation" => {
-                if self.worker.is_some() || crate::minecraft_import::busy() {
+                if self.worker.is_some() || crate::android_minecraft_import::busy() {
                     return Err("Finish or cancel the current installation first".into());
                 }
                 horizon_client::minecraft_import::remove(&home)
@@ -835,6 +908,103 @@ impl Controller {
                 } else {
                     "Open the system Files app and choose Horizon Android.".into()
                 };
+            }
+            "storage_migrate" => {
+                // The Compose dialog computes the shared folder (it knows the
+                // package); the argument is its absolute path.
+                let target = PathBuf::from(arg);
+                if !target.is_absolute() || arg.trim().is_empty() {
+                    return Err("The shared folder path must be absolute".into());
+                }
+                if self.worker.is_some()
+                    || self.storage_worker.is_some()
+                    || crate::android_minecraft_import::busy()
+                    || crate::documents::busy()
+                {
+                    return Err("Finish the current task first".into());
+                }
+                if crate::shared_storage::state(&self.home) != crate::shared_storage::State::Private
+                {
+                    return Err("The game files are on shared storage already".into());
+                }
+                let home = self.home.clone();
+                let (sender, receiver) = mpsc::channel();
+                self.storage_worker = Some(receiver);
+                self.catalog.status = "Moving game files to shared storage…".into();
+                std::thread::spawn(move || {
+                    // Reinstall path: if the target holds data from an earlier
+                    // install and app storage holds nothing worth keeping,
+                    // adopt the existing folder instead of refusing.
+                    let result =
+                        crate::shared_storage::migrate(&home, &target, true).or_else(|error| {
+                            if error.contains("is not empty") {
+                                crate::shared_storage::adopt(&home, &target)
+                            } else {
+                                Err(error)
+                            }
+                        });
+                    let _ = sender.send(result);
+                });
+            }
+            "storage_restore" => {
+                if self.worker.is_some()
+                    || self.storage_worker.is_some()
+                    || crate::android_minecraft_import::busy()
+                    || crate::documents::busy()
+                {
+                    return Err("Finish the current task first".into());
+                }
+                // A missing folder can still be moved back once the player
+                // re-creates it (it may hold the restored worlds), so the
+                // recorded location is passed even when it is not readable
+                // right now; the migration itself reports that honestly.
+                if crate::shared_storage::state(&self.home) == crate::shared_storage::State::Private
+                {
+                    return Err("The game files are on app storage already".into());
+                }
+                let home = self.home.clone();
+                let (sender, receiver) = mpsc::channel();
+                self.storage_worker = Some(receiver);
+                self.catalog.status = "Moving game files back to app storage…".into();
+                std::thread::spawn(move || {
+                    let shared = crate::shared_storage::recorded_dir(&home)
+                        .unwrap_or_else(|| crate::shared_storage::resolve(&home));
+                    let result = crate::shared_storage::migrate(&home, &shared, false);
+                    let _ = sender.send(result);
+                });
+            }
+            "storage_recreate" => {
+                if self.worker.is_some()
+                    || self.storage_worker.is_some()
+                    || crate::android_minecraft_import::busy()
+                    || crate::documents::busy()
+                {
+                    return Err("Finish the current task first".into());
+                }
+                if crate::shared_storage::state(&self.home) != crate::shared_storage::State::Missing
+                {
+                    return Err("The shared folder is either there or was never used".into());
+                }
+                let Some(folder) = crate::shared_storage::recorded_dir(&self.home) else {
+                    return Err("No shared folder is recorded in the storage marker".into());
+                };
+                if folder.is_dir() {
+                    return Ok(json!("The folder is there already."));
+                }
+                std::fs::create_dir_all(&folder)
+                    .map_err(|e| format!("Cannot re-create {}: {e}", folder.display()))?;
+                let note = format!(
+                    "Re-created {}. The folder is empty; if it was deleted by accident, restore its contents from your file manager's Trash first.",
+                    folder.display()
+                );
+                self.catalog.status = note.clone();
+                self.catalog.refresh(&self.home);
+                return Ok(json!(note));
+            }
+            "storage_prompt_done" => {
+                crate::shared_storage::mark_prompt_done(&self.home)
+                    .map_err(|e| format!("Could not record the prompt choice: {e}"))?;
+                return Ok(json!("ok"));
             }
             "game_files" => {
                 self.catalog.status = if crate::platform::open_documents(
@@ -937,6 +1107,47 @@ impl Controller {
                 _ => crate::documents::Choice::Cancel,
             }),
             "import_cancel" => crate::documents::cancel(),
+            "native_list" => {
+                let game_home = self.catalog.config.game_home(&self.home);
+                return Ok(crate::native_mods::section(&self.home, &game_home));
+            }
+            "native_disable" => {
+                crate::native_mods::disable(&self.home)?;
+                self.catalog.status =
+                    "Native mods disabled. The stock game runs on the next start.".into();
+                return Ok(json!({"disabled": true}));
+            }
+            "native_compile" => {
+                let game_home = self.catalog.config.game_home(&self.home);
+                return Ok(crate::native_mods::compile(&self.home, &game_home, arg)?);
+            }
+            "native_compile_status" => {
+                return Ok(crate::native_mods::compile_status());
+            }
+            "native_install" => {
+                return Ok(crate::native_mods::install(&self.home, arg)?);
+            }
+            "native_enabled" => {
+                let args: serde_json::Value = serde_json::from_str(arg)
+                    .map_err(|_| "Expected a JSON object with the mod id and the enabled flag".to_string())?;
+                let id = args
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or("Expected a JSON object with the mod id and the enabled flag")?;
+                let enabled = args
+                    .get("enabled")
+                    .and_then(serde_json::Value::as_bool)
+                    .ok_or("Expected a JSON object with the mod id and the enabled flag")?;
+                let game_home = self.catalog.config.game_home(&self.home);
+                crate::native_mods::set_enabled(&game_home, id, enabled)?;
+                return Ok(json!({ "id": id, "enabled": enabled }));
+            }
+            "native_remove" => {
+                let game_home = self.catalog.config.game_home(&self.home);
+                crate::native_mods::remove(&game_home, arg)?;
+                self.catalog.status = format!("Removed native mod {arg}.");
+                return Ok(json!({"removed": arg}));
+            }
             "choose" => {
                 let (id, value) = arg.split_once('=').ok_or("Expected id=value")?;
                 self.choose(id, value)?;
@@ -1069,7 +1280,7 @@ impl Controller {
             "profile_create" => {
                 let name = instances::validated_name(&self.named_profiles(), None, arg)?;
                 let id = instances::next_id(&self.profile_ids()).ok_or("Too many instances")?;
-                let dir = profile_dir(&home, id);
+                let dir = crate::shared_storage::profile_dir(&home, id);
                 std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
                 instances::write_name(&dir, &name)?;
                 self.choose("profile", &id.to_string())?;
@@ -1081,16 +1292,16 @@ impl Controller {
                     return Err("That instance no longer exists".into());
                 }
                 let name = instances::validated_name(&self.named_profiles(), Some(id), name)?;
-                instances::write_name(&profile_dir(&home, id), &name)?;
+                instances::write_name(&crate::shared_storage::profile_dir(&home, id), &name)?;
             }
             "profile_duplicate" => {
                 let id = arg.parse::<u32>().map_err(|e| e.to_string())?;
-                let source = profile_dir(&home, id);
+                let source = crate::shared_storage::profile_dir(&home, id);
                 if !self.profile_ids().contains(&id) || !source.is_dir() {
                     return Err("That instance's folder is missing; it cannot be duplicated".into());
                 }
                 let new_id = instances::next_id(&self.profile_ids()).ok_or("Too many instances")?;
-                let destination = profile_dir(&home, new_id);
+                let destination = crate::shared_storage::profile_dir(&home, new_id);
                 instances::copy_profile(&source, &destination)?;
                 let name = instances::unique_name(
                     &self.named_profiles(),
@@ -1113,7 +1324,8 @@ impl Controller {
                 if !self.profile_ids().contains(&id) {
                     return Err("That instance no longer exists".into());
                 }
-                std::fs::remove_dir_all(profile_dir(&home, id)).map_err(|e| e.to_string())?;
+                std::fs::remove_dir_all(crate::shared_storage::profile_dir(&home, id))
+                    .map_err(|e| e.to_string())?;
             }
             "profile_launch" => {
                 let id = arg.parse::<u32>().map_err(|e| e.to_string())?;
@@ -1217,7 +1429,9 @@ impl Controller {
             "touch_layouts" => return self.touch_state(),
             "touch_layout_create" => {
                 let instance = self.catalog.config.game_home(&home);
-                let snapshot = touch_snapshot(&touch_settings(&instance));
+                // Snapshot the live horizon-touch.json verbatim, never the
+                // engine defaults: importing/creating must not wipe custom keys.
+                let snapshot = crate::touch_layouts::live_snapshot(&instance)?;
                 let profile = crate::touch_layouts::create(&instance, arg, &snapshot)?;
                 self.catalog.status = format!(
                     "Saved layout profile {} from the current layout.",
@@ -1243,7 +1457,7 @@ impl Controller {
             }
             "touch_layout_save" => {
                 let instance = self.catalog.config.game_home(&home);
-                let snapshot = touch_snapshot(&touch_settings(&instance));
+                let snapshot = crate::touch_layouts::live_snapshot(&instance)?;
                 let profile = crate::touch_layouts::save_current(&instance, arg, &snapshot)?;
                 self.catalog.status = format!(
                     "Updated {} with the layout currently in touch settings.",
@@ -1517,13 +1731,13 @@ impl Controller {
     /// Imports a folder or ZIP picked in the Compose launcher.
     fn start_import(
         &mut self,
-        kind: crate::minecraft_import::Kind,
+        kind: crate::android_minecraft_import::Kind,
         uri: String,
     ) -> Result<Value, String> {
-        if self.worker.is_some() || crate::minecraft_import::busy() {
+        if self.worker.is_some() || crate::android_minecraft_import::busy() {
             return Err("Finish the current installation first".into());
         }
-        crate::minecraft_import::start(self.home.clone(), kind, uri)?;
+        crate::android_minecraft_import::start(self.home.clone(), kind, uri)?;
         self.error = None;
         self.catalog.status = "Reading the selected Minecraft installation...".into();
         Ok(json!({"started": true}))
@@ -1629,7 +1843,16 @@ impl Controller {
     }
 
     fn play(&mut self, world: Option<&str>) -> Result<Value, String> {
-        if self.worker.is_some() || crate::minecraft_import::busy() || self.login.pending() {
+        if self.worker.is_some() || crate::android_minecraft_import::busy() || self.login.pending() {
+            return Ok(json!({"launch": false}));
+        }
+        if crate::shared_storage::busy() {
+            self.catalog.status = "Moving the game files. Wait for it to finish, then play.".into();
+            return Ok(json!({"launch": false}));
+        }
+        if crate::shared_storage::state(&self.home) == crate::shared_storage::State::Missing {
+            self.catalog.status =
+                "Horizon cannot find the Horizon-Android folder with your worlds. Re-create it from Settings → Storage → Game files location (or from a file manager), or move the game files back in the same place.".into();
             return Ok(json!({"launch": false}));
         }
         if horizon_client::official_install::ready(&self.home) {
@@ -1743,6 +1966,9 @@ fn touch_write_fields(instance: &std::path::Path, fields: &Value) -> Result<(), 
             format!("This layout snapshot is not compatible with this build: {error}")
         })?;
     merged.sanitize();
+    // `Settings::save_to` writes to a `horizon-touch.json.tmp` sibling and
+    // renames it over the live file, so a crash mid-write cannot leave a
+    // half-written touch layout. The store file uses the same temp+rename.
     merged
         .save_to(&path)
         .map_err(|error| format!("Could not save the touch layout: {error}"))
@@ -1888,6 +2114,13 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_importDocument(
 ) {
     let kind = string(&mut env, &kind);
     let uri = (!uri.is_null()).then(|| string(&mut env, &uri));
+    // Touch controls are per-instance profiles, not a content-files folder.
+    // Handle them here before the mods/packs/shaders dispatch, which only knows
+    // `content_files::Kind` and would drop the picker result.
+    if kind == "touch" {
+        import_touch(&mut env, &activity, uri);
+        return;
+    }
     let Some(kind) = parse_kind(&kind) else {
         return;
     };
@@ -1901,7 +2134,96 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_importDocument(
     crate::documents::import_external(&mut env, &activity, kind, home, uri);
 }
 
-fn import_minecraft(env: &mut JNIEnv<'_>, kind: crate::minecraft_import::Kind, uri: JString<'_>) {
+/// `NativeBridge.importDocument(activity, "touch", uri)`: a picked controls file.
+///
+/// The SAF document is read on a worker and validated by `touch_layouts`, which
+/// saves it as a brand-new profile. `Controller::poll` picks the notice up from
+/// `documents::poll` and shows the preview/status in the launcher.
+fn import_touch(env: &mut JNIEnv<'_>, activity: &JObject<'_>, uri: Option<String>) {
+    const MAX_BYTES: u64 = 1 << 20;
+    let Some(uri) = uri.filter(|uri| uri.starts_with("content://") && uri.len() <= 8192) else {
+        crate::documents::note("Unsupported document URI", false);
+        return;
+    };
+    let Some(instance) = CONTROLLER.with(|c| {
+        c.borrow()
+            .as_ref()
+            .map(|c| c.catalog.config.game_home(&c.home))
+    }) else {
+        crate::documents::note("Launcher is not initialized", false);
+        return;
+    };
+    let setup = (|| -> jni::errors::Result<_> {
+        let activity = env.new_global_ref(activity)?;
+        Ok((env.get_java_vm()?, activity))
+    })();
+    let Ok((vm, activity)) = setup else {
+        let _ = env.exception_clear();
+        crate::documents::note("Could not read the selected document", false);
+        return;
+    };
+    let spawned = std::thread::Builder::new()
+        .name("Touch import".into())
+        .spawn(move || {
+            use std::io::Read;
+            let result = (|| -> Result<String, String> {
+                let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+                let (mut file, name) = crate::document_bridge::open(
+                    &mut env,
+                    activity.as_obj(),
+                    &uri,
+                    "horizon-touch.json",
+                )
+                .map_err(|e| e.to_string())?;
+                let mut bytes = Vec::new();
+                file.take(MAX_BYTES)
+                    .read_to_end(&mut bytes)
+                    .map_err(|e| format!("Could not read the touch file: {e}"))?;
+                let fallback = name.strip_suffix(".json").unwrap_or(&name).to_owned();
+                let (preview, profile) =
+                    crate::touch_layouts::import_profile(&instance, &bytes, &fallback)?;
+                Ok(format!(
+                    "Imported a {} touch profile \"{}\" ({} mode, {} custom button(s), {}). Apply it from Touch controls.",
+                    preview.shape,
+                    profile.name,
+                    preview.mode,
+                    preview.button_count,
+                    preview.visibility
+                ))
+            })();
+            match result {
+                Ok(status) => crate::documents::note(status, true),
+                Err(error) => crate::documents::note(
+                    format!("Touch controls import failed: {error}"),
+                    false,
+                ),
+            }
+        });
+    if let Err(error) = spawned {
+        crate::documents::note(format!("Touch controls import failed: {error}"), false);
+    }
+}
+
+/// `NativeBridge.importNativeDocument(Activity, String uri)`: a picked .hnmod bundle.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_horizon_android_NativeBridge_importNativeDocument(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    activity: JObject<'_>,
+    uri: JString<'_>,
+) {
+    let uri = (!uri.is_null()).then(|| string(&mut env, &uri));
+    let Some(home) = CONTROLLER.with(|c| {
+        c.borrow()
+            .as_ref()
+            .map(|c| c.catalog.config.game_home(&c.home))
+    }) else {
+        return;
+    };
+    crate::native_mods::import_external(&mut env, &activity, home, uri);
+}
+
+fn import_minecraft(env: &mut JNIEnv<'_>, kind: crate::android_minecraft_import::Kind, uri: JString<'_>) {
     if uri.is_null() {
         return;
     }
@@ -1926,7 +2248,7 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_importMinecraftFold
     _class: JClass<'_>,
     uri: JString<'_>,
 ) {
-    import_minecraft(&mut env, crate::minecraft_import::Kind::Folder, uri);
+    import_minecraft(&mut env, crate::android_minecraft_import::Kind::Folder, uri);
 }
 
 /// `NativeBridge.importMinecraftZip(String uri)`: a picked ZIP document.
@@ -1936,7 +2258,7 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_importMinecraftZip(
     _class: JClass<'_>,
     uri: JString<'_>,
 ) {
-    import_minecraft(&mut env, crate::minecraft_import::Kind::Zip, uri);
+    import_minecraft(&mut env, crate::android_minecraft_import::Kind::Zip, uri);
 }
 
 /// `NativeBridge.screenshots(String order)`: the gallery list. The Compose

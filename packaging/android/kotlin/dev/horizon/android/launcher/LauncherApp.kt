@@ -58,6 +58,9 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.toShape
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -70,6 +73,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
@@ -111,24 +115,43 @@ sealed interface Overlay {
     data object Performance : Overlay
     data object Servers : Overlay
     data object TouchLayouts : Overlay
+    data object GameFiles : Overlay
     data object Appearance : Overlay
     data class Choose(val id: String, val options: Options) : Overlay
     data class Edit(val id: String, val title: String, val value: String, val hint: String) : Overlay
     data class Remove(val item: LocalItem) : Overlay
+    data class RemoveNative(val id: String) : Overlay
     data object RemoveInstallation : Overlay
 }
 
 @Composable
-fun LauncherApp(onPlay: () -> Unit, onImport: (String, String?) -> Unit, onClassicLauncher: () -> Unit) {
+fun LauncherApp(
+    onPlay: () -> Unit,
+    onImport: (String, String?) -> Unit,
+    onImportNative: (String?) -> Unit,
+) {
     var appearance by remember { mutableStateOf(LauncherAppearance.load()) }
+    // Fade and grow in over the splash window so opening the app is a transition, not a cut.
+    val appear = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { appear.animateTo(1f, tween(durationMillis = 450, easing = FastOutSlowInEasing)) }
     HorizonTheme(appearance) {
-        LauncherContent(
-            appearance = appearance,
-            onAppearance = { appearance = it },
-            onPlay = onPlay,
-            onImport = onImport,
-            onClassicLauncher = onClassicLauncher,
-        )
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = appear.value
+                    scaleX = 0.97f + 0.03f * appear.value
+                    scaleY = 0.97f + 0.03f * appear.value
+                },
+        ) {
+            LauncherContent(
+                appearance = appearance,
+                onAppearance = { appearance = it },
+                onPlay = onPlay,
+                onImport = onImport,
+                onImportNative = onImportNative,
+            )
+        }
     }
 }
 
@@ -139,7 +162,7 @@ private fun LauncherContent(
     onAppearance: (LauncherAppearance) -> Unit,
     onPlay: () -> Unit,
     onImport: (String, String?) -> Unit,
-    onClassicLauncher: () -> Unit,
+    onImportNative: (String?) -> Unit,
 ) {
     var snapshot by remember { mutableStateOf<Snapshot?>(null) }
     // Poll only while the launcher is on screen: never while the game runs.
@@ -158,6 +181,7 @@ private fun LauncherContent(
     var destination by rememberSaveable { mutableStateOf(Destination.Play) }
     // Settings is a layer over the current page, not a destination: closing it reveals that page as it was.
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    var storagePromptDismissed by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(destination, settingsOpen) {
         // The gallery is a launcher view, not one of the catalog pages.
         if (!settingsOpen && destination == Destination.Screenshots) return@LaunchedEffect
@@ -194,6 +218,9 @@ private fun LauncherContent(
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         onImport(importKind, uri?.toString())
+    }
+    val nativePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        onImportNative(uri?.toString())
     }
     var wardrobeKind by rememberSaveable { mutableStateOf("skin") }
     val wardrobePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -247,8 +274,12 @@ private fun LauncherContent(
             act("dismiss_status")
         }
     }
-    BackHandler(enabled = settingsOpen || destination != Destination.Play) {
-        if (settingsOpen) settingsOpen = false else destination = Destination.Play
+    BackHandler(enabled = overlay != null || settingsOpen || destination != Destination.Play) {
+        when {
+            overlay != null -> overlay = null
+            settingsOpen -> settingsOpen = false
+            else -> destination = Destination.Play
+        }
     }
 
     val actions = LauncherActions(
@@ -265,6 +296,7 @@ private fun LauncherContent(
             settingsOpen = false
             destination = Destination.Screenshots
         },
+        openGameFiles = { overlay = Overlay.GameFiles },
         openAppearance = {
             backgroundError = null
             overlay = Overlay.Appearance
@@ -281,6 +313,9 @@ private fun LauncherContent(
             importKind = kind
             picker.launch(arrayOf("*/*"))
         },
+        importNative = { nativePicker.launch(arrayOf("application/octet-stream", "application/zip", "application/x-zip-compressed", "*/*")) },
+        removeNative = { id -> overlay = Overlay.RemoveNative(id) },
+        disableNative = { act("native_disable") },
         importWardrobe = { kind ->
             wardrobeKind = kind
             wardrobePicker.launch(arrayOf("image/png"))
@@ -295,7 +330,6 @@ private fun LauncherContent(
         cancelImport = { act("cancel_import") },
         repairInstallation = { act("repair_installation") },
         removeInstallation = { overlay = Overlay.RemoveInstallation },
-        openClassicLauncher = onClassicLauncher,
         toggleSettings = { settingsOpen = !settingsOpen },
     )
 
@@ -308,7 +342,17 @@ private fun LauncherContent(
             Overlay.Profiles -> InstancesSheet(onDismiss = { overlay = null }, onPlay = onPlay)
             Overlay.Worlds -> WorldsSheet(onDismiss = { overlay = null }, onPlay = onPlay)
             Overlay.Performance -> PerformanceSheet(onDismiss = { overlay = null })
-            Overlay.TouchLayouts -> TouchLayoutsSheet(onDismiss = { overlay = null })
+            Overlay.TouchLayouts -> TouchLayoutsSheet(
+                onDismiss = { overlay = null },
+                onImportTouch = { uri -> onImport("touch", uri) },
+                onEditInGame = { actions.play(); overlay = null },
+            )
+            Overlay.GameFiles -> Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+                    val root = state.storage.dir?.let { java.io.File(it) } ?: sharedStorageDir()
+                    GameFilesScreen(root = root, onBack = { overlay = null })
+                }
+            }
             Overlay.Servers -> ServersSheet(onDismiss = { overlay = null }, onPlay = onPlay)
             Overlay.Appearance -> AppearanceSheet(
                 appearance = appearance,
@@ -329,10 +373,16 @@ private fun LauncherContent(
             )
             is Overlay.Edit -> EditDialog(o, onDismiss = { overlay = null })
             is Overlay.Remove -> RemoveDialog(o.item, onDismiss = { overlay = null })
+            is Overlay.RemoveNative -> RemoveNativeDialog(o.id, onDismiss = { overlay = null })
             Overlay.RemoveInstallation -> RemoveInstallationDialog(state.install, onDismiss = { overlay = null })
             null -> {}
         }
         ImportDialogs(state.documents)
+        // First run, or still on SAF: offer internal storage once. "Not now"
+        // keeps the SAF mode fully working and never shows again.
+        if (state.storage.state == "private" && !state.storage.prompted && !storagePromptDismissed && !settingsOpen) {
+            StoragePromptDialog(onDismiss = { storagePromptDismissed = true })
+        }
     }
 }
 
@@ -360,6 +410,8 @@ fun LauncherScaffold(
         ) { padding ->
             BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
                 val wide = maxWidth >= 600.dp
+                // Tablets, DeX and Android TV get more settings columns and bigger targets.
+                val extraWide = maxWidth >= 1280.dp
                 // Phones held sideways are ~400 dp tall: tighter header, no rail logo.
                 val short = maxHeight < 520.dp
                 if (state == null) {
@@ -415,7 +467,15 @@ fun LauncherScaffold(
                         Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
                             Column(Modifier.fillMaxSize().padding(horizontal = if (wide) 24.dp else 16.dp)) {
                                 Header(Destination.Settings, state, short, actions)
-                                Box(Modifier.weight(1f).fillMaxWidth()) { SettingsScreen(state, wide, actions) }
+                                Box(Modifier.weight(1f).fillMaxWidth()) {
+                                    SettingsScreen(
+                                        state = state,
+                                        wide = wide,
+                                        extraWide = extraWide,
+                                        actions = actions,
+                                        onGameFiles = actions.openGameFiles,
+                                    )
+                                }
                             }
                             Box(Modifier.align(Alignment.BottomCenter)) { snackbarHost() }
                         }
@@ -430,11 +490,15 @@ fun LauncherScaffold(
 class LauncherActions(
     val play: () -> Unit,
     val openAccount: () -> Unit,
+    val importNative: () -> Unit,
+    val removeNative: (String) -> Unit,
+    val disableNative: () -> Unit,
     val openWorlds: () -> Unit,
     val openPerformance: () -> Unit,
     val openTouchLayouts: () -> Unit,
     val openServers: () -> Unit,
     val openScreenshots: () -> Unit,
+    val openGameFiles: () -> Unit,
     val openAppearance: () -> Unit,
     val choose: (String) -> Unit,
     val edit: (id: String, title: String, value: String, hint: String) -> Unit,
@@ -446,7 +510,6 @@ class LauncherActions(
     val cancelImport: () -> Unit,
     val repairInstallation: () -> Unit,
     val removeInstallation: () -> Unit,
-    val openClassicLauncher: () -> Unit,
     val toggleSettings: () -> Unit,
 )
 

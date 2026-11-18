@@ -1,13 +1,28 @@
 //! Android's native entry point. The simulation and renderer are shared with desktop.
 #![cfg(target_os = "android")]
 
+// The shared gameplay source is compiled twice: into `horizon-client` and into this cdylib.
+// Its generated host code spells the API types as `horizon_client::mod_api::*`, so inside this
+// crate that path must reach *this* copy, not the library's. Everything else the game uses is
+// re-exported from the real dependency below; explicitly declared modules (game, mod_api) shadow
+// the glob's copies.
+extern crate self as horizon_client;
+// The real library is reached through a second alias; `::horizon_client` would hit the alias above.
+extern crate horizon_client as horizon_client_dep;
+
 #[allow(dead_code, clippy::collapsible_match)]
 // Shared vanilla match structure and desktop harnesses.
 mod game;
 #[path = "android/game_launch.rs"]
 mod game_launch;
-#[path = "android/launcher.rs"]
-mod launcher;
+#[path = "android/direct.rs"]
+mod direct;
+// The shared account and wardrobe state machines the Compose launcher's JNI
+// bridge drives (`crates/horizon-client/src/android/login.rs`, `wardrobe.rs`).
+#[path = "android/login.rs"]
+pub(crate) mod login;
+#[path = "android/wardrobe.rs"]
+pub(crate) mod wardrobe;
 // Share the desktop launcher's actual search, compatibility checks, downloads,
 // dependency resolution and Java content porting; GPUI itself is desktop-only.
 // These files are formatted in the launcher's separate Rust 2021 workspace.
@@ -55,10 +70,14 @@ mod instances;
 #[allow(dead_code)]
 #[path = "../../../launcher/src/worlds.rs"]
 mod worlds;
+// Named `android_minecraft_import` so the library's `minecraft_import` (re-exported below) is
+// what `horizon_client::minecraft_import` reaches from the shared gameplay source.
 #[path = "android/minecraft_import.rs"]
-mod minecraft_import;
+mod android_minecraft_import;
 #[path = "android/native_ime.rs"]
 mod native_ime;
+#[path = "android/native_mods.rs"]
+mod native_mods;
 #[path = "android/performance.rs"]
 mod performance;
 #[path = "android/performance_presets.rs"]
@@ -81,6 +100,8 @@ mod screenshots;
 mod search_queue;
 #[path = "android/secure_store.rs"]
 mod secure_store;
+#[path = "android/shared_storage.rs"]
+pub(crate) mod shared_storage;
 #[path = "android/servers.rs"]
 mod servers;
 #[path = "android/shader_catalog.rs"]
@@ -91,6 +112,50 @@ mod touch_layouts;
 #[allow(dead_code)]
 #[path = "../../../launcher/src/skins.rs"]
 mod skins;
+// Upstream split the gameplay library into horizon-client-lib; the shared
+// gameplay source compiled here still uses the old crate-root paths.
+#[path = "mod_api.rs"]
+pub mod mod_api;
+pub use horizon_client_dep::*;
+#[rustfmt::skip]
+#[allow(dead_code)]
+#[path = "../../../launcher/src/i18n.rs"]
+mod i18n;
+#[rustfmt::skip]
+#[allow(dead_code)]
+#[path = "../../../launcher/src/native_fit.rs"]
+mod native_fit;
+#[rustfmt::skip]
+#[allow(dead_code)]
+#[path = "../../../launcher/src/native_status.rs"]
+mod native_status;
+// TODO(keep-consistency): the shared native-mod browser reads Nightly build records and GitHub
+// origins when it says whether a native mod fits. Android builds through its own service and has
+// neither, so report an unknown origin and use the launcher's date parsing for labels.
+#[allow(dead_code)]
+mod nightly {
+    /// The date of a nightly's version (`nightly-2026-10-28-0c02067`).
+    pub fn date_of(version: &str) -> Option<&str> {
+        let date = version.strip_prefix("nightly-")?.get(..10)?;
+        let digits = date
+            .bytes()
+            .enumerate()
+            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit());
+        (digits && date.as_bytes()[4] == b'-' && date.as_bytes()[7] == b'-').then_some(date)
+    }
+}
+
+#[allow(dead_code)]
+mod github_mods {
+    /// Where a native mod installed from a GitHub link came from. Android has no such sidecars.
+    #[derive(Clone, Debug)]
+    pub struct Origin;
+
+    pub fn origin(_home: &std::path::Path, _id: &str) -> Option<Origin> {
+        None
+    }
+}
+
 // The shared account protocol needs only the launcher's version and data path.
 mod backend {
     pub const VERSION: &str = if crate::PUBLIC_BUILD {
@@ -113,6 +178,22 @@ mod backend {
     }
     pub fn try_data_dir() -> Option<std::path::PathBuf> {
         HOME.get().cloned()
+    }
+    /// Installed game versions, newest tag first (the launcher's `backend::installed`).
+    pub fn installed() -> Vec<String> {
+        let dir = data_dir().join("versions");
+        let mut tags: Vec<String> = std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().join(".installed").exists())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        tags.sort_by(|a, b| b.cmp(a));
+        tags
+    }
+    pub fn version_dir(tag: &str) -> std::path::PathBuf {
+        data_dir().join("versions").join(tag)
     }
 }
 
@@ -171,7 +252,9 @@ thread_local! {
     static APP: RefCell<Option<AndroidApp>> = const { RefCell::new(None) };
 }
 
-pub(crate) fn android_event_loop() -> Result<EventLoop<()>, winit::error::EventLoopError> {
+// `crate::Result` is the engine's one-parameter alias; this host returns winit's own error.
+pub(crate) fn android_event_loop(
+) -> std::result::Result<EventLoop<()>, winit::error::EventLoopError> {
     APP.with(|app| {
         EventLoop::builder()
             .with_android_app(
@@ -291,19 +374,27 @@ fn android_main(app: AndroidApp) {
             log::error!("Cannot unpack engine data: {error}");
         }
     }
-    let mut launcher = launcher::Launcher::new(home.clone());
-    // The Compose launcher (main process) starts this `:game` process to play,
-    // optionally into the world it selected (`{"play":true,"world":"<folder>"}`).
-    if let Ok(bytes) = std::fs::read(home.join(bridge::LAUNCH_REQUEST)) {
-        let _ = std::fs::remove_file(home.join(bridge::LAUNCH_REQUEST));
-        let world = serde_json::from_slice::<serde_json::Value>(&bytes)
-            .ok()
-            .and_then(|request| request.get("world")?.as_str().map(str::to_owned));
-        launcher.play_directly(world);
-    }
+    let request = std::fs::read(home.join(bridge::LAUNCH_REQUEST))
+        .ok()
+        .map(|bytes| {
+            let _ = std::fs::remove_file(home.join(bridge::LAUNCH_REQUEST));
+            serde_json::from_slice::<serde_json::Value>(&bytes)
+                .ok()
+                .and_then(|request| request.get("world")?.as_str().map(str::to_owned))
+        });
+    let Some(world) = request else {
+        // The Compose launcher is the only UI; without a pending play request
+        // this process has nothing to show. Finish and land back in it.
+        log::warn!("The game process started without a play request; returning to the launcher");
+        platform::finish_activity();
+        diagnostics::finish();
+        platform::finish();
+        std::process::exit(0);
+    };
+    let mut host = direct::DirectGame::new(home.clone(), world);
     let result = android_event_loop()
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })
-        .and_then(|events| events.run_app(&mut launcher).map_err(Into::into));
+        .and_then(|events| events.run_app(&mut host).map_err(Into::into));
     if let Err(error) = result {
         log::error!("Horizon: {error}");
         diagnostics::record_error(&error.to_string());
@@ -313,9 +404,25 @@ fn android_main(app: AndroidApp) {
     // Winit permits one EventLoop per process. NativeActivity otherwise keeps
     // this process cached after Quit, making the next launch fail. run_app's
     // exiting callback has completed the world save before we get here.
-    drop(launcher);
+    drop(host);
     diagnostics::finish();
     platform::finish();
     APP.with(|slot| *slot.borrow_mut() = None);
     std::process::exit(0);
+}
+
+/// Conventional JNI entry for an SAF result restored before the IME bridge is
+/// ready. Only the cdylib exports this symbol; the shared gameplay library
+/// contains the implementation without the export name, so a modded build
+/// (which links both) does not hit a duplicate-symbol linker error.
+#[cfg(target_os = "android")]
+#[unsafe(export_name = "Java_dev_horizon_android_HorizonActivity_nativeDocumentResult")]
+pub extern "system" fn native_document_result(
+    mut env: jni::JNIEnv<'_>,
+    activity: jni::objects::JObject<'_>,
+    request: i32,
+    result: i32,
+    uri: jni::objects::JString<'_>,
+) {
+    documents::document_result(env, activity, request, result, uri);
 }

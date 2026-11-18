@@ -2,11 +2,13 @@
 use std::borrow::Cow;
 
 pub(super) fn terrain_shader(gl: bool) -> Cow<'static, str> {
-    let source = include_str!("../terrain.wgsl");
+    // terrain.wgsl stands on hdr_light.wgsl (`frame_stored`): the lowering
+    // sees the same combined source the pipelines build.
+    let source = include_str!("../hdr_light.wgsl").to_owned() + include_str!("../terrain.wgsl");
     if gl {
-        Cow::Owned(gles_source(source))
+        Cow::Owned(gles_source(&source))
     } else {
-        Cow::Borrowed(source)
+        Cow::Owned(source)
     }
 }
 

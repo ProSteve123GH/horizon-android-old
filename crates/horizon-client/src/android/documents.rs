@@ -20,7 +20,6 @@ use std::{
 
 struct Request {
     kind: Kind,
-    appearance: Option<crate::skins::library::Kind>,
     home: PathBuf,
     cache: PathBuf,
 }
@@ -61,6 +60,25 @@ static STATE: Mutex<State> = Mutex::new(State {
     cursor: (0.0, 0.0),
 });
 static CANCEL: AtomicBool = AtomicBool::new(false);
+
+/// Restart the shared import overlay for a new import (native bundles use it too).
+pub(crate) fn begin_import() {
+    CANCEL.store(false, Ordering::Relaxed);
+    let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    state.working = true;
+    state.conflict = None;
+    state.request = None;
+}
+/// Replace the overlay's text; the same overlay shows for every import.
+pub(crate) fn note(text: impl Into<String>, changed: bool) {
+    notice(text, changed);
+}
+pub(crate) fn set_working(working: bool) {
+    STATE.lock().unwrap_or_else(|e| e.into_inner()).working = working;
+}
+pub(crate) fn cancel_requested() -> bool {
+    CANCEL.load(Ordering::Relaxed)
+}
 pub fn busy() -> bool {
     let s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     s.request.is_some() || s.working || s.conflict.is_some()
@@ -106,61 +124,12 @@ pub fn poll() -> Option<Notice> {
         .notice
         .take()
 }
-pub fn begin(kind: Kind, home: PathBuf) -> std::result::Result<(), String> {
-    if busy() {
-        return Err("Finish or cancel the current import first".into());
-    }
-    CANCEL.store(false, Ordering::Relaxed);
-    crate::platform::hide();
-    let cache = crate::platform::cache_dir()
-        .ok_or("Could not access the Android import cache")?
-        .join("content-imports");
-    STATE.lock().unwrap_or_else(|e| e.into_inner()).request = Some(Request {
-        kind,
-        appearance: None,
-        home,
-        cache,
-    });
-    if !crate::native_ime::pick_document() {
-        picker_failed("Android document picker is unavailable");
-        return Err("Android document picker is unavailable".into());
-    }
-    notice(format!("Choose a {} file", kind.label()), false);
-    Ok(())
-}
-pub fn picker_failed(error: &str) {
-    STATE.lock().unwrap_or_else(|e| e.into_inner()).request = None;
-    notice(error, false);
-}
-pub fn begin_appearance(
-    home: PathBuf,
-    kind: crate::skins::library::Kind,
-) -> std::result::Result<(), String> {
-    if busy() {
-        return Err("Finish or cancel the current import first".into());
-    }
-    CANCEL.store(false, Ordering::Relaxed);
-    crate::platform::hide();
-    let cache = crate::platform::cache_dir()
-        .ok_or("Could not access Android's import cache")?
-        .join("appearance-imports");
-    STATE.lock().unwrap_or_else(|e| e.into_inner()).request = Some(Request {
-        kind: Kind::Packs,
-        appearance: Some(kind),
-        home,
-        cache,
-    });
-    if !crate::native_ime::pick_document() {
-        picker_failed("Android document picker is unavailable");
-        return Err("Android document picker is unavailable".into());
-    }
-    notice("Choose a skin or cape PNG", false);
-    Ok(())
-}
 /// Called by the approved Activity result bridge, never from a game tick.
-/// Keep a conventional JNI export as well as explicit registration: Android
-/// may restore a picker result before the IME bridge has been initialized.
-#[unsafe(export_name = "Java_dev_horizon_android_HorizonActivity_nativeDocumentResult")]
+/// The JNI export itself lives in `android_main.rs` (the cdylib only): this
+/// source is also compiled into the gameplay library, and two exports of the
+/// same symbol would fail the mod-build service's linker. Keep a conventional
+/// export as well as explicit registration: Android may restore a picker
+/// result before the IME bridge has been initialized.
 pub extern "system" fn document_result(
     mut env: JNIEnv<'_>,
     activity: JObject<'_>,
@@ -203,7 +172,6 @@ pub fn import_external(
     };
     STATE.lock().unwrap_or_else(|e| e.into_inner()).request = Some(Request {
         kind,
-        appearance: None,
         home,
         cache: cache.join("content-imports"),
     });
@@ -266,26 +234,6 @@ fn accept(env: &mut JNIEnv<'_>, activity: &JObject<'_>, result: i32, uri: Option
     }
 }
 fn stage(request: Request, mut input: std::fs::File, name: String) -> Result<()> {
-    if let Some(kind) = request.appearance {
-        use std::io::Read;
-        if !name.to_ascii_lowercase().ends_with(".png") {
-            return Err("Choose a PNG skin or cape".into());
-        }
-        let mut bytes = Vec::new();
-        input
-            .take(crate::skins::MAX_IMPORT_BYTES as u64 + 1)
-            .read_to_end(&mut bytes)?;
-        if CANCEL.load(Ordering::Relaxed) {
-            return Err("Import cancelled".into());
-        }
-        let mut library = crate::skins::library::Library::load(&request.home)?;
-        library.import(&request.home, &name, kind, &bytes)?;
-        notice(
-            "PNG added to the local gallery. Select it to apply locally.",
-            false,
-        );
-        return Ok(());
-    }
     if !content_files::plain_name(&name) || !request.kind.accepts(&name) {
         return Err("Selected file has the wrong extension for this folder".into());
     }

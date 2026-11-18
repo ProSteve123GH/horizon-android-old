@@ -118,7 +118,12 @@ impl Game<'_> {
             force: None,
             id: POINTER,
         };
-        self.handle_window_event(events, id, WindowEvent::Touch(touch));
+        self.handle_window_event(
+            events,
+            id,
+            WindowEvent::Touch(touch),
+            input_trace::InputOrigin::User,
+        );
         true
     }
 
@@ -150,9 +155,12 @@ impl Game<'_> {
     pub(super) fn android_custom_events(&mut self) {
         for (name, down) in self.pad.touch.key_events() {
             if let Some(mapping) = name.strip_prefix("action:") {
+                if self.screenshot_touch_action(&name, down) {
+                    continue;
+                }
                 let default = horizon_client::keybinds::KeyBinds::default_of(mapping);
                 let result = if let Some(key) = horizon_client::keybinds::key_code(default) {
-                    self.mapped_key(key, down, false)
+                    self.mapped_key(key, down, false, key, Source::Keyboard)
                 } else if let Some(button) = horizon_client::keybinds::mouse_button(default) {
                     self.android_custom_mouse(button, down)
                 } else {
@@ -199,7 +207,7 @@ impl Game<'_> {
             }
             for mapped in self.settings.keys.translate_all(key) {
                 let result = match mapped {
-                    Ok(code) => self.mapped_key(code, down, false),
+                    Ok(code) => self.mapped_key(code, down, false, code, Source::Keyboard),
                     Err(button) => self.android_custom_mouse(button, down),
                 };
                 if let Err(error) = result {
@@ -267,6 +275,7 @@ impl Game<'_> {
                         ElementState::Released
                     },
                 },
+                input_trace::InputOrigin::User,
             );
             Ok(())
         }
@@ -380,14 +389,14 @@ impl Game<'_> {
                             if down {
                                 self.physical_keys.insert(key);
                             }
-                            self.mapped_key(key, down, false)?;
+                            self.mapped_key(key, down, false, key, Source::Keyboard)?;
                         } else {
                             if !self.pad.touch_ui.key_down(t.id, key) {
                                 return Ok(true);
                             }
                             self.physical_keys.insert(key);
                             if !self.debug_key(key, KeyAction::Press) {
-                                self.key_pressed(key)?;
+                                self.key_pressed(key, key)?;
                             }
                             if matches!(key, KeyCode::KeyT | KeyCode::Slash)
                                 && self.screen == Screen::Chat
@@ -406,7 +415,7 @@ impl Game<'_> {
     pub(super) fn android_show_keyboard(&mut self) {
         // The in-world keyboard button needs a real editor to receive text.
         if !self.pad_in_menu() {
-            self.open_chat("");
+            self.open_chat("", false);
         }
         let initial = if self.dialog_open() {
             self.dialog_edit_value()
@@ -609,6 +618,7 @@ impl Game<'_> {
                 device_id: t.device_id,
                 position: t.location,
             },
+            input_trace::InputOrigin::User,
         );
         if direct {
             if t.phase != TouchPhase::Moved {
@@ -624,6 +634,7 @@ impl Game<'_> {
                             ElementState::Released
                         },
                     },
+                    input_trace::InputOrigin::User,
                 );
             }
             return;
@@ -644,6 +655,7 @@ impl Game<'_> {
                             button: MouseButton::Left,
                             state,
                         },
+                        input_trace::InputOrigin::User,
                     );
                 }
                 if field || self.sign_edit.is_some() {
@@ -663,6 +675,7 @@ impl Game<'_> {
                     delta: MouseScrollDelta::LineDelta(0.0, y),
                     phase: TouchPhase::Moved,
                 },
+                input_trace::InputOrigin::User,
             ),
             Gesture::None => {}
         }
@@ -695,6 +708,7 @@ impl Game<'_> {
                     f64::from(position[1] * b.scale),
                 ),
             },
+            input_trace::InputOrigin::User,
         );
     }
     pub(super) fn android_virtual_mouse_clicks(
@@ -737,6 +751,7 @@ impl Game<'_> {
                         state,
                         button,
                     },
+                    input_trace::InputOrigin::User,
                 );
             }
         }

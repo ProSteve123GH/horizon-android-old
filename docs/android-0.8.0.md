@@ -16,9 +16,22 @@
 - The game (`HorizonActivity`, a NativeActivity) now runs in the `:game` process.
   Play writes `launch-request.json`; the game process starts the world without
   its own launcher pages and closes when the player returns to the launcher.
-  Without that file the Rust launcher pages still work as before.
+- The classic Rust launcher was removed. The Compose launcher is the only
+  launcher UI; starting the game process without a play request finishes the
+  activity back to the Compose launcher.
 - Release APKs are shrunk with R8 (`packaging/android/proguard-rules.pro`).
   Compose adds about 3 MB.
+- Native-mod (`.hnmod`) machinery: the APK ships a small trampoline
+  (`crates/horizon-trampoline`) named by
+  `android.app.lib_name`; on every start the game activity validates
+  `files/native/current.json`, writes `files/native/active.json` and loads the
+  chosen library before `NativeActivity` starts, so an installed modded build
+  runs instead of the stock game. A build that crashes before its first
+  frame twice is set aside and the stock game runs. `.hnmod` bundles can be
+  imported, enabled/disabled, listed and removed on the Mods page; **Compile**
+  sends the enabled bundles to the fork's personal build service, waits for
+  the job, downloads the library, verifies it and publishes it for the next
+  start. See [android-native-mods.md](android-native-mods.md).
 
 ## Build notes
 
@@ -47,3 +60,5 @@
   hand-off and return need a device check.
 - The launcher screens were used on a POCO X6 Pro (Android 17), portrait and
   landscape. Launching the game from this build still needs a device check.
+- Not verified on a device: the trampoline load chain and the native-mod crash
+  guard (a clean stock start must behave exactly as before); needs a phone check.

@@ -2,23 +2,23 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <!-- Normal permission, auto-granted: lets the launcher close Horizon's own game process (:game) so a freshly built native-mod library loads on the next start. -->
+    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <!-- Game files on shared storage (Settings → Storage → Game files location). The user grants it in system settings; never requested silently. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-feature android:name="android.hardware.vulkan.level" android:version="1" android:required="false" />
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
-    <application android:label="${appLabel}" android:appCategory="game" android:icon="@drawable/launcher_icon" android:banner="@drawable/tv_banner" android:extractNativeLibs="true" android:usesCleartextTraffic="false">
-        <provider android:name="dev.horizon.android.HorizonDocumentsProvider" android:authorities="${applicationId}.documents" android:exported="true" android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS">
-            <intent-filter>
-                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
-            </intent-filter>
-        </provider>
+    <application android:label="${appLabel}" android:appCategory="game" android:requestLegacyExternalStorage="true" android:icon="@drawable/launcher_icon" android:banner="@drawable/tv_banner" android:extractNativeLibs="true" android:usesCleartextTraffic="false">
         <!-- Share one screenshot through a temporary read grant; never a private path. -->
         <provider android:name="dev.horizon.android.ScreenshotProvider" android:authorities="${applicationId}.screenshots" android:exported="false" android:grantUriPermissions="true" />
         <!-- The Compose launcher. The game runs in its own process, which exits when the game closes. -->
         <activity android:name="dev.horizon.android.launcher.LauncherActivity" android:exported="false" android:theme="@style/HorizonLauncherTheme" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|density" android:windowSoftInputMode="adjustResize" />
         <activity android:name="dev.horizon.android.HorizonActivity" android:process=":game" android:exported="false" android:screenOrientation="sensorLandscape" android:configChanges="orientation|screenSize|keyboardHidden|keyboard|density|screenLayout" android:windowSoftInputMode="adjustResize" android:theme="@style/HorizonGameTheme">
-            <meta-data android:name="android.app.lib_name" android:value="horizon_android" />
+            <meta-data android:name="android.app.lib_name" android:value="horizon_trampoline" />
+            <meta-data android:name="android.app.func_name" android:value="horizon_on_create" />
         </activity>
         <!-- Keep installed launcher shortcuts targeting the previous component. -->
         <activity-alias android:name="com.google.androidgamesdk.GameActivity" android:targetActivity="dev.horizon.android.launcher.LauncherActivity" android:exported="true">

@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Settings landing page -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_header_subtitle">Preferences for %1$s</string>
+    <string name="settings_search">Search settings</string>
+    <string name="settings_search_clear">Clear search</string>
+    <string name="settings_breadcrumb">Settings / %1$s</string>
+    <string name="settings_back">Back to settings</string>
+    <string name="settings_results">Results for \"%1$s\"</string>
+    <string name="settings_no_results">No settings match your search.</string>
+    <string name="settings_no_rows">Nothing to configure here yet.</string>
+    <string name="settings_unknown">—</string>
+    <string name="settings_footer_version">Version</string>
+    <string name="settings_footer_engine">Engine</string>
+    <string name="settings_footer_abi">ABI</string>
+    <string name="settings_footer_build">Built</string>
+    <string name="settings_footer_source">Source code</string>
+    <string name="settings_footer_source_desc">Open the project repository</string>
+    <string name="edit_hint_server">Leave empty for singleplayer</string>
+    <string name="edit_hint_name">Up to 16 characters</string>
+
+    <!-- Settings categories -->
+    <string name="category_general_title">General</string>
+    <string name="category_general_subtitle">Profile, server and instances</string>
+    <string name="category_graphics_title">Graphics &amp; Performance</string>
+    <string name="category_graphics_subtitle">Renderer, resolution, refresh rate and memory budget</string>
+    <string name="category_display_title">Display &amp; Controls</string>
+    <string name="category_display_subtitle">Orientation, aspect, fullscreen and input</string>
+    <string name="category_appearance_title">Appearance</string>
+    <string name="category_appearance_subtitle">Theme, colors and launcher background</string>
+    <string name="category_storage_title">Storage &amp; Files</string>
+    <string name="category_storage_subtitle">Game files, worlds and screenshots</string>
+    <string name="category_mods_title">Mods &amp; Add-ons</string>
+    <string name="category_mods_subtitle">Content mods, resource packs and shaders</string>
+    <string name="category_accounts_title">Accounts &amp; Security</string>
+    <string name="category_accounts_subtitle">Sign in and saved accounts</string>
+    <string name="category_diagnostics_title">Diagnostics</string>
+    <string name="category_diagnostics_subtitle">Profilers, reports and session logs</string>
+
+    <!-- Settings special rows -->
+    <string name="settings_storage_granted">Storage access: granted</string>
+    <string name="settings_storage_revoked">Storage access: revoked</string>
+    <string name="settings_storage_manage">All-files access</string>
+    <string name="settings_storage_open">Open access settings</string>
+    <string name="settings_game_files_browse">Browse game files</string>
+    <string name="settings_screenshots_title">Screenshots (gallery)</string>
+    <string name="settings_account_shortcut">Account and sign-in</string>
+    <string name="settings_mods_hint">Install and manage mods, resource packs and shaders from the Mods, Packs and Shaders tabs.</string>
+
+    <!-- Storage location dialog -->
+    <string name="storage_dialog_title">Game files location</string>
+    <string name="storage_dialog_shared">Shared folder</string>
+    <string name="storage_dialog_shared_detail">%1$s — any file manager can open your worlds, mods, packs, shaders, options and reports directly.</string>
+    <string name="storage_dialog_move">Grant access and move files</string>
+    <string name="storage_dialog_missing">The folder is missing or unreadable. The game cannot open your worlds until this is resolved.</string>
+    <string name="storage_dialog_recreate">Re-create empty folder</string>
+    <string name="storage_dialog_moving">Moving the game files… keep Horizon open.</string>
+    <string name="storage_dialog_private_note">Logs, downloaded Minecraft files, accounts and caches always stay private.</string>
+    <string name="storage_dialog_error">Could not open the settings page. Open Settings → Apps → Horizon Android → All files access.</string>
+    <string name="storage_dialog_close">Close</string>
+    <string name="storage_prompt_move_back">Grant the access Android shows and the files move right away. Logs, downloaded Minecraft files, accounts and caches stay private.</string>
+
+    <!-- Permission gate -->
+    <string name="gate_title">Storage access required</string>
+    <string name="gate_body">Horizon Android keeps worlds, mods, packs and reports in the shared Horizon-Android folder. Android needs all-files access to read and write it.</string>
+    <string name="gate_step">Tap the button below, allow All files access for this app, then return here.</string>
+    <string name="gate_button">Grant all-files access</string>
+    <string name="gate_error">Could not open Android settings. Open Settings → Apps → Horizon Android → All files access.</string>
+    <string name="gate_status">Waiting for storage access…</string>
+
+    <!-- Splash overlay -->
+    <string name="splash_starting">Starting Horizon…</string>
+
+    <!-- Game files browser -->
+    <string name="game_files_title">Game files</string>
+    <string name="game_files_up">Go up</string>
+    <string name="game_files_advanced">Advanced</string>
+    <string name="game_files_advanced_hide">Hide protected folders</string>
+    <string name="game_files_open_raw">Open raw folder in Files</string>
+    <string name="game_files_system_files">System Files</string>
+    <string name="game_files_open_failed">No file manager is available.</string>
+    <string name="game_files_empty">This folder is empty.</string>
+    <string name="game_files_root_missing">The shared game folder is missing. Start the game once to create it.</string>
+    <string name="game_files_unreadable">This folder could not be read.</string>
+    <string name="label_worlds">Worlds</string>
+    <string name="label_resource_packs">Resource Packs</string>
+    <string name="label_shader_packs">Shader Packs</string>
+    <string name="label_mods">Mods</string>
+    <string name="label_reports">Reports</string>
+    <string name="label_configuration">Configuration</string>
+    <string name="label_skins_capes">Skins &amp; capes</string>
+
+    <!-- Touch layouts and launcher-side editor -->
+    <string name="touch_import">Import controls JSON</string>
+    <string name="touch_import_pick">Choose a controls JSON file</string>
+    <string name="touch_editor">Edit layout (draft)</string>
+    <string name="touch_editor_done">Done</string>
+    <string name="touch_editor_move">Drag a control to move it</string>
+    <string name="touch_editor_size">Control size</string>
+    <string name="touch_editor_add">Add custom button</string>
+    <string name="touch_editor_remove">Remove</string>
+    <string name="touch_editor_edit_game">Edit in game</string>
+    <string name="touch_editor_custom_key">Custom key</string>
+    <string name="touch_editor_save">Save profile</string>
+    <string name="touch_editor_preview">Phone preview</string>
+    <string name="touch_editor_hint">Draft edits preview here. The in-game editor applies final positions precisely.</string>
+    <string name="touch_control_move">Move</string>
+    <string name="touch_control_sprint">Sprint</string>
+    <string name="touch_control_jump">Jump</string>
+    <string name="touch_control_sneak">Sneak</string>
+    <string name="touch_control_attack">Attack</string>
+    <string name="touch_control_use">Use</string>
+    <string name="touch_control_chat">Chat</string>
+    <string name="touch_control_pause">Pause</string>
+    <string name="touch_control_settings">Settings</string>
+    <string name="touch_control_inventory">Inventory</string>
+    <string name="touch_control_debug">Debug</string>
+    <string name="touch_control_perspective">Perspective</string>
+    <string name="touch_control_offhand">Offhand</string>
+    <string name="touch_control_shield">Shield</string>
+</resources>

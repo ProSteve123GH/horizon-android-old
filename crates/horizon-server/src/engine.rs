@@ -114,12 +114,15 @@ fn start_failure(program: &Path, code: Option<i32>, stderr: &str) -> String {
     text
 }
 
+/// The Minecraft version this server is pinned to; prepared game files must be stamped with it.
+pub const GAME_VERSION: &str = horizon_platform::version::VERSION_ID;
+
 /// Where the prepared game files may be, in the order they are tried.
 pub fn resource_candidates(config: &Config, dir: &Path, program: Option<&Path>) -> Vec<PathBuf> {
     if !config.engine.resources.is_empty() {
         return vec![dir.join(&config.engine.resources)];
     }
-    let version = "26.3";
+    let version = GAME_VERSION;
     let mut out = vec![dir.join("resources")];
     // A release folder or a checkout: .local/horizon-client/<version> beside the program or above it.
     if let Some(program) = program {
@@ -235,8 +238,18 @@ pub fn spawn(
     resources: &Path,
     dir: &Path,
     low_memory: bool,
+    parallel_tick: bool,
+    transfers: Option<&str>,
 ) -> std::io::Result<Child> {
-    command(program, resources, dir, low_memory)?.spawn()
+    command(
+        program,
+        resources,
+        dir,
+        low_memory,
+        parallel_tick,
+        transfers,
+    )?
+    .spawn()
 }
 
 /// The command `spawn` runs.
@@ -245,6 +258,8 @@ fn command(
     resources: &Path,
     dir: &Path,
     low_memory: bool,
+    parallel_tick: bool,
+    transfers: Option<&str>,
 ) -> std::io::Result<Command> {
     // The game runs in the server folder, so a folder given relative to ours (`--dir srv`) would put its
     // control endpoint in `srv/srv/.horizon`, which doesn't exist.
@@ -255,7 +270,12 @@ fn command(
         .arg("--resources")
         .arg(resources)
         .arg("--control-socket")
-        .arg(control_path(&dir))
+        .arg(control_path(&dir));
+    // `[transfer]` on: a proxy's hand-over requests on that endpoint (docs/server.md).
+    if let Some(transfers) = transfers {
+        command.arg("--transfers").arg(transfers);
+    }
+    command
         .args(["--dedicated", "--nogui"])
         .current_dir(&dir)
         .env("HORIZON_NO_AUDIO", "1")
@@ -276,6 +296,11 @@ fn command(
     if low_memory {
         command.env("MIMALLOC_ALLOW_THP", "0");
     }
+    // `[engine] parallel_tick`: the game's switch, for a host that cannot set its environment. Off leaves
+    // the variable alone, so one the operator set still works.
+    if parallel_tick {
+        command.env("HORIZON_PARALLEL_TICK", "1");
+    }
     Ok(command)
 }
 
@@ -283,6 +308,9 @@ fn command(
 pub fn control_path(dir: &Path) -> PathBuf {
     dir.join(".horizon/engine.json")
 }
+
+/// How long a [`Control`] waits for each reply.
+pub const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A connection to the game's control endpoint: one JSON line asked, one answered.
 pub struct Control {
@@ -301,7 +329,7 @@ impl Control {
             .ok_or_else(bad)?;
         let token = v["token"].as_str().ok_or_else(bad)?;
         let writer = TcpStream::connect((Ipv4Addr::LOCALHOST, port))?;
-        writer.set_read_timeout(Some(Duration::from_secs(30)))?;
+        writer.set_read_timeout(Some(REPLY_TIMEOUT))?;
         let mut control = Self {
             reader: BufReader::new(writer.try_clone()?),
             writer,
@@ -316,7 +344,20 @@ impl Control {
         Ok(control)
     }
 
+    /// How long [`Self::ask`] waits for a reply; [`REPLY_TIMEOUT`] unless changed.
+    pub fn set_reply_timeout(&self, wait: Duration) -> std::io::Result<()> {
+        self.writer.set_read_timeout(Some(wait))
+    }
+
     pub fn ask(&mut self, line: &str) -> std::io::Result<serde_json::Value> {
+        // One request: the endpoint reads a line per request, so a line break would make the
+        // rest a request of its own. Refused before anything is sent.
+        if line.contains(['\n', '\r']) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "a request is one line",
+            ));
+        }
         writeln!(self.writer, "{line}")?;
         self.writer.flush()?;
         let mut reply = String::new();
@@ -333,10 +374,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_request_with_a_line_break_is_refused_unsent() {
+        let dir = std::env::temp_dir().join(format!("horizon-control-line-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".horizon")).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::fs::write(
+            control_path(&dir),
+            format!("{{\"port\": {port}, \"token\": \"t\"}}"),
+        )
+        .unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut writer = stream;
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap_or(0) > 0 {
+                tx.send(line.trim().to_owned()).unwrap();
+                line.clear();
+                let _ = writer.write_all(b"{\"ok\":true}\n");
+            }
+        });
+        let mut control = Control::connect(&dir).unwrap();
+        for request in [
+            "console kick Kim0 x\nconsole op Mallory",
+            "console say a\rb",
+        ] {
+            let refused = control.ask(request).unwrap_err();
+            assert_eq!(refused.kind(), std::io::ErrorKind::InvalidInput);
+        }
+        control.ask("console list").unwrap();
+        drop(control);
+        let heard: Vec<String> = rx.iter().collect();
+        assert_eq!(
+            heard,
+            ["auth t", "console list"],
+            "nothing of the refused requests was sent"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn low_memory_turns_huge_pages_off_for_the_game() {
         let thp = |low_memory| {
             let dir = std::env::temp_dir();
-            let command = command(Path::new("horizon-client"), &dir, &dir, low_memory).unwrap();
+            let command = command(
+                Path::new("horizon-client"),
+                &dir,
+                &dir,
+                low_memory,
+                false,
+                None,
+            )
+            .unwrap();
             command
                 .get_envs()
                 .find(|(k, _)| *k == "MIMALLOC_ALLOW_THP")
@@ -344,6 +436,54 @@ mod tests {
         };
         assert_eq!(thp(true).as_deref(), Some(std::ffi::OsStr::new("0")));
         assert_eq!(thp(false), None);
+    }
+
+    #[test]
+    fn parallel_tick_reaches_the_game_only_when_it_is_on() {
+        let switch = |parallel_tick| {
+            let dir = std::env::temp_dir();
+            let command = command(
+                Path::new("horizon-client"),
+                &dir,
+                &dir,
+                false,
+                parallel_tick,
+                None,
+            )
+            .unwrap();
+            command
+                .get_envs()
+                .find(|(k, _)| *k == "HORIZON_PARALLEL_TICK")
+                .and_then(|(_, v)| v.map(|v| v.to_owned()))
+        };
+        assert_eq!(switch(true).as_deref(), Some(std::ffi::OsStr::new("1")));
+        assert_eq!(switch(false), None);
+    }
+
+    #[test]
+    fn transfers_reach_the_game_only_when_they_are_on() {
+        let args = |transfers: Option<&str>| {
+            let dir = std::env::temp_dir();
+            let command = command(
+                Path::new("horizon-client"),
+                &dir,
+                &dir,
+                false,
+                false,
+                transfers,
+            )
+            .unwrap();
+            command
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        };
+        assert!(!args(None).iter().any(|a| a == "--transfers"));
+        let on = args(Some("expect_seconds=10"));
+        let at = on.iter().position(|a| a == "--transfers").unwrap();
+        assert_eq!(on[at + 1], "expect_seconds=10");
+        // Before `--dedicated`: what follows it is vanilla's server arguments.
+        assert!(at < on.iter().position(|a| a == "--dedicated").unwrap());
     }
 
     #[test]
@@ -512,6 +652,8 @@ mod tests {
                 &root.join("res"),
                 &server,
                 false,
+                false,
+                None,
             ) {
                 Err(e) if e.raw_os_error() == Some(26) && tries < 50 => {
                     tries += 1;

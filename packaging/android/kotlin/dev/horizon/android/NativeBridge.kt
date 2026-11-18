@@ -2,7 +2,7 @@ package dev.horizon.android
 
 import android.app.Activity
 
-/** The Rust launcher's state and actions (`crates/horizon-client/src/android/bridge.rs`). */
+/** The launcher's state and actions (`crates/horizon-client/src/android/bridge.rs`). */
 object NativeBridge {
     init {
         System.loadLibrary("horizon_android")
@@ -25,6 +25,9 @@ object NativeBridge {
 
     /** Hands a picked document to the content importer. */
     @JvmStatic external fun importDocument(activity: Activity, kind: String, uri: String?)
+
+    /** Hands a picked document to the native-mod (.hnmod) importer. */
+    @JvmStatic external fun importNativeDocument(activity: Activity, uri: String?)
 
     /** Reuses Minecraft 26.3 from a SAF folder tree. The Activity persists the URI grant. */
     @JvmStatic external fun importMinecraftFolder(uri: String?)

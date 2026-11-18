@@ -28,12 +28,31 @@ const CONFIG_FILES: &[&str] = &[
     "horizon-keypad.json",
 ];
 static GAME_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The active root for the player's game files: the shared folder recorded in
+/// the marker file, when the player moved them (Settings → Storage → Game
+/// files location), else this home. A copy of `shared_storage::resolve`;
+/// keep the marker name and semantics in sync with `shared_storage.rs`.
+/// Only the game files re-anchor — the launcher's own `android-*` state is
+/// always read from `home` itself.
+fn resolve_base(home: &Path) -> PathBuf {
+    fn marker_dir(home: &Path) -> Option<PathBuf> {
+        let bytes = fs::read(home.join("shared-storage.json")).ok()?;
+        let value = serde_json::from_slice::<Value>(&bytes).ok()?;
+        let dir = value.get("dir")?.as_str()?;
+        let path = PathBuf::from(dir);
+        // stat() succeeds even without the all-files access, so probe by opening.
+        (path.is_absolute() && fs::read_dir(&path).is_ok()).then_some(path)
+    }
+    marker_dir(home).unwrap_or_else(|| home.to_path_buf())
+}
 static GAME_LOCK: std::sync::Mutex<Option<File>> = std::sync::Mutex::new(None);
 const GAME_LOCK_FILE: &str = "game.lock";
 /// The game holds `game.lock` for its whole lifetime, so the provider in the
 /// launcher process can tell that worlds and configuration are in use.
 pub fn set_game_active(home: &Path, active: bool) {
     GAME_ACTIVE.store(active, std::sync::atomic::Ordering::Release);
+    let base = resolve_base(home);
     let mut held = GAME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if !active {
         held.take();
@@ -41,7 +60,7 @@ pub fn set_game_active(home: &Path, active: bool) {
         if let Ok(file) = OpenOptions::new()
             .create(true)
             .write(true)
-            .open(home.join(GAME_LOCK_FILE))
+            .open(base.join(GAME_LOCK_FILE))
         {
             if try_hold(&file) {
                 *held = Some(file);
@@ -92,7 +111,10 @@ fn world_locked(world: &Path) -> bool {
         .write(true)
         .open(world.join("session.lock"))
     {
-        Ok(file) => lock_probe(&file) != Some(false),
+        // Only a real contention report means locked. On FUSE-backed shared
+        // storage flock returns other errors, which must not refuse world
+        // access (the same rule as save::SessionLock::is_locked).
+        Ok(file) => lock_probe(&file) == Some(true),
         Err(e) => e.kind() == ErrorKind::PermissionDenied,
     }
 }
@@ -107,6 +129,7 @@ fn game_locked(home: &Path) -> bool {
 }
 
 fn world_access(home: &Path, id: &str) -> io::Result<()> {
+    let base = resolve_base(home);
     let mut parts = id.split('/');
     let first = parts.next();
     let second = parts.next();
@@ -117,8 +140,8 @@ fn world_access(home: &Path, id: &str) -> io::Result<()> {
                 .and_then(|p| p.strip_prefix('p'))
                 .and_then(|n| n.parse::<u32>().ok())
             {
-                Some(0) => Some(home.to_owned()),
-                Some(profile) => Some(home.join("profiles").join(format!("profile-{profile}"))),
+                Some(0) => Some(base.to_owned()),
+                Some(profile) => Some(base.join("profiles").join(format!("profile-{profile}"))),
                 None => None,
             };
             if root.is_some_and(|root| world_locked(&root.join("saves").join(folder))) {
@@ -130,7 +153,7 @@ fn world_access(home: &Path, id: &str) -> io::Result<()> {
         }
     }
     if matches!(second, Some("worlds" | "configuration"))
-        && (GAME_ACTIVE.load(std::sync::atomic::Ordering::Acquire) || game_locked(home))
+        && (GAME_ACTIVE.load(std::sync::atomic::Ordering::Acquire) || game_locked(&base))
     {
         return Err(io::Error::new(
             ErrorKind::PermissionDenied,
@@ -181,10 +204,11 @@ fn shareable_report(name: &str) -> bool {
     (name.starts_with("horizon-diagnostics-") && name.ends_with(".zip")) || name.ends_with(".jsonl")
 }
 fn resolve(home: &Path, id: &str) -> io::Result<Document> {
+    let base = resolve_base(home);
     let mut parts = id.split('/');
     let first = parts.next().ok_or_else(invalid)?;
     let (base, label, reports) = if first == "reports" {
-        (home.join("performance"), "Reports", true)
+        (base.join("performance"), "Reports", true)
     } else {
         let number = first.strip_prefix('p').ok_or_else(invalid)?;
         let profile: u32 = number.parse().map_err(|_| invalid())?;
@@ -193,9 +217,9 @@ fn resolve(home: &Path, id: &str) -> io::Result<Document> {
             return Err(invalid());
         }
         let root = if profile == 0 {
-            home.to_owned()
+            base.to_owned()
         } else {
-            home.join("profiles").join(format!("profile-{profile}"))
+            base.join("profiles").join(format!("profile-{profile}"))
         };
         let (folder, label) = match parts.next() {
             Some("mods") => ("horizon-mods", "Mods"),
@@ -226,8 +250,8 @@ fn resolve(home: &Path, id: &str) -> io::Result<Document> {
         path.push(name);
     }
     // Reject every symlink, including a replaced profile or allowlisted root.
-    let relative = path.strip_prefix(home).map_err(|_| invalid())?;
-    let mut checked = home.to_owned();
+    let relative = path.strip_prefix(&base).map_err(|_| invalid())?;
+    let mut checked = base.to_owned();
     for part in relative.components() {
         checked.push(part);
         match fs::symlink_metadata(&checked) {

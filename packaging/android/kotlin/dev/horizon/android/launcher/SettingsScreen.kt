@@ -26,7 +26,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -48,6 +47,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Gamepad
 import androidx.compose.material.icons.rounded.HighQuality
@@ -81,7 +81,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -92,143 +91,55 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import dev.horizon.android.R
+import android.Manifest
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import java.io.File
 
-private fun settingIcon(id: String): ImageVector = when (id) {
-    "renderer" -> Icons.Rounded.Monitor
-    "render_scale" -> Icons.Rounded.HighQuality
-    "display_hz" -> Icons.Rounded.Speed
-    "performance_hints" -> Icons.Rounded.Memory
-    "performance_presets" -> Icons.Rounded.Speed
-    "appearance" -> Icons.Rounded.Palette
-    "screenshots" -> Icons.Rounded.PhotoLibrary
-    "worker_limit" -> Icons.Rounded.Memory
-    "cache_budget_mib" -> Icons.Rounded.Storage
-    "game_files" -> Icons.Rounded.Folder
-    "world_files" -> Icons.Rounded.Public
-    "orientation" -> Icons.Rounded.ScreenRotation
-    "aspect" -> Icons.Rounded.AspectRatio
-    "immersive" -> Icons.Rounded.Fullscreen
-    "cutout" -> Icons.Rounded.Smartphone
-    "profile" -> Icons.Rounded.Person
-    "input_host" -> Icons.Rounded.Gamepad
-    "touch_layouts" -> Icons.Rounded.TouchApp
-    "name" -> Icons.Rounded.Badge
-    "server" -> Icons.Rounded.Dns
-    "servers" -> Icons.Rounded.Dns
-    "gpu_profile" -> Icons.Rounded.BugReport
-    "record_performance" -> Icons.Rounded.Timer
-    "export_diagnostics" -> Icons.Rounded.Archive
-    "export_performance" -> Icons.Rounded.Insights
-    else -> Icons.Rounded.History
-}
-
+/**
+ * Entry point kept for the rest of the launcher. The landing page, category
+ * cards, detail pages, search and footer live in [SettingsRoot] and its
+ * `settings/sections` helpers; this wrapper only owns the storage dialog.
+ */
 @Composable
-fun SettingsScreen(state: Snapshot, wide: Boolean, actions: LauncherActions) {
-    // Each group is one block; sideways the blocks sit in two columns instead of one long list.
-    LazyVerticalStaggeredGrid(
-        columns = StaggeredGridCells.Fixed(if (wide) 2 else 1),
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalItemSpacing = 4.dp,
-    ) {
-        items(state.settings, key = { "group-${it.name}" }) { group -> SettingGroup(group, state, actions) }
-        item(key = "source", span = StaggeredGridItemSpan.FullLine) {
-            FilledTonalButton(
-                onClick = { act("repository") },
-                modifier = Modifier.fillMaxWidth().padding(top = 16.dp).height(48.dp),
-            ) {
-                Icon(Icons.Rounded.OpenInBrowser, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Source code")
-            }
-        }
-        item(key = "classic", span = StaggeredGridItemSpan.FullLine) {
-            OutlinedButton(
-                onClick = actions.openClassicLauncher,
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(min = 48.dp),
-            ) {
-                Icon(Icons.Rounded.History, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "Open classic launcher",
-                    maxLines = 2,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SettingGroup(group: SettingGroup, state: Snapshot, actions: LauncherActions) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(
-            group.name,
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 6.dp),
-        )
-        group.rows.forEachIndexed { i, row ->
-            // A connected group: large corners at its ends, small ones between rows.
-            Surface(
-                shape = connectedShape(i, group.rows.size, outer = 24),
-                color = MaterialTheme.colorScheme.surfaceContainer,
-                onClick = {
-                    when (row.kind) {
-                        "switch" -> act("toggle", row.id)
-                        "choice" -> actions.choose(row.id)
-                        "text" -> actions.edit(
-                            row.id,
-                            row.title,
-                            if (row.id == "name") state.config.name else state.config.server,
-                            if (row.id == "server") "Leave empty for singleplayer" else "Up to 16 characters",
-                        )
-                        else -> when (row.id) {
-                            "performance_presets" -> actions.openPerformance()
-                            "touch_layouts" -> actions.openTouchLayouts()
-                            "servers" -> actions.openServers()
-                            "screenshots" -> actions.openScreenshots()
-                            "appearance" -> actions.openAppearance()
-                            else -> act(row.id)
-                        }
-                    }
-                },
-            ) {
-                ListItem(
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    leadingContent = {
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            modifier = Modifier.size(40.dp),
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(settingIcon(row.id), null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                            }
-                        }
-                    },
-                    headlineContent = { Text(row.title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    supportingContent = { Text(row.value, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                    trailingContent = {
-                        when (row.kind) {
-                            "switch" -> HorizonSwitch(checked = row.on, onCheckedChange = { act("toggle", row.id) })
-                            "choice" -> Icon(Icons.Rounded.UnfoldMore, null)
-                            else -> Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null)
-                        }
-                    },
-                )
-            }
-        }
+fun SettingsScreen(
+    state: Snapshot,
+    wide: Boolean,
+    extraWide: Boolean,
+    actions: LauncherActions,
+    onGameFiles: () -> Unit,
+) {
+    var storageOpen by remember { mutableStateOf(false) }
+    dev.horizon.android.launcher.settings.SettingsRoot(
+        state = state,
+        wide = wide,
+        extraWide = extraWide,
+        actions = actions,
+        onGameFiles = onGameFiles,
+        onStorage = { storageOpen = true },
+    )
+    if (storageOpen) {
+        StorageDialog(state.storage, onDismiss = { storageOpen = false })
     }
 }
 
@@ -388,6 +299,22 @@ fun RemoveDialog(item: LocalItem, onDismiss: () -> Unit) {
         confirmButton = {
             Button(onClick = {
                 act("remove_local", item.index.toString())
+                onDismiss()
+            }) { Text("Remove") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+fun RemoveNativeDialog(id: String, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Remove native mod?") },
+        text = { Text("Deletes only $id.hnmod from this profile. This cannot be undone.") },
+        confirmButton = {
+            Button(onClick = {
+                act("native_remove", id)
                 onDismiss()
             }) { Text("Remove") }
         },
@@ -766,4 +693,183 @@ private fun AccountSignIn(account: Account, onEly: () -> Unit) {
 @Composable
 private fun LinearWavyProgressIndicatorCompat() {
     LinearWavyProgressIndicator(Modifier.fillMaxWidth())
+}
+
+
+
+/** True when this install can read and write the shared storage folder. */
+private fun hasStorageAccess(context: android.content.Context): Boolean =
+    if (Build.VERSION.SDK_INT >= 30) {
+        Environment.isExternalStorageManager()
+    } else {
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.WRITE_EXTERNAL_STORAGE,
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+/** The request lambda and whether the last attempt failed to open settings. */
+private class StorageGrant(val request: () -> Unit, val error: Boolean)
+
+/**
+ * The shared all-files-access flow used by the storage dialog and the first-run
+ * prompt: on Android 11+ it sends the user to the system page for this app;
+ * coming back with the access granted starts [onGranted]. Android 9 and 10 ask
+ * for the legacy storage permission instead.
+ */
+@Composable
+private fun rememberStorageGrant(onGranted: () -> Unit): StorageGrant {
+    val context = LocalContext.current
+    var awaitingGrant by rememberSaveable { mutableStateOf(false) }
+    val requestPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) onGranted()
+        awaitingGrant = false
+    }
+    // Coming back from the system's all-files-access page: if it was granted,
+    // start the move without making the user hunt for the button again.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (awaitingGrant && hasStorageAccess(context)) {
+            awaitingGrant = false
+            onGranted()
+        }
+    }
+    var grantError by remember { mutableStateOf(false) }
+    val request = {
+        awaitingGrant = true
+        grantError = false
+        if (Build.VERSION.SDK_INT >= 30) {
+            // Some OEM skins do not host the per-app all-files page.
+            val intent = Intent(
+                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:${context.packageName}"),
+            )
+            if (runCatching { context.startActivity(intent) }.isFailure) {
+                grantError = true
+                awaitingGrant = false
+            }
+        } else {
+            requestPermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+    }
+    return StorageGrant(request, grantError)
+}
+
+/**
+ * Game files location: shared storage is the only mode. The dialog reports the
+ * one folder, offers the one-way private-to-shared move (still needed for old
+ * installs) and can re-create a missing folder. There is no SAF chooser.
+ */
+@Composable
+private fun StorageDialog(storage: StorageState, onDismiss: () -> Unit) {
+    val sharedDir = remember { sharedStorageDir() }
+    val grant = rememberStorageGrant(onGranted = { act("storage_migrate", sharedDir.absolutePath) })
+    val state = storage.state
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.storage_dialog_title), fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (state == "moving") {
+                    Text(stringResource(R.string.storage_dialog_moving))
+                    val fraction = if (storage.total > 0) (storage.done.toFloat() / storage.total) else null
+                    if (fraction != null) {
+                        LinearWavyProgressIndicator(
+                            progress = { fraction.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        LinearWavyProgressIndicator(Modifier.fillMaxWidth())
+                    }
+                } else {
+                    val recorded = storage.dir ?: sharedDir.absolutePath
+                    Text(stringResource(R.string.storage_dialog_shared), fontWeight = FontWeight.SemiBold)
+                    Text(
+                        stringResource(R.string.storage_dialog_shared_detail, recorded),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (state == "missing") {
+                        Text(
+                            stringResource(R.string.storage_dialog_missing),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    Text(
+                        stringResource(R.string.storage_dialog_private_note),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (grant.error) {
+                        Text(
+                            stringResource(R.string.storage_dialog_error),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            when (state) {
+                "private" -> FilledTonalButton(onClick = grant.request) {
+                    Text(stringResource(R.string.storage_dialog_move))
+                }
+                "missing" -> OutlinedButton(onClick = { act("storage_recreate") }) {
+                    Text(stringResource(R.string.storage_dialog_recreate))
+                }
+                else -> {}
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.storage_dialog_close)) } },
+    )
+}
+
+/**
+ * One-shot offer shown on launch while the game files are still in app
+ * storage: move to the shared folder once the user grants the access Android
+ * shows. "Not now" records the choice and keeps the SAF mode fully working;
+ * it never shows again after either button.
+ */
+@Composable
+fun StoragePromptDialog(onDismiss: () -> Unit) {
+    val sharedDir = remember { sharedStorageDir() }
+    val grant = rememberStorageGrant(onGranted = {
+        act("storage_prompt_done")
+        act("storage_migrate", sharedDir.absolutePath)
+    })
+    AlertDialog(
+        onDismissRequest = {
+            act("storage_prompt_done")
+            onDismiss()
+        },
+        icon = { Icon(Icons.Rounded.FolderOpen, null) },
+        title = { Text("Game files on internal storage?", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Horizon can keep worlds, mods, packs, shaders, options and shareable reports in /storage/emulated/0/Horizon-Android, so any file manager can open them directly.",
+                )
+                Text(
+                    stringResource(R.string.storage_prompt_move_back),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (grant.error) {
+                    Text(
+                        "Could not open the settings page. Open Settings → Apps → Horizon Android (dev builds: Horizon Android Dev) → All files access instead.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        },
+        confirmButton = { Button(onClick = grant.request) { Text("Grant access and move") } },
+        dismissButton = {
+            TextButton(onClick = {
+                act("storage_prompt_done")
+                onDismiss()
+            }) { Text("Not now") }
+        },
+    )
 }

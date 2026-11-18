@@ -149,13 +149,11 @@ impl Config {
         .map_err(|e| e.to_string())?;
         std::fs::rename(part, home.join("android-launcher.json")).map_err(|e| e.to_string())
     }
+    /// The game folder for this instance: the app home, or the `profile-N`
+    /// folder inside it. Both may have moved to the shared storage folder
+    /// (Settings → Storage); every reader goes through the marker.
     pub fn profile_home(&self, home: &Path) -> PathBuf {
-        if self.profile == 0 {
-            home.into()
-        } else {
-            home.join("profiles")
-                .join(format!("profile-{}", self.profile))
-        }
+        crate::shared_storage::profile_dir(home, self.profile)
     }
     pub fn game_home(&self, home: &Path) -> PathBuf {
         // Legacy modpack selections are ignored; their files remain untouched.
@@ -198,7 +196,9 @@ impl Page {
     }
 }
 enum Reply {
-    Done(String, horizon_client::content_files::Kind),
+    /// Done(message, kind, stay) — `stay` keeps the player on the Mods page (.hnmod imports
+    /// install a bundle that is not listed on the Installed page).
+    Done(String, horizon_client::content_files::Kind, bool),
 }
 pub struct Catalog {
     pub local: Vec<LocalItem>,
@@ -214,10 +214,7 @@ pub struct Catalog {
     pub results: Vec<Project>,
     pub status: String,
     pub offset: usize,
-    pub scroll: f32,
     pub config: Config,
-    pub editing: Option<&'static str>,
-    pub render_scale_text: String,
     worker: Option<mpsc::Receiver<Result<Reply, String>>>,
     search_worker: Option<mpsc::Receiver<Result<Vec<Project>, String>>>,
     searches: crate::search_queue::Queue<(Page, browser::SourceId, String, usize), Vec<Project>>,
@@ -246,10 +243,7 @@ impl Catalog {
             results: vec![],
             status: String::new(),
             offset: 0,
-            scroll: 0.0,
             config,
-            editing: None,
-            render_scale_text: String::new(),
             worker: None,
             search_worker: None,
             searches: crate::search_queue::Queue::new(),
@@ -260,8 +254,6 @@ impl Catalog {
     pub fn show_installed(&mut self, kind: Option<horizon_client::content_files::Kind>) {
         self.searches.cancel_interest();
         self.page = Page::Installed;
-        self.scroll = 0.0;
-        self.editing = None;
         self.sections = [false; 3];
         if let Some(i) = horizon_client::content_files::Kind::ALL
             .iter()
@@ -380,9 +372,11 @@ impl Catalog {
                 self.failed = downloading;
             }
             match reply {
-                Ok(Reply::Done(s, kind)) => {
+                Ok(Reply::Done(s, kind, stay)) => {
                     self.status = s;
-                    self.show_installed(Some(kind));
+                    if !stay {
+                        self.show_installed(Some(kind));
+                    }
                 }
                 Err(e) => self.status = e,
             }
@@ -427,11 +421,10 @@ impl Catalog {
                 self.import_native(home);
             } else {
                 self.results.clear();
-                self.status = "Press Import .hmod to download this HTTPS link".into();
+                self.status = "Press Import to download this HTTPS link (.hmod or .hnmod)".into();
             }
             return;
         }
-        self.scroll = 0.0;
         let source = match self.page {
             Page::Packs => browser::SourceId::Modrinth,
             Page::Shaders => self.config.shader_source.source(),
@@ -464,7 +457,7 @@ impl Catalog {
         } else if self.page == Page::Mods {
             let native = items.iter().filter(|p| source_only_mod(p)).count();
             format!(
-                "{} .hmod / {} source-only .hnmod (not supported yet)",
+                "{} .hmod / {} source-only .hnmod (import only)",
                 items.len() - native,
                 native
             )
@@ -511,31 +504,45 @@ impl Catalog {
     pub fn import_native(&mut self, home: &Path) {
         let url = self.query.trim().to_owned();
         let game = self.config.game_home(home);
-        self.job("Downloading sandboxed .hmod over HTTPS...",move||{
+        let path_part = url.split(['?', '#']).next().unwrap_or("").to_ascii_lowercase();
+        let hnmod = path_part.ends_with(".hnmod");
+        let status = if hnmod {
+            "Downloading native .hnmod over HTTPS..."
+        } else {
+            "Downloading sandboxed .hmod over HTTPS..."
+        };
+        self.job(status,move||{
             use std::io::Read;
+            let cap: u64 = if hnmod { crate::native_mods::MAX_BUNDLE } else { 32 * 1024 * 1024 };
             let mut bytes=Vec::new();
-            ureq::AgentBuilder::new().https_only(true).timeout_connect(std::time::Duration::from_secs(20)).timeout_read(std::time::Duration::from_secs(90)).build().get(&url).call().map_err(|e|e.to_string())?.into_reader().take(32*1024*1024+1).read_to_end(&mut bytes).map_err(|e|e.to_string())?;
-            if bytes.len()>32*1024*1024 {return Err("Horizon mod exceeds 32 MiB".into());}
-            let dir=game.join("horizon-mods");std::fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
-            let stage=dir.join("import.partial");std::fs::write(&stage,bytes).map_err(|e|e.to_string())?;
-            let result=(||{
-                let package=horizon_mods::Package::read(&stage)?;
-                let destination=dir.join(format!("{}.hmod",package.manifest.id));
-                if destination.exists(){std::fs::copy(&destination,destination.with_extension("hmod.previous")).map_err(|e|e.to_string())?;}
-                std::fs::rename(&stage,destination).map_err(|e|e.to_string())?;
-                Ok(Reply::Done(format!("Installed {}. Enable it in Installed after reviewing its capabilities in game Mods.",package.manifest.name), horizon_client::content_files::Kind::Mods))
-            })();
-            let _=std::fs::remove_file(stage);result
+            ureq::AgentBuilder::new().https_only(true).timeout_connect(std::time::Duration::from_secs(20)).timeout_read(std::time::Duration::from_secs(90)).build().get(&url).call().map_err(|e|e.to_string())?.into_reader().take(cap+1).read_to_end(&mut bytes).map_err(|e|e.to_string())?;
+            if bytes.len() as u64 > cap {return Err(format!("File exceeds the {:.0} MiB limit", cap as f64 / 1024.0 / 1024.0));}
+            if hnmod {
+                let dir=crate::native_mods::bundle_dir(&game);std::fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
+                let stage=dir.join(".import.partial");std::fs::write(&stage,bytes).map_err(|e|e.to_string())?;
+                let result=crate::native_mods::install_staged(&game,&stage).map(|(id,version)|{
+                    Reply::Done(format!("Installed native mod {id} {version}. It runs once this build has a mod build service."),horizon_client::content_files::Kind::Mods,true)
+                });
+                let _=std::fs::remove_file(stage);result
+            } else {
+                let dir=game.join("horizon-mods");std::fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
+                let stage=dir.join("import.partial");std::fs::write(&stage,bytes).map_err(|e|e.to_string())?;
+                let result=(||{
+                    let package=horizon_mods::Package::read(&stage)?;
+                    let destination=dir.join(format!("{}.hmod",package.manifest.id));
+                    if destination.exists(){std::fs::copy(&destination,destination.with_extension("hmod.previous")).map_err(|e|e.to_string())?;}
+                    std::fs::rename(&stage,destination).map_err(|e|e.to_string())?;
+                    Ok(Reply::Done(format!("Installed {}. Enable it in Installed after reviewing its capabilities in game Mods.",package.manifest.name),horizon_client::content_files::Kind::Mods,false))
+                })();
+                let _=std::fs::remove_file(stage);result
+            }
         });
     }
     pub fn install(&mut self, home: &Path, index: usize) {
         let Some(project) = self.results.get(index).cloned() else {
             return;
         };
-        if source_only_mod(&project) {
-            self.status = "This .hnmod needs a separately compiled client. Android support is planned; sandboxed .hmod mods can be installed now.".into();
-            return;
-        }
+        let native_hnmod = source_only_mod(&project);
         if self.busy() || self.download_label(&project).is_some() {
             return;
         }
@@ -582,12 +589,20 @@ impl Catalog {
                 .len()
             };
             Ok(Reply::Done(
-                format!("Installed {count} item(s). Open Play to load this profile."),
+                if native_hnmod {
+                    format!(
+                        "Installed {}. It is a source-only bundle: it runs once this build has a mod build service.",
+                        project.title
+                    )
+                } else {
+                    format!("Installed {count} item(s). Open Play to load this profile.")
+                },
                 match project.kind {
                     Kind::Mod => horizon_client::content_files::Kind::Mods,
                     Kind::Shader => horizon_client::content_files::Kind::Shaders,
                     _ => horizon_client::content_files::Kind::Packs,
                 },
+                native_hnmod,
             ))
         });
     }
@@ -691,49 +706,5 @@ impl Catalog {
             Err(e) => e,
         };
         self.refresh(home);
-    }
-    pub fn edit(&mut self, out: horizon_client::osk::Output, home: &Path) {
-        use horizon_client::osk::Output;
-        let is_name = self.editing == Some("name");
-        let field = match self.editing {
-            Some("name") => &mut self.config.name,
-            Some("server") => &mut self.config.server,
-            Some("render_scale") => &mut self.render_scale_text,
-            Some("client_id") => &mut self.config.microsoft_client_id,
-            _ => &mut self.query,
-        };
-        match out {
-            Output::Text(s) => {
-                if is_name {
-                    let combined = format!("{}{}", field, s);
-                    *field = truncate_player_name(&combined);
-                } else {
-                    field.push_str(&s);
-                }
-            }
-            Output::Backspace => {
-                field.pop();
-            }
-            Output::Enter | Output::Close => {
-                if self.editing == Some("render_scale") {
-                    match crate::display::RenderScale::parse(&self.render_scale_text) {
-                        Ok(scale) => {
-                            self.config.render_scale = scale;
-                            crate::display::set_scale(scale);
-                        }
-                        Err(error) => {
-                            self.status = error.into();
-                            return;
-                        }
-                    }
-                }
-                self.editing = None;
-                let _ = self.config.save(home);
-                if self.page.is_catalog() {
-                    self.offset = 0;
-                    self.search(home);
-                }
-            }
-        }
     }
 }
