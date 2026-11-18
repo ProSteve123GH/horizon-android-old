@@ -686,10 +686,11 @@ fn live_switch_of(
     }
 }
 
-/// A row for each native mod the launcher installed in `dir` (`<id>.hnmod`) that this game wasn't
-/// built with (`built`: its [`BUILD_INFO`], empty for a release or Nightly) and that has no row
-/// yet. The page said "No mods" before, and players copied the files into `horizon-mods` (#4770).
-/// Its toggle is the `mod.<id>` line the launcher's next build follows.
+/// A row for each installed native mod that has no row yet: mods in the active
+/// build get a plain row (the ones with native hooks register their own), mods
+/// left out of the build get [`mod_list::NOT_BUILT`]. Without this a mod that
+/// only shipped mixins disappears from the Mods page once it is compiled in.
+/// The page said "No mods" before, and players copied files into `horizon-mods` (#4770).
 fn not_built(dir: &std::path::Path, built: &str, rows: &[Installed]) -> Vec<Installed> {
     let info: serde_json::Value = serde_json::from_str(built).unwrap_or_default();
     let in_build = |id: &str| {
@@ -709,12 +710,13 @@ fn not_built(dir: &std::path::Path, built: &str, rows: &[Installed]) -> Vec<Inst
         };
         let m = bundle.manifest;
         let listed = rows.iter().chain(&out).any(|row| row.id == m.id);
-        if !listed && !in_build(&m.id) {
+        if !listed {
+            let in_build = in_build(&m.id);
             out.push(Installed {
                 title: format!("{} {}", m.id, m.version),
                 id: m.id,
                 description: String::new(),
-                problem: Some(mod_list::NOT_BUILT.to_owned()),
+                problem: (!in_build).then(|| mod_list::NOT_BUILT.to_owned()),
                 dev: false,
                 has_settings: false,
                 native: None,
@@ -2424,8 +2426,12 @@ mod tests {
             ..rows[0].clone()
         };
         let rows = not_built(&dir, built, &[listed]);
-        assert_eq!(rows.len(), 1);
+        assert_eq!(rows.len(), 2);
+        // The mod in the active build still gets a row, without the warning.
         assert_eq!(rows[0].id, "veinminer");
+        assert_eq!(rows[0].problem.as_deref(), Some(mod_list::NOT_BUILT));
+        assert_eq!(rows[1].id, "zoom");
+        assert_eq!(rows[1].problem, None);
         // No folder: no rows.
         assert!(not_built(&dir.join("missing"), "", &[]).is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
