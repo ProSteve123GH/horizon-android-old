@@ -34,7 +34,8 @@ mod shared_storage;
 mod screenshots;
 ''', encoding='utf-8')
     subprocess.run(
-        ['cargo', 'test', '--manifest-path', str(harness / 'Cargo.toml')],
+        ['cargo', 'test', '--manifest-path', str(harness / 'Cargo.toml'),
+         '--', '--test-threads=1'],
         cwd=ROOT,
         check=True,
     )
