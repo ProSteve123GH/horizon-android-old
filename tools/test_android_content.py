@@ -10,6 +10,17 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     root = ROOT / '.local/android/content-tests'
     (root / 'src').mkdir(parents=True, exist_ok=True)
+    stub = root / 'stubs' / 'horizon_core'
+    (stub / 'src').mkdir(parents=True, exist_ok=True)
+    (stub / 'Cargo.toml').write_text('''[package]
+name = "horizon_core"
+version = "0.0.0"
+edition = "2024"
+''', encoding='utf-8')
+    (stub / 'src' / 'lib.rs').write_text('''pub mod prepared_files {
+    pub const FILE_NAME: &str = "horizon-data.bin";
+}
+''', encoding='utf-8')
     (root / 'Cargo.toml').write_text('''[package]
 name = "android-content-tests"
 version = "0.0.0"
@@ -23,6 +34,7 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 miniz_oxide = "0.8"
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs", "runtime_detection"] }
 zip = { version = "9", default-features = false, features = ["deflate"] }
+horizon_core = { path = "stubs/horizon_core" }
 ''', encoding='utf-8')
     lock=tomllib.loads((ROOT / 'Cargo.lock').read_text(encoding='utf-8'))
     version=next(p['version'] for p in lock['package'] if p['name']=='zip' and p['version'].startswith('9.'))
