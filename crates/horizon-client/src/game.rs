@@ -591,6 +591,9 @@ use loading_window::{
 };
 pub use machines::native_fluids::NativeFluidTank;
 pub use maps::{NativeMapDecoration, NativeMapInfo};
+// Public re-export for native mods; the Android cdylib reaches the type through
+// mod_api instead, so rustc reports it as unused in that build only.
+#[allow(unused_imports)]
 pub use native_block_entity_draw::BlockEntityDraw;
 pub use native_chunk_snapshot::NativeChunkSnapshot;
 pub use native_claimed_items::{NativeHeldItem, NativeHit, NativeModEvent};
@@ -12608,6 +12611,9 @@ fn exit_app(events: &dyn event_loop::EventLoopCtl) {
     let _ = events;
 }
 
+// Kept for callers of the desktop launch API; the Android entry point does not
+// use these types, hence the target-specific unused import lint.
+#[allow(unused_imports)]
 pub use launch_api::{UsageError, exit_code};
 
 pub fn run_with() -> Result<()> {

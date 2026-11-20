@@ -171,6 +171,7 @@ fun LauncherApp(
     val retry = {
         loadState = SnapshotState.Loading
         retryTick++
+        Unit
     }
 
     // Fade and grow in over the splash window so opening the app is a transition, not a cut.
