@@ -5,9 +5,16 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc},
 };
-pub fn source_only_mod(project: &Project) -> bool {
+/// A registry project that carries native code. The Android registry browser
+/// marks every `native-mod` with the `hnmod` loader whether its file is a legacy
+/// `.hnmod` or a unified `.hmod` that carries content as well, so those rows
+/// stay native-mod rows instead of being counted as content-only ones.
+pub fn native_mod(project: &Project) -> bool {
     project.source == browser::SourceId::Horizon
-        && project.loaders.iter().any(|loader| loader == "hnmod")
+        && project
+            .loaders
+            .iter()
+            .any(|loader| loader == "hnmod" || loader == "native-mod")
 }
 
 /// Temporary dev registration published as Minecraft Nintendo Switch by PrismarineJS.
@@ -196,8 +203,9 @@ impl Page {
     }
 }
 enum Reply {
-    /// Done(message, kind, stay) — `stay` keeps the player on the Mods page (.hnmod imports
-    /// install a bundle that is not listed on the Installed page).
+    /// Done(message, kind, stay) — `stay` keeps the player on the Mods page: a native import
+    /// installs a bundle (legacy `.hnmod` or unified native `.hmod`) that is listed under native
+    /// mods, not on the Installed content page.
     Done(String, horizon_client::content_files::Kind, bool),
 }
 pub struct Catalog {
@@ -226,6 +234,34 @@ pub struct LocalItem {
     pub title: String,
     pub enabled: bool,
 }
+
+/// Verify a pasted link against the registry index already read this run, when
+/// its URL is exactly one of the index's files. `None` means there is no entry
+/// to check against — never that the file passed. Reuses the same size, hash,
+/// revocation, signature and manifest checks as a normal registry install.
+fn registry_trust(url: &str, path: &Path) -> Option<Result<&'static str, String>> {
+    let index = browser::horizon::known_index()?;
+    let mut matched = None;
+    for project in &index.projects {
+        for version in &project.versions {
+            if version.file.url == url {
+                matched = Some((project, version));
+                break;
+            }
+        }
+        if matched.is_some() {
+            break;
+        }
+    }
+    let (project, version) = matched?;
+    Some(
+        horizon_mods::index::check_file(&index, project, version, path).map(|trust| match trust {
+            horizon_mods::index::Trust::Verified => "signed and hash-checked against the registry",
+            horizon_mods::index::Trust::Unsigned => "hash-checked against the registry (unsigned)",
+        }),
+    )
+}
+
 impl Catalog {
     pub fn new(home: &Path) -> Self {
         let config = Config::load(home);
@@ -421,7 +457,7 @@ impl Catalog {
                 self.import_native(home);
             } else {
                 self.results.clear();
-                self.status = "Press Import to download this HTTPS link (.hmod or .hnmod)".into();
+                self.status = "Press Import to download this HTTPS link (.hmod or .hnmod); native code is detected from the file after download".into();
             }
             return;
         }
@@ -455,9 +491,9 @@ impl Catalog {
                 items.len()
             )
         } else if self.page == Page::Mods {
-            let native = items.iter().filter(|p| source_only_mod(p)).count();
+            let native = items.iter().filter(|p| native_mod(p)).count();
             format!(
-                "{} .hmod / {} source-only .hnmod (import only)",
+                "{} content mod(s) / {} native mod(s) (.hmod or .hnmod; import only)",
                 items.len() - native,
                 native
             )
@@ -501,48 +537,102 @@ impl Catalog {
             let _ = tx.send(result);
         });
     }
+    /// Import a pasted HTTPS link. The staged file's contents decide where it
+    /// goes: a bundle carrying native code (`horizon-native.json`, including a
+    /// unified `.hmod`) is a native mod, anything else is content. The URL's
+    /// suffix is never trusted for that decision.
     pub fn import_native(&mut self, home: &Path) {
         let url = self.query.trim().to_owned();
         let game = self.config.game_home(home);
-        let path_part = url.split(['?', '#']).next().unwrap_or("").to_ascii_lowercase();
-        let hnmod = path_part.ends_with(".hnmod");
-        let status = if hnmod {
-            "Downloading native .hnmod over HTTPS..."
-        } else {
-            "Downloading sandboxed .hmod over HTTPS..."
-        };
-        self.job(status,move||{
-            use std::io::Read;
-            let cap: u64 = if hnmod { crate::native_mods::MAX_BUNDLE } else { 32 * 1024 * 1024 };
-            let mut bytes=Vec::new();
-            ureq::AgentBuilder::new().https_only(true).timeout_connect(std::time::Duration::from_secs(20)).timeout_read(std::time::Duration::from_secs(90)).build().get(&url).call().map_err(|e|e.to_string())?.into_reader().take(cap+1).read_to_end(&mut bytes).map_err(|e|e.to_string())?;
-            if bytes.len() as u64 > cap {return Err(format!("File exceeds the {:.0} MiB limit", cap as f64 / 1024.0 / 1024.0));}
-            if hnmod {
-                let dir=crate::native_mods::bundle_dir(&game);std::fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
-                let stage=dir.join(".import.partial");std::fs::write(&stage,bytes).map_err(|e|e.to_string())?;
-                let result=crate::native_mods::install_staged(&game,&stage).map(|(id,version)|{
-                    Reply::Done(format!("Installed native mod {id} {version}. It runs once this build has a mod build service."),horizon_client::content_files::Kind::Mods,true)
-                });
-                let _=std::fs::remove_file(stage);result
-            } else {
-                let dir=game.join("horizon-mods");std::fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
-                let stage=dir.join("import.partial");std::fs::write(&stage,bytes).map_err(|e|e.to_string())?;
-                let result=(||{
-                    let package=horizon_mods::Package::read(&stage)?;
-                    let destination=dir.join(format!("{}.hmod",package.manifest.id));
-                    if destination.exists(){std::fs::copy(&destination,destination.with_extension("hmod.previous")).map_err(|e|e.to_string())?;}
-                    std::fs::rename(&stage,destination).map_err(|e|e.to_string())?;
-                    Ok(Reply::Done(format!("Installed {}. Enable it in Installed after reviewing its capabilities in game Mods.",package.manifest.name),horizon_client::content_files::Kind::Mods,false))
+        self.job(
+            "Downloading over HTTPS to check for native code...",
+            move || {
+                use std::io::Read;
+                // A native bundle may be up to 64 MiB; a content mod 32 MiB.
+                // Download at the native cap, then enforce the smaller content
+                // cap once the staged file has been identified by its manifest.
+                let native_cap = crate::native_mods::MAX_BUNDLE;
+                const CONTENT_CAP: u64 = 32 * 1024 * 1024;
+                let dir = game.join("horizon-mods");
+                std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                let stage = dir.join("import.partial");
+                // Never let a partial from an interrupted import be mistaken
+                // for this one, and make sure none survives whatever happens.
+                let _ = std::fs::remove_file(&stage);
+                let result = (|| -> Result<Reply, String> {
+                    let mut bytes = Vec::new();
+                    ureq::AgentBuilder::new()
+                        .https_only(true)
+                        .timeout_connect(std::time::Duration::from_secs(20))
+                        .timeout_read(std::time::Duration::from_secs(90))
+                        .build()
+                        .get(&url)
+                        .call()
+                        .map_err(|e| e.to_string())?
+                        .into_reader()
+                        .take(native_cap + 1)
+                        .read_to_end(&mut bytes)
+                        .map_err(|e| e.to_string())?;
+                    if bytes.len() as u64 > native_cap {
+                        return Err(format!(
+                            "File exceeds the {:.0} MiB native-mod limit",
+                            native_cap as f64 / 1024.0 / 1024.0
+                        ));
+                    }
+                    std::fs::write(&stage, &bytes).map_err(|e| e.to_string())?;
+                    if horizon_mods::index::native::holds(&stage) {
+                        // If the link is a registry file, check it exactly as a
+                        // registry install would. A match that fails its checks
+                        // is refused, never installed as if it were trusted.
+                        let trust = match registry_trust(&url, &stage) {
+                            Some(Ok(label)) => format!("Checked against the Horizon registry: {label}."),
+                            Some(Err(error)) => {
+                                return Err(format!(
+                                    "This link matches a Horizon registry file but failed its checks ({error}); nothing was installed"
+                                ));
+                            }
+                            None => "UNVERIFIED: a pasted HTTPS link gets no registry hash or signature check, and native code runs with full device access.".to_owned(),
+                        };
+                        let (id, version) = crate::native_mods::install_staged(&game, &stage)?;
+                        Ok(Reply::Done(
+                            format!("Installed native mod {id} {version}. {trust}"),
+                            horizon_client::content_files::Kind::Mods,
+                            true,
+                        ))
+                    } else {
+                        if bytes.len() as u64 > CONTENT_CAP {
+                            return Err(format!(
+                                "Content mod exceeds the {:.0} MiB limit",
+                                CONTENT_CAP as f64 / 1024.0 / 1024.0
+                            ));
+                        }
+                        let package = horizon_mods::Package::read(&stage)?;
+                        let destination = dir.join(format!("{}.hmod", package.manifest.id));
+                        if destination.exists() {
+                            std::fs::copy(&destination, destination.with_extension("hmod.previous"))
+                                .map_err(|e| e.to_string())?;
+                        }
+                        std::fs::rename(&stage, destination).map_err(|e| e.to_string())?;
+                        Ok(Reply::Done(
+                            format!(
+                                "Installed {}. Enable it in Installed after reviewing its capabilities in game Mods.",
+                                package.manifest.name
+                            ),
+                            horizon_client::content_files::Kind::Mods,
+                            false,
+                        ))
+                    }
                 })();
-                let _=std::fs::remove_file(stage);result
-            }
-        });
+                let _ = std::fs::remove_file(&stage);
+                result
+            },
+        );
     }
     pub fn install(&mut self, home: &Path, index: usize) {
         let Some(project) = self.results.get(index).cloned() else {
             return;
         };
-        let native_hnmod = source_only_mod(&project);
+        let native_mod_project = native_mod(&project);
         if self.busy() || self.download_label(&project).is_some() {
             return;
         }
@@ -589,9 +679,9 @@ impl Catalog {
                 .len()
             };
             Ok(Reply::Done(
-                if native_hnmod {
+                if native_mod_project {
                     format!(
-                        "Installed {}. It is a source-only bundle: it runs once this build has a mod build service.",
+                        "Installed {}. It is a native mod (code and possibly content), checked against the registry: the code is built by the mod build service before it runs.",
                         project.title
                     )
                 } else {
@@ -602,7 +692,7 @@ impl Catalog {
                     Kind::Shader => horizon_client::content_files::Kind::Shaders,
                     _ => horizon_client::content_files::Kind::Packs,
                 },
-                native_hnmod,
+                native_mod_project,
             ))
         });
     }

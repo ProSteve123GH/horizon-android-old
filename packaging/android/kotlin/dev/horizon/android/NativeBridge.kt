@@ -26,7 +26,7 @@ object NativeBridge {
     /** Hands a picked document to the content importer. */
     @JvmStatic external fun importDocument(activity: Activity, kind: String, uri: String?)
 
-    /** Hands a picked document to the native-mod (.hnmod) importer. */
+    /** Hands a picked document to the native-mod importer (.hmod with native code, or legacy .hnmod). */
     @JvmStatic external fun importNativeDocument(activity: Activity, uri: String?)
 
     /** Reuses Minecraft 26.3 from a SAF folder tree. The Activity persists the URI grant. */

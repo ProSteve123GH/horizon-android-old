@@ -669,10 +669,11 @@ fn live_switch_of(
     }
 }
 
-/// A row for each native mod the launcher installed in `dir` (`<id>.hnmod`) that this game wasn't
-/// built with (`built`: its [`BUILD_INFO`], empty for a release or Nightly) and that has no row
-/// yet. The page said "No mods" before, and players copied the files into `horizon-mods` (#4770).
-/// Its toggle is the `mod.<id>` line the launcher's next build follows.
+/// A row for each native mod the launcher installed in `dir` (a legacy `<id>.hnmod`, or a
+/// combined `<id>.hmod` holding native code) that this game wasn't built with (`built`: its
+/// [`BUILD_INFO`], empty for a release or Nightly) and that has no row yet. The page said "No
+/// mods" before, and players copied the files into `horizon-mods` (#4770). Its toggle is the
+/// `mod.<id>` line the launcher's next build follows.
 fn not_built(dir: &std::path::Path, built: &str, rows: &[Installed]) -> Vec<Installed> {
     let info: serde_json::Value = serde_json::from_str(built).unwrap_or_default();
     let in_build = |id: &str| {
@@ -683,7 +684,14 @@ fn not_built(dir: &std::path::Path, built: &str, rows: &[Installed]) -> Vec<Inst
     let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
         .map(|d| d.flatten().map(|e| e.path()).collect())
         .unwrap_or_default();
-    paths.retain(|p| p.extension().is_some_and(|e| e == "hnmod"));
+    // A legacy native bundle needs no further check; a combined `.hmod` is native only if it
+    // actually carries `horizon-native.json`, so a content-only `.hmod` here is left alone.
+    // `holds()` just reads the zip's central directory, and this path runs once at startup.
+    paths.retain(|p| {
+        p.extension().is_some_and(|e| e == "hnmod")
+            || (p.extension().is_some_and(|e| e == "hmod")
+                && horizon_mods::index::native::holds(p))
+    });
     paths.sort();
     let mut out: Vec<Installed> = Vec::new();
     for path in paths {
@@ -2352,8 +2360,8 @@ mod tests {
         assert!(build_lists_mods(r#"{"mods":[{"id":"worldmap"}]}"#));
     }
 
-    /// A minimal `.hnmod` the registry accepts: its manifest and its mixin's.
-    fn hnmod(dir: &std::path::Path, id: &str) {
+    /// A minimal native bundle the registry accepts: its manifest and its mixin's.
+    fn write_native_bundle(path: &std::path::Path, id: &str) {
         let horizon = "a".repeat(40);
         let manifest = serde_json::json!({
             "schema": 1, "id": id, "version": "0.3.0", "game": "26.3",
@@ -2362,7 +2370,7 @@ mod tests {
         let mixin = format!(
             "[mod]\nid = \"{id}\"\nversion = \"0.3.0\"\n[compatibility]\nhorizon_revision = \"{horizon}\"\n"
         );
-        let file = std::fs::File::create(dir.join(format!("{id}.hnmod"))).unwrap();
+        let file = std::fs::File::create(path).unwrap();
         let mut zip = zip::ZipWriter::new(file);
         let options = zip::write::SimpleFileOptions::default();
         zip.start_file("horizon-native.json", options).unwrap();
@@ -2370,6 +2378,29 @@ mod tests {
         zip.start_file(format!("mixins/{id}/horizon-mixin.toml"), options)
             .unwrap();
         zip.write_all(mixin.as_bytes()).unwrap();
+        zip.finish().unwrap();
+    }
+
+    fn hnmod(dir: &std::path::Path, id: &str) {
+        write_native_bundle(&dir.join(format!("{id}.hnmod")), id);
+    }
+
+    /// The same native code stored in a combined `.hmod`.
+    fn native_hmod(dir: &std::path::Path, id: &str) {
+        write_native_bundle(&dir.join(format!("{id}.hmod")), id);
+    }
+
+    /// A `.hmod` with content only: no `horizon-native.json`, so not a native mod.
+    fn content_hmod(dir: &std::path::Path, id: &str) {
+        let file = std::fs::File::create(dir.join(format!("{id}.hmod"))).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("horizon-mod.toml", options).unwrap();
+        zip.write_all(
+            format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi = \"0.2\"\nside = \"both\"\ncapabilities = []\n")
+                .as_bytes(),
+        )
+        .unwrap();
         zip.finish().unwrap();
     }
 
@@ -2393,12 +2424,15 @@ mod tests {
         for id in ["veinminer", "zoom", "minimap"] {
             hnmod(&dir, id);
         }
+        native_hmod(&dir, "zoomplus");
+        content_hmod(&dir, "contentonly");
         std::fs::write(dir.join("notes.txt"), "not a mod").unwrap();
         std::fs::write(dir.join("broken.hnmod"), "not a zip").unwrap();
         // A release: none is built in; the page lists them, sorted, instead of "No mods".
+        // A combined `.hmod` with native code gets a row; a content-only one doesn't.
         let rows = not_built(&dir, "", &[]);
         let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(ids, ["minimap", "veinminer", "zoom"]);
+        assert_eq!(ids, ["minimap", "veinminer", "zoom", "zoomplus"]);
         assert_eq!(rows[1].title, "veinminer 0.3.0");
         assert_eq!(rows[1].problem.as_deref(), Some(mod_list::NOT_BUILT));
         assert!(rows.iter().all(|r| r.native.is_none() && !r.dev));
@@ -2410,8 +2444,9 @@ mod tests {
             ..rows[0].clone()
         };
         let rows = not_built(&dir, built, &[listed]);
-        assert_eq!(rows.len(), 1);
+        assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].id, "veinminer");
+        assert_eq!(rows[1].id, "zoomplus");
         // No folder: no rows.
         assert!(not_built(&dir.join("missing"), "", &[]).is_empty());
         std::fs::remove_dir_all(&dir).unwrap();

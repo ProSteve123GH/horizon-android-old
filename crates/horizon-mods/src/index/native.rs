@@ -457,6 +457,59 @@ capabilities = ["registries"]
         assert_eq!(e, WASM_GONE);
     }
     #[test]
+    fn unified_archive_is_native_by_manifest_not_by_extension() {
+        // One archive's bytes, two suffixes: detection must read the manifest.
+        let archive = {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            let options = zip::write::SimpleFileOptions::default();
+            zip.start_file(MANIFEST, options).unwrap();
+            zip.write_all(&serde_json::to_vec(&manifest()).unwrap())
+                .unwrap();
+            zip.start_file("mixins/veinminer/horizon-mixin.toml", options)
+                .unwrap();
+            zip.write_all(mixin().as_bytes()).unwrap();
+            zip.start_file("horizon-mod.toml", options).unwrap();
+            zip.write_all(
+                b"id=\"veinminer\"\nname=\"Unified\"\nversion=\"0.3.0\"\napi=\"0.2\"\ncapabilities=[\"registries\"]\n",
+            )
+            .unwrap();
+            zip.start_file("assets/veinminer/lang/en_us.json", options)
+                .unwrap();
+            zip.write_all(br#"{"mod.veinminer":"Unified"}"#).unwrap();
+            zip.finish().unwrap().into_inner()
+        };
+        let write = |extension: &str| {
+            let path = std::env::temp_dir()
+                .join(format!("native-unified-{}.{extension}", std::process::id()));
+            std::fs::write(&path, &archive).unwrap();
+            path
+        };
+        let bin = write("bin");
+        let hmod = write("hmod");
+        assert!(holds(&bin), "the manifest, not the suffix, decides");
+        assert!(holds(&hmod), "a unified .hmod carries native code");
+        let plain = Bundle::read(&bin).unwrap();
+        assert_eq!(plain.manifest.id, "veinminer");
+        assert!(plain.content.is_empty(), "only .hmod unpacks content");
+        let unified = Bundle::read(&hmod).unwrap();
+        assert_eq!(unified.manifest.id, "veinminer");
+        let expected: std::collections::BTreeMap<String, Vec<u8>> = [
+            (
+                "assets/veinminer/lang/en_us.json".to_owned(),
+                br#"{"mod.veinminer":"Unified"}"#.to_vec(),
+            ),
+            (
+                "horizon-mod.toml".to_owned(),
+                b"id=\"veinminer\"\nname=\"Unified\"\nversion=\"0.3.0\"\napi=\"0.2\"\ncapabilities=[\"registries\"]\n".to_vec(),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(unified.content, expected);
+        std::fs::remove_file(bin).unwrap();
+        std::fs::remove_file(hmod).unwrap();
+    }
+    #[test]
     fn rejects_missing_or_mismatched_mixin_identity_without_panicking() {
         assert!(read("missing-mod", &[], "[unrelated]\nvalue = 1").is_err());
         assert!(

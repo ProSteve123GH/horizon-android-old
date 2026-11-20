@@ -24,7 +24,12 @@ arbitrary folders. It does not grant access to account tokens or internal files.
 
 To download a `.hmod` from a link, paste its HTTPS URL in the Mods search field
 and press **Import .hmod** (the Search button changes when a URL is entered).
-File import and link import are both available.
+The URL's suffix is not trusted to decide the type: the archive's contents do.
+A `.hmod` may be content-only or content plus native Rust source; a native
+bundle is detected by `horizon-native.json` and is routed to the native mods
+folder. A pasted HTTPS link gets no registry hash or signature check unless
+its URL exactly matches a known Horizon registry file, so paste only links
+you trust. File import and link import are both available.
 
 In **Shaders**, choose **Horizon** for native `.hshader` packs or **Modrinth**
 for classic shader ZIPs. The selection is saved and each source has its own search
@@ -47,8 +52,14 @@ refreshes its query. Changing tabs does not unpack installed `.hmod` WASM files.
 
 Supported files:
 
-- Mods: sandboxed `.hmod` archives; Java `.jar` mods are not accepted. Executing
-  `.hmod` mods requires a 64-bit APK, but the files can be managed on 32-bit builds.
+- Mods: `.hmod` archives, which may be content-only or content plus native
+  Rust source. The **content** part runs in the Wasmtime sandbox on 64-bit
+  builds (32-bit builds omit that runtime but can still manage the files).
+  A native part is detected by `horizon-native.json`, is **not sandboxed**,
+  and does not run until you use **Compile** to have it built into the game
+  on a hosted runner; see [android-native-mods.md](android-native-mods.md).
+  Java `.jar` mods are not accepted. The sandboxed wording applies only to
+  the content part; native code runs with full device access once compiled.
 - Resource packs: ZIPs with valid `pack.mcmeta` at the archive root.
 - Shaders: native `.hshader` packs, native shader ZIPs with `horizon-shaders.toml`
   (stored as `.hshader`), or classic ZIPs with shader sources under `shaders/`.
@@ -113,4 +124,12 @@ in Installed before Play, or in the game's Shader Packs settings. It changes the
 sky and adds two post-processing passes; it is a functional example, not an
 Android performance benchmark.
 
-The Horizon catalog also lists source-only `.hnmod` mods so their availability is visible. These require rebuilding the game and cannot be installed into the current Android client; the list marks them as unsupported. `.hmod` file and HTTPS imports remain available.
+The Horizon catalog also lists native mods so their availability is visible.
+A unified `.hmod` can carry both content and native source: the native part
+is detected by `horizon-native.json` and stored in `horizon-native-mods/`,
+while its content part is mirrored to `horizon-mods/<id>.hmod` so this
+installer and the game's mod list see it. The content works on its own; the
+native part needs **Compile** (hosted runner, not sandboxed) before it runs.
+A legacy `.hnmod` is native-only. All of these can be imported here — file
+and HTTPS imports remain available — and none of the native code is
+executed or tested on the phone during import.

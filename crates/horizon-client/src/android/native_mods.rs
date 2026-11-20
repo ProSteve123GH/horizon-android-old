@@ -1,8 +1,11 @@
-//! Native mod (`.hnmod`) import, listing, building and removal for the Android launcher.
+//! Native mod (`.hnmod` / `.hmod`) import, listing, building and removal for the Android launcher.
 //!
 //! A `.hnmod` bundle is source-only Rust that hooks the game's own functions.
-//! It has to be compiled into the game before it can run, which cannot happen
-//! on the device: the launcher sends the enabled bundles to the personal build
+//! A combined `.hmod` carries the same native code plus a content part; it is
+//! stored in both folders so the existing content installer/list sees it.
+//! Native code is compiled into the game and runs unsandboxed — it is never
+//! treated like a sandboxed content mod. Compiling cannot happen on the device:
+//! the launcher sends the enabled bundles to the personal build
 //! service for this fork (`BUILD_BASE`), the service compiles the game with
 //! the mod's hooks on a hosted runner and publishes
 //! `/v1/job/<job>` and `/v1/job/<job>/lib`. The launcher streams the library
@@ -108,6 +111,90 @@ pub(crate) fn bundle_dir(game_home: &Path) -> PathBuf {
     game_home.join("horizon-native-mods")
 }
 
+/// Storage extensions: `.hnmod` is native-only, `.hmod` also carries content
+/// (the desktop launcher's combined format). Both are accepted everywhere.
+const BUNDLE_EXTENSIONS: [&str; 2] = ["hnmod", "hmod"];
+
+/// The path a bundle with `extension` is stored under, keeping its format.
+fn bundle_file(game_home: &Path, id: &str, extension: &str) -> PathBuf {
+    bundle_dir(game_home).join(format!("{id}.{extension}"))
+}
+
+/// Split a stored file name into `(id, extension)` for either bundle format.
+fn bundle_stem(name: &str) -> Option<(&str, &str)> {
+    BUNDLE_EXTENSIONS.iter().find_map(|&extension| {
+        name.strip_suffix(extension)
+            .and_then(|stem| stem.strip_suffix('.'))
+            .map(|stem| (stem, extension))
+    })
+}
+
+/// The stored path for `id`, whichever of the two extensions is present.
+fn stored_bundle(game_home: &Path, id: &str) -> Option<PathBuf> {
+    BUNDLE_EXTENSIONS
+        .iter()
+        .map(|&extension| bundle_file(game_home, id, extension))
+        .find(|path| path.is_file())
+}
+
+/// The extension to store a staged bundle under. `.hnmod` and `.hmod` keep
+/// their own name; the importers' internal `.part`/`.partial` staging names
+/// follow the payload. Anything else is rejected rather than guessed.
+fn staged_extension(staged: &Path, has_content: bool) -> Result<&'static str, String> {
+    match staged.extension().and_then(|ext| ext.to_str()) {
+        Some("hmod") => Ok("hmod"),
+        Some("hnmod") => Ok("hnmod"),
+        Some("part") | Some("partial") | None => Ok(if has_content { "hmod" } else { "hnmod" }),
+        Some(other) => Err(format!("unsupported native bundle extension '.{other}'")),
+    }
+}
+
+/// `Bundle::read` only exposes a combined bundle's content when the file it
+/// opens ends in `.hmod`. Importers stage under `.part`/`.partial`, so read
+/// through a same-directory `.hmod` alias to keep validation (including the
+/// content part) identical for every path. The bytes themselves are unchanged.
+fn read_staged_bundle(staged: &Path) -> Result<Bundle, String> {
+    let name = staged
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let alias = staged.with_file_name(format!(".{name}.view.hmod"));
+    if let Ok(metadata) = fs::symlink_metadata(&alias) {
+        // A leftover from an interrupted import is ours to clean up; a
+        // symlink or directory at that name must never be followed.
+        if !metadata.is_file() {
+            return Err("Refusing a redirected bundle inspection path".into());
+        }
+        let _ = fs::remove_file(&alias);
+    }
+    if fs::hard_link(staged, &alias).is_err() {
+        // O_EXCL: a symlink planted in between must not redirect the copy.
+        let mut input = fs::File::open(staged).map_err(|error| error.to_string())?;
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&alias)
+            .map_err(|error| error.to_string())?;
+        std::io::copy(&mut input, &mut output).map_err(|error| error.to_string())?;
+    }
+    let result = Bundle::read(&alias);
+    let _ = fs::remove_file(&alias);
+    result
+}
+
+/// Copy `source` to `destination` without ever replacing an existing file or
+/// following a symlink at the destination.
+fn copy_new(source: &Path, destination: &Path) -> Result<(), String> {
+    let mut input = fs::File::open(source).map_err(|error| error.to_string())?;
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .map_err(|error| error.to_string())?;
+    std::io::copy(&mut input, &mut output).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 /// The loader state, app-private: the same folder `HorizonActivity` reads.
 fn priv_native(home: &Path) -> PathBuf {
     home.join("native")
@@ -162,7 +249,7 @@ pub(crate) fn import_external(
         return;
     }
     crate::documents::begin_import();
-    crate::documents::note("Checking the picked .hnmod bundle…", false);
+    crate::documents::note("Checking the picked .hmod / .hnmod bundle…", false);
     let spawned = std::thread::Builder::new()
         .name("Native mod import".into())
         .spawn(move || {
@@ -170,7 +257,7 @@ pub(crate) fn import_external(
             crate::documents::set_working(false);
             match result {
                 Ok((id, version)) => finish(format!(
-                    "Imported native mod {id} {version}. It is built and run only once this build of Horizon has a mod build service."
+                    "Imported native mod {id} {version}. Native code is compiled into the game and runs unsandboxed; it only runs in a build the mod build service publishes."
                 )),
                 Err(error) => finish(format!("Native mod import failed: {error}")),
             }
@@ -247,17 +334,24 @@ fn import_worker(
     result
 }
 
-/// Validate a staged bundle file and store it as `<game_home>/horizon-native-mods/<id>.hnmod`.
+/// Validate a staged bundle file and store it as
+/// `<game_home>/horizon-native-mods/<id>.hnmod` or `<id>.hmod`, keeping the
+/// staged format. A combined `.hmod` is also mirrored to
+/// `<game_home>/horizon-mods/<id>.hmod` so the existing content installer and
+/// list see it; neither destination is ever overwritten.
 /// Shared by the SAF (`import_external`) and HTTPS (`catalog::import_native`) import paths.
 /// Returns `(id, version)`; refuses bad bundles and an id that is already installed.
 pub(crate) fn install_staged(
     game_home: &Path,
     staged: &Path,
 ) -> Result<(String, String), String> {
-    let bundle = Bundle::read(staged).map_err(|error| format!("not a valid .hnmod bundle: {error}"))?;
+    let bundle = read_staged_bundle(staged)
+        .map_err(|error| format!("not a valid .hmod / .hnmod bundle: {error}"))?;
     let id = bundle.manifest.id.clone();
     let version = bundle.manifest.version.clone();
+    let has_content = !bundle.content.is_empty();
     drop(bundle);
+    let extension = staged_extension(staged, has_content)?;
     let target_dir = bundle_dir(game_home);
     fs::create_dir_all(&target_dir).map_err(|error| error.to_string())?;
     if fs::symlink_metadata(&target_dir)
@@ -267,10 +361,30 @@ pub(crate) fn install_staged(
     {
         return Err("Refusing a redirected native-mods folder".into());
     }
-    let target = target_dir.join(format!("{id}.hnmod"));
-    if target.exists() {
+    if stored_bundle(game_home, &id).is_some() {
         return Err(format!("a native mod with id '{id}' is installed; remove it first"));
     }
+    let target = bundle_file(game_home, &id, extension);
+    // A combined bundle is content as well. Refuse an id collision before
+    // writing anything, and never replace an existing content mod.
+    let mirror = if has_content {
+        let content_dir = game_home.join("horizon-mods");
+        fs::create_dir_all(&content_dir).map_err(|error| error.to_string())?;
+        if fs::symlink_metadata(&content_dir)
+            .map_err(|error| error.to_string())?
+            .file_type()
+            .is_symlink()
+        {
+            return Err("Refusing a redirected mods folder".into());
+        }
+        let mirror = content_dir.join(format!("{id}.hmod"));
+        if fs::symlink_metadata(&mirror).is_ok() {
+            return Err(format!("a content mod with id '{id}' is installed; remove it first"));
+        }
+        Some(mirror)
+    } else {
+        None
+    };
     // The cache and the instance can be on different filesystems (app
     // storage and shared storage), so a plain rename can fail with EXDEV.
     match fs::rename(staged, &target) {
@@ -286,24 +400,51 @@ pub(crate) fn install_staged(
             }
         }
     }
+    if let Some(mirror) = mirror {
+        if let Err(error) = copy_new(&target, &mirror) {
+            // Roll back both files: a half-imported combined mod is worse
+            // than no import at all, and would block the next attempt.
+            let _ = fs::remove_file(&mirror);
+            let _ = fs::remove_file(&target);
+            return Err(format!("could not mirror the content part: {error}"));
+        }
+    }
     Ok((id, version))
 }
 
 // ---- removal -----------------------------------------------------------------
 
-/// `native_remove`: delete the stored bundle. The installed build, if any, is
-/// left alone; it only loads on its own APK version anyway.
+/// `native_remove`: delete the stored bundle (either extension) and the
+/// mirrored content file of a combined `.hmod`, if present. The installed
+/// build, if any, is left alone; it only loads on its own APK version anyway.
 pub(crate) fn remove(game_home: &Path, id: &str) -> Result<(), String> {
     if !horizon_mods::index::valid_id(id) {
         return Err("Invalid native mod id".into());
     }
-    let file = bundle_dir(game_home).join(format!("{id}.hnmod"));
-    match fs::symlink_metadata(&file) {
-        Ok(metadata) if metadata.is_file() => {
-            fs::remove_file(&file).map_err(|error| format!("could not remove {id}: {error}"))
+    let mut removed = false;
+    for &extension in &BUNDLE_EXTENSIONS {
+        let file = bundle_file(game_home, id, extension);
+        match fs::symlink_metadata(&file) {
+            Ok(metadata) if metadata.is_file() => {
+                fs::remove_file(&file).map_err(|error| format!("could not remove {id}: {error}"))?;
+                removed = true;
+            }
+            Ok(_) => return Err(format!("Refusing to remove a redirected native mod with id '{id}'")),
+            Err(_) => {}
         }
-        _ => Err(format!("No native mod with id '{id}' is installed")),
     }
+    if !removed {
+        return Err(format!("No native mod with id '{id}' is installed"));
+    }
+    // Only combined bundles have a mirror, and we never remove content for an
+    // id that has no native bundle installed.
+    let mirror = game_home.join("horizon-mods").join(format!("{id}.hmod"));
+    if let Ok(metadata) = fs::symlink_metadata(&mirror) {
+        if metadata.is_file() {
+            fs::remove_file(&mirror).map_err(|error| format!("could not remove {id}: {error}"))?;
+        }
+    }
+    Ok(())
 }
 
 /// `native_disable`: forget any selected modded build. The next start loads
@@ -348,7 +489,7 @@ fn write_enabled(game_home: &Path, ids: &[String]) -> Result<(), String> {
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let mut ids: Vec<String> = ids
         .iter()
-        .filter(|id| bundle_dir(game_home).join(format!("{id}.hnmod")).is_file())
+        .filter(|id| stored_bundle(game_home, id).is_some())
         .cloned()
         .collect();
     ids.sort();
@@ -369,7 +510,7 @@ pub(crate) fn set_enabled(
     if !horizon_mods::index::valid_id(id) {
         return Err("Invalid native mod id".into());
     }
-    if !bundle_dir(game_home).join(format!("{id}.hnmod")).is_file() {
+    if stored_bundle(game_home, id).is_none() {
         return Err(format!("No native mod with id '{id}' is installed"));
     }
     let mut set = enabled_set(game_home);
@@ -397,7 +538,7 @@ fn list_ids(game_home: &Path) -> Vec<String> {
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let stem = name.strip_suffix(".hnmod")?;
+            let (stem, _) = bundle_stem(&name)?;
             if !horizon_mods::index::valid_id(stem) {
                 return None;
             }
@@ -405,6 +546,7 @@ fn list_ids(game_home: &Path) -> Vec<String> {
         })
         .collect();
     ids.sort();
+    ids.dedup();
     ids
 }
 
@@ -421,7 +563,7 @@ pub(crate) fn section(home: &Path, game_home: &Path) -> Value {
             .flatten()
             .filter_map(|entry| {
                 let name = entry.file_name().to_string_lossy().into_owned();
-                name.strip_suffix(".hnmod")?;
+                bundle_stem(&name)?;
                 let metadata = entry.metadata().ok()?;
                 if !metadata.is_file() {
                     return None;
@@ -510,7 +652,7 @@ fn section_uncached(home: &Path, game_home: &Path) -> Value {
     if let Ok(read) = fs::read_dir(&dir) {
         for entry in read.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let Some(stem) = name.strip_suffix(".hnmod") else {
+            let Some((stem, _)) = bundle_stem(&name) else {
                 continue;
             };
             let Ok(metadata) = entry.metadata() else {
@@ -523,7 +665,9 @@ fn section_uncached(home: &Path, game_home: &Path) -> Value {
             rows.push((stem.to_owned(), entry.path(), metadata.len()));
         }
     }
-    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    rows.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    // One row per id even if both formats are present for it.
+    rows.dedup_by(|a, b| a.0 == b.0);
     let enabled = enabled_set(game_home);
     let all_enabled = !enabled_file(game_home).is_file();
     let mods: Vec<Value> = rows
@@ -1151,7 +1295,14 @@ pub(crate) fn compile(
     let mut bundles: Vec<ModBundle> = Vec::with_capacity(ids.len());
     let mut total: u64 = 0;
     for id in &ids {
-        let path = bundle_dir(game_home).join(format!("{id}.hnmod"));
+        let path = stored_bundle(game_home, id)
+            .ok_or_else(|| format!("{id}: the bundle is missing from the game files folder"))?;
+        if fs::symlink_metadata(&path)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return Err(format!("{id}: the stored bundle is redirected"));
+        }
         let metadata = fs::metadata(&path)
             .map_err(|_| format!("{id}: the bundle is missing from the game files folder"))?;
         if !metadata.is_file() {
@@ -1611,5 +1762,70 @@ mod tests {
         assert_eq!(archive.len(), 2);
         assert!(archive.by_name("mods.json").is_ok());
         assert!(archive.by_name("solo.hnmod").is_ok());
+    }
+
+    /// Both storage extensions resolve to a per-id path and are recognised
+    /// when scanning the folder; other suffixes are not bundles.
+    #[test]
+    fn bundle_paths_cover_both_extensions() {
+        let home = Path::new("/game");
+        assert_eq!(
+            bundle_file(home, "vein_miner", "hnmod"),
+            PathBuf::from("/game/horizon-native-mods/vein_miner.hnmod")
+        );
+        assert_eq!(
+            bundle_file(home, "vein_miner", "hmod"),
+            PathBuf::from("/game/horizon-native-mods/vein_miner.hmod")
+        );
+        assert_eq!(
+            bundle_stem("vein_miner.hnmod"),
+            Some(("vein_miner", "hnmod"))
+        );
+        assert_eq!(bundle_stem("vein_miner.hmod"), Some(("vein_miner", "hmod")));
+        assert_eq!(bundle_stem("vein_miner.zip"), None);
+        assert_eq!(bundle_stem("vein_miner"), None);
+    }
+
+    /// An existing bundle is found under either extension, and the staged
+    /// name decides which extension is kept for native-only vs combined.
+    #[test]
+    fn stored_bundle_and_extension_preservation() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "hz-native-mods-test-{}-{stamp}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(bundle_dir(&dir)).unwrap();
+
+        let native_stage = dir.join("import.part");
+        fs::write(&native_stage, b"native").unwrap();
+        assert_eq!(staged_extension(&native_stage, false).unwrap(), "hnmod");
+        assert_eq!(staged_extension(&native_stage, true).unwrap(), "hmod");
+
+        let combined_stage = dir.join("import.hmod");
+        fs::write(&combined_stage, b"combined").unwrap();
+        assert_eq!(staged_extension(&combined_stage, true).unwrap(), "hmod");
+        assert_eq!(staged_extension(&combined_stage, false).unwrap(), "hmod");
+
+        let unknown = dir.join("import.zip");
+        fs::write(&unknown, b"unknown").unwrap();
+        assert!(staged_extension(&unknown, false).is_err());
+
+        assert_eq!(stored_bundle(&dir, "alpha"), None);
+        fs::write(bundle_file(&dir, "alpha", "hmod"), b"x").unwrap();
+        assert_eq!(
+            stored_bundle(&dir, "alpha"),
+            Some(bundle_file(&dir, "alpha", "hmod"))
+        );
+        fs::write(bundle_file(&dir, "beta", "hnmod"), b"y").unwrap();
+        assert_eq!(
+            stored_bundle(&dir, "beta"),
+            Some(bundle_file(&dir, "beta", "hnmod"))
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }

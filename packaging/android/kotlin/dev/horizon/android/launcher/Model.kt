@@ -135,7 +135,7 @@ data class LocalItem(
     val toggle: Boolean,
 )
 
-/** One stored `.hnmod` bundle in the active instance. */
+/** One stored mod bundle in the active instance: a `.hmod` (content, or content + native) or a legacy `.hnmod`. */
 data class NativeMod(
     val id: String,
     val version: String,

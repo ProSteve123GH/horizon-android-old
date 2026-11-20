@@ -407,7 +407,7 @@ fun RemoveNativeDialog(id: String, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Remove native mod?") },
-        text = { Text("Deletes only $id.hnmod from this profile. This cannot be undone.") },
+        text = { Text("Deletes only $id from this profile. This cannot be undone.") },
         confirmButton = {
             Button(onClick = {
                 act("native_remove", id)

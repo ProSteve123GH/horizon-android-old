@@ -46,11 +46,12 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * The native-mods section of the Mods page. Native (`.hnmod`) bundles are
- * source-only Rust that must be compiled into the game; the compile happens
- * on a GitHub-hosted runner through the personal build service configured
- * for this fork. Nothing is executed on this device: the runner compiles,
- * downloads, and verifies; the loader decides at the next start.
+ * The native-mods section of the Mods page. A `.hmod` may carry content only,
+ * or content plus native source-only Rust (legacy `.hnmod` carried native only).
+ * Native code runs UNSANDBOXED and must be compiled into the game; compilation
+ * happens on a GitHub-hosted runner through the personal build service
+ * configured for this fork. Nothing is executed or tested on this device: the
+ * runner compiles, downloads, and verifies; the loader decides at the next start.
  */
 @Composable
 fun NativeModsSection(native: NativeMods, actions: LauncherActions) {
@@ -77,7 +78,7 @@ fun NativeModsSection(native: NativeMods, actions: LauncherActions) {
     val hasBuild = current != null && !current.rejected
     val compileLabel = if (hasBuild) "Recompile (applies after re-launch)" else "Compile"
     val disabledReason = when {
-        native.mods.isEmpty() -> "Import a .hnmod bundle first."
+        native.mods.isEmpty() -> "Import a .hmod (content, or content + native) or legacy .hnmod bundle first."
         nothingEnabled -> "Enable at least one native mod to compile."
         inFlight -> "A build is already in progress."
         else -> null
@@ -90,7 +91,7 @@ fun NativeModsSection(native: NativeMods, actions: LauncherActions) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Native mods (.hnmod)",
+                    "Native mods (.hmod / legacy .hnmod)",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
@@ -123,7 +124,7 @@ fun NativeModsSection(native: NativeMods, actions: LauncherActions) {
             }
             if (native.mods.isEmpty()) {
                 Text(
-                    ".hnmod bundles are imported here. Import a bundle, enable it, then Compile: the mod is rebuilt into the game on a hosted runner and runs on the next start. See docs/android-native-mods.md.",
+                    ".hmod bundles (content, or content + native) and legacy .hnmod bundles are imported here. Import a bundle, enable it, then Compile: native code is rebuilt into the game on a hosted runner and runs on the next start. See docs/android-native-mods.md.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -212,6 +213,11 @@ fun NativeModsSection(native: NativeMods, actions: LauncherActions) {
                 OutlinedButton(onClick = actions.disableNative, modifier = Modifier.fillMaxWidth()) {
                     Text("Play without native mods")
                 }
+                Text(
+                    "Stops the native build; content from the same .hmod stays installed.",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             FilledTonalButton(
                 onClick = { showCompileConfirm = true },
@@ -223,7 +229,7 @@ fun NativeModsSection(native: NativeMods, actions: LauncherActions) {
                 Text(compileLabel)
             }
             Text(
-                disabledReason ?: "Native mods run with full access to this device. Compile only mods you trust.",
+                disabledReason ?: "Native code in a .hmod runs UNSANDBOXED with full access to this device. Compile only mods you trust.",
                 style = MaterialTheme.typography.bodySmall,
                 color = if (disabledReason != null) {
                     MaterialTheme.colorScheme.outline
@@ -240,7 +246,7 @@ fun NativeModsSection(native: NativeMods, actions: LauncherActions) {
             title = { Text("Compile native mods?") },
             text = {
                 Text(
-                    "Native mods run with full access to this device. Only compile mods you trust. The mod code is compiled on a GitHub-hosted runner; nothing is executed here. This may take a few minutes.",
+                    "A unified .hmod may bundle content plus native Rust. Its native code runs UNSANDBOXED with full access to this device. It is compiled on a GitHub-hosted runner — nothing is executed or tested on the phone — and applies on the next start. Only compile mods you trust. This may take a few minutes.",
                 )
             },
             confirmButton = {
@@ -263,7 +269,7 @@ fun NativeModsSection(native: NativeMods, actions: LauncherActions) {
             title = { Text("Native mod") },
             text = {
                 Text(
-                    "id: ${mod.id}\nversion: ${mod.version}\nfile: ${mod.id}.hnmod",
+                    "id: ${mod.id}\nversion: ${mod.version}",
                 )
             },
             confirmButton = { TextButton(onClick = { detailsMod = null }) { Text("Close") } },
