@@ -7,15 +7,15 @@ license = "MIT"
 publish = false
 
 [features]
-# Noise suppression is optional: enabling it pulls in nnnoiseless, which is
-# not in this fork's Cargo.lock. The filter is cfg-gated and works without it.
+# Noise suppression is unavailable in this fork: enabling it would pull in
+# nnnoiseless, which is not in this fork's Cargo.lock. The filter is cfg-gated
+# with a non-rnnoise fallback, so this feature is intentionally a no-op.
 default = []
-rnnoise = ["dep:nnnoiseless"]
+rnnoise = []
 
 [dependencies]
 cpal = "0.16"
 log = "0.4"
-nnnoiseless = { version = "0.5", optional = true }
 png = "0.18"
 ring = "0.17"
 
