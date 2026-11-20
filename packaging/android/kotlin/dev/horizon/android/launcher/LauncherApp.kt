@@ -11,6 +11,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,6 +32,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Extension
@@ -52,8 +55,10 @@ import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -199,6 +204,7 @@ fun LauncherApp(
                     onPlay = onPlay,
                     onImport = onImport,
                     onImportNative = onImportNative,
+                    reducedMotion = reducedMotion,
                 )
             }
             LaunchSplash(visible = loadState is SnapshotState.Loading)
@@ -217,6 +223,7 @@ private fun LauncherContent(
     onPlay: () -> Unit,
     onImport: (String, String?) -> Unit,
     onImportNative: (String?) -> Unit,
+    reducedMotion: Boolean = false,
 ) {
     val state = (loadState as? SnapshotState.Ready)?.snapshot
     val failure = (loadState as? SnapshotState.Failed)?.message
@@ -396,6 +403,7 @@ private fun LauncherContent(
         settingsOpen = settingsOpen,
         failure = failure,
         onRetry = onRetry,
+        reducedMotion = reducedMotion,
     )
 
     if (state != null) {
@@ -444,10 +452,11 @@ private data class LayoutConfig(val wide: Boolean, val short: Boolean)
 
 /** Navigation labels stay visible in every layout; short landscape just makes them smaller. */
 @Composable
-private fun NavLabel(text: String, short: Boolean) {
+private fun NavLabel(text: String, short: Boolean, selected: Boolean = false) {
     Text(
         text,
         style = if (short) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
+        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
         maxLines = 1,
         softWrap = false,
     )
@@ -490,9 +499,27 @@ fun LauncherScaffold(
     settingsOpen: Boolean = false,
     failure: String? = null,
     onRetry: () -> Unit = {},
+    reducedMotion: Boolean = false,
 ) {
     // Status snackbars sit over the page, never over the navigation bar or rail.
     val snackbarHost = @Composable { SnackbarHost(snackbars, Modifier.padding(bottom = 4.dp)) }
+    // A tonal pill plus a strong icon/label makes the current destination unmistakable,
+    // while the unselected roles stay quiet so the rail reads as one calm surface.
+    val scheme = MaterialTheme.colorScheme
+    val barColors = NavigationBarItemDefaults.colors(
+        selectedIconColor = scheme.onSecondaryContainer,
+        selectedTextColor = scheme.onSurface,
+        selectedIndicatorColor = scheme.secondaryContainer,
+        unselectedIconColor = scheme.onSurfaceVariant,
+        unselectedTextColor = scheme.onSurfaceVariant,
+    )
+    val railColors = NavigationRailItemDefaults.colors(
+        selectedIconColor = scheme.onSecondaryContainer,
+        selectedTextColor = scheme.onSurface,
+        selectedIndicatorColor = scheme.secondaryContainer,
+        unselectedIconColor = scheme.onSurfaceVariant,
+        unselectedTextColor = scheme.onSurfaceVariant,
+    )
     Box(Modifier.fillMaxSize()) {
         LauncherBackground(appearance)
         Scaffold(
@@ -511,7 +538,7 @@ fun LauncherScaffold(
                 val short = layout.short
                 val page: @Composable () -> Unit = {
                     if (state != null) {
-                        Page(destination, state, wide, short, actions, Modifier.fillMaxSize())
+                        Page(destination, state, wide, short, actions, Modifier.fillMaxSize(), reducedMotion)
                     } else {
                         LoadPlaceholder(failure, onRetry, Modifier.fillMaxSize())
                     }
@@ -527,7 +554,8 @@ fun LauncherScaffold(
                                     selected = destination == d,
                                     onClick = { onDestination(d) },
                                     icon = { Icon(d.icon, contentDescription = null) },
-                                    label = { NavLabel(d.label, short) },
+                                    label = { NavLabel(d.label, short, destination == d) },
+                                    colors = railColors,
                                 )
                             }
                             Spacer(Modifier.weight(1f))
@@ -553,7 +581,8 @@ fun LauncherScaffold(
                                     selected = destination == d,
                                     onClick = { onDestination(d) },
                                     icon = { Icon(d.icon, contentDescription = null) },
-                                    label = { NavLabel(d.label, short) },
+                                    label = { NavLabel(d.label, short, destination == d) },
+                                    colors = barColors,
                                 )
                             }
                         }
@@ -633,10 +662,19 @@ private fun Page(
     short: Boolean,
     actions: LauncherActions,
     modifier: Modifier,
+    reducedMotion: Boolean = false,
 ) {
     AnimatedContent(
         targetState = destination,
-        transitionSpec = { fadeIn() togetherWith fadeOut() },
+        transitionSpec = {
+            if (reducedMotion) {
+                fadeIn(animationSpec = tween(0)) togetherWith fadeOut(animationSpec = tween(0))
+            } else {
+                // A short directional slide with a crossfade reads as navigation, not a cut.
+                (slideInHorizontally(initialOffsetX = { it / 12 }) + fadeIn()) togetherWith
+                    (slideOutHorizontally(targetOffsetX = { -it / 12 }) + fadeOut())
+            }
+        },
         modifier = modifier,
         label = "page",
     ) { page ->
@@ -648,7 +686,7 @@ private fun Page(
                     Destination.Skins -> SkinsScreen(state, wide, short, actions)
                     Destination.Mods, Destination.Packs, Destination.Shaders ->
                         CatalogScreen(page, state, wide, short, actions)
-                    Destination.Installed -> InstalledScreen(state, actions)
+                    Destination.Installed -> InstalledScreen(state, actions, wide, short)
                     Destination.Screenshots -> ScreenshotGallery(state.config.profileName)
                     Destination.Settings -> {} // drawn as a layer by LauncherScaffold
                 }
@@ -659,40 +697,52 @@ private fun Page(
 
 @Composable
 private fun Header(page: Destination, state: Snapshot, short: Boolean, actions: LauncherActions) {
-    Row(
-        Modifier.fillMaxWidth().padding(top = if (short) 6.dp else 12.dp, bottom = if (short) 6.dp else 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    // A tonal app bar keeps the brand and the current page together, and its surface
+    // separates the chrome from the content below without a hard line.
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(if (short) 16.dp else 24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
-        if (page == Destination.Play) HorizonMark(Modifier.size(if (short) 28.dp else 32.dp))
-        Text(
-            when (page) {
-                Destination.Play -> "Horizon Android"
-                Destination.Skins -> "Skins & Capes"
-                Destination.Mods -> "Horizon Mods"
-                Destination.Packs -> "Resource Packs"
-                Destination.Shaders -> "Shader Packs"
-                Destination.Installed -> "Installed"
-                Destination.Screenshots -> "Screenshots"
-                Destination.Settings -> "Settings"
-            },
-            style = if (short) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-        )
-        if (page != Destination.Settings) AccountChip(state.account, actions.openAccount)
-        val open = page == Destination.Settings
-        FilledTonalIconButton(onClick = actions.toggleSettings) {
-            Crossfade(open, label = "settings-icon") { closing ->
-                Icon(
-                    if (closing) Icons.Rounded.Close else Icons.Rounded.Settings,
-                    contentDescription = if (closing) "Close settings" else "Settings",
-                )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = if (short) 12.dp else 16.dp, vertical = if (short) 8.dp else 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            HorizonMark(Modifier.size(if (short) 26.dp else 32.dp))
+            Text(
+                when (page) {
+                    Destination.Play -> "Horizon Android"
+                    Destination.Skins -> "Skins & Capes"
+                    Destination.Mods -> "Horizon Mods"
+                    Destination.Packs -> "Resource Packs"
+                    Destination.Shaders -> "Shader Packs"
+                    Destination.Installed -> "Installed"
+                    Destination.Screenshots -> "Screenshots"
+                    Destination.Settings -> "Settings"
+                },
+                style = if (short) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+            if (page != Destination.Settings) AccountChip(state.account, actions.openAccount)
+            val open = page == Destination.Settings
+            FilledTonalIconButton(onClick = actions.toggleSettings) {
+                Crossfade(open, label = "settings-icon") { closing ->
+                    Icon(
+                        if (closing) Icons.Rounded.Close else Icons.Rounded.Settings,
+                        contentDescription = if (closing) "Close settings" else "Settings",
+                    )
+                }
             }
         }
     }
+    Spacer(Modifier.height(if (short) 8.dp else 12.dp))
 }
 
 /** [inChip]: drawn on the account chip, taking its tonal colour like the settings button beside it. */

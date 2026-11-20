@@ -1,6 +1,7 @@
 package dev.horizon.android.launcher
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Box
@@ -35,6 +36,51 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+
+/**
+ * The launcher's shared content card: soft tonal surface, generous radius and even padding.
+ * Screens build their sections from this so spacing and elevation read as one app.
+ */
+@Composable
+fun HorizonCard(
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    tonal: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(24.dp),
+        color = if (tonal) colors.secondaryContainer else colors.surfaceContainerLow,
+        contentColor = if (tonal) colors.onSecondaryContainer else colors.onSurface,
+        onClick = onClick,
+    ) {
+        Column(Modifier.padding(16.dp), content = content)
+    }
+}
+
+/** Section heading with an optional trailing action, used above cards and grids. */
+@Composable
+fun SectionHeader(
+    title: String,
+    modifier: Modifier = Modifier,
+    action: (@Composable () -> Unit)? = null,
+) {
+    Row(
+        modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f),
+        )
+        action?.invoke()
+    }
+}
 
 /** Switch with its state drawn in the thumb, so on and off read without relying on colour. */
 @Composable
