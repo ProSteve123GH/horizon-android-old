@@ -131,6 +131,17 @@ class RedactionTests(unittest.TestCase):
             with self.subTest(raw=raw):
                 self.assertEqual(redact_line(raw), expected)
 
+    def test_secret_keywords_are_dropped_case_insensitively_inside_words(self):
+        samples = [
+            "OAuth TOKENREFRESH failed",
+            "newPASSWORD accepted",
+            "basic AUTHORIZATION header",
+            "staleSESSION recovered",
+        ]
+        for line in samples:
+            with self.subTest(line=line):
+                self.assertIsNone(redact_line(line))
+
     def test_report_never_retains_sensitive_content(self):
         report = format_report(
             thread="main",
@@ -174,6 +185,14 @@ class BoundTests(unittest.TestCase):
         for line in report.split("\n"):
             self.assertLessEqual(len(line), MAX_STACK_BYTES)
 
+    def test_metadata_fields_are_bounded(self):
+        long_field = "a" * 5000
+        # Hand-written independent expectation: 2048 chars plus truncation mark.
+        expected = "a" * 2048 + "…(truncated)"
+        self.assertEqual(field(long_field), expected)
+        # A newline-bearing field is flattened to one bounded line.
+        self.assertEqual(field("line1\nline2\rline3"), "line1 line2 line3")
+
 
 class RotationTests(unittest.TestCase):
     def test_keeps_four_newest_reports(self):
@@ -199,6 +218,20 @@ class RotationTests(unittest.TestCase):
             ["kotlin-crash-1000.txt", "kotlin-crash-2000.txt"],
         )
 
+    def test_rotation_caps_at_four_even_with_many_reports(self):
+        existing = ["kotlin-crash-{}.txt".format(t) for t in (100, 200, 300, 400, 500, 600, 700, 800)]
+        kept = rotate(existing, "kotlin-crash-900.txt")
+        self.assertEqual(len(kept), 4)
+        self.assertEqual(
+            kept,
+            [
+                "kotlin-crash-600.txt",
+                "kotlin-crash-700.txt",
+                "kotlin-crash-800.txt",
+                "kotlin-crash-900.txt",
+            ],
+        )
+
 
 class NoticeTests(unittest.TestCase):
     def test_notice_is_consumed_once(self):
@@ -209,6 +242,19 @@ class NoticeTests(unittest.TestCase):
             self.assertEqual(store.pending_report(), NOTICE)
             store.clear()
             self.assertIsNone(store.pending_report())
+            store.clear()
+            self.assertIsNone(store.pending_report())
+
+    def test_notice_rearms_after_a_new_crash(self):
+        with tempfile.TemporaryDirectory() as root:
+            store = MarkerStore(root)
+            store.record_crash()
+            self.assertEqual(store.pending_report(), NOTICE)
+            store.clear()
+            self.assertIsNone(store.pending_report())
+            # A later crash must re-arm the notice for the next launch.
+            store.record_crash()
+            self.assertEqual(store.pending_report(), NOTICE)
             store.clear()
             self.assertIsNone(store.pending_report())
 
