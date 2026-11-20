@@ -1098,6 +1098,23 @@ fn poll_build(home: &Path) {
 
 // ---- `native_compile` ---------------------------------------------------
 
+/// The ids worth building from a Compile request: valid ids only, sorted and
+/// deduplicated. `None` when the request has no `enabled` array or when every
+/// submitted id is invalid — the caller reports the existing "no mods
+/// selected" error instead of starting a build with nothing in it.
+pub(crate) fn selected_ids(args: &Value) -> Option<Vec<String>> {
+    let enabled = args.get("enabled").and_then(Value::as_array)?;
+    let mut ids: Vec<String> = enabled
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|id| horizon_mods::index::valid_id(id))
+        .map(str::to_owned)
+        .collect();
+    ids.sort();
+    ids.dedup();
+    (!ids.is_empty()).then_some(ids)
+}
+
 /// Gather the enabled bundles, pack them and POST the archive to the build
 /// service. The POST happens on a worker thread: the launcher snapshot loop
 /// is the progress channel.
@@ -1112,25 +1129,8 @@ pub(crate) fn compile(
     let args: Value = serde_json::from_str(arg).map_err(|_| {
         "Expected a JSON object with the enabled mods, the APK version code and the ABI".to_string()
     })?;
-    let enabled: Vec<String> = args
-        .get("enabled")
-        .and_then(Value::as_array)
-        .map(|list| {
-            list.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
+    let ids = selected_ids(&args)
         .ok_or("No mods selected: enable at least one native mod to compile")?;
-    if enabled.is_empty() {
-        return Err("No mods selected: enable at least one native mod to compile".into());
-    }
-    let mut ids: Vec<String> = enabled
-        .into_iter()
-        .filter(|id| horizon_mods::index::valid_id(id))
-        .collect();
-    ids.sort();
-    ids.dedup();
     let version_code = args
         .get("versionCode")
         .and_then(Value::as_u64)

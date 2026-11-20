@@ -173,12 +173,13 @@ content folder (`game_home`, default the same):
 | `native/builds/<job>/libhorizon_android.so.partial` | Interrupted download, resumed with `Range:` when possible. |
 | `native/build.json` | The in-flight build (job id, mods, hashes, APK identity, `stock`) so the launcher can resume after a restart. Deleted on success. |
 | `native/pending_crash` | Marker left on every start that uses a modded build; the game deletes it on its first frame. |
-| `native/first-frame` | Universal marker written atomically on the game's first `about_to_wait` (stock and modded starts alike). The launcher's launch overlay waits for this file, and Java removes any stale copy at process start. |
 | `native/crash_streak` | How many starts in a row died before the first frame (`0` on a clean start). |
 | `native/current.json.rejected` | A set-aside build, kept for the error message. |
 | `native/last_rejected` | Human-readable reason the build was set aside; the launcher shows it in a banner. |
-| `native/last_known_good.json` | A healthy `current.json` saved on the first frame; restored when no build is selected and the last one was not just rejected. |
-| `native/last_failed_mod` | Mod ids recorded when a build crashed early, included in the rejection reason. |
+
+This port does not write a `native/first-frame`, `last_known_good.json` or
+`last_failed_mod` file; the crash guard uses `pending_crash` and `crash_streak`
+alone, and start progress comes from the launcher's own snapshot/log signals.
 
 ## The load chain
 
@@ -199,11 +200,11 @@ content folder (`game_home`, default the same):
    `dlopen()`s the named library and forwards Android's own
    `ANativeActivity_onCreate` to it — the game, either the stock build or a
    modded one, with the same JNI setup as a stock start.
-3. On its first `about_to_wait`, the game clears the crash guard once: it
-   writes `native/first-frame` (temp file + rename), deletes `pending_crash`
-   when `HORIZON_NATIVE_PENDING` names it, saves a healthy `current.json` to
-   `last_known_good.json`, and leaves `crash_streak` for Java to reset. The
-   launcher's splash overlay disappears when `first-frame` appears.
+3. On its first `about_to_wait`, the game clears the crash guard once: when
+   `HORIZON_NATIVE_PENDING` names the `pending_crash` file it deletes that
+   marker and writes `crash_streak` back to `0`. A stock start has no pending
+   marker and leaves the guard alone. No `first-frame` or
+   `last_known_good.json` file is written.
 
 ## The crash guard
 
