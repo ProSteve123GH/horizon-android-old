@@ -15,6 +15,8 @@ horizon-narrator = { path = "../horizon-narrator" }
 horizon-client-input = { path = "../horizon-client-input" }
 horizon-anticheat = { path = "../horizon-anticheat" }
 horizon-client = { path = "../horizon-client", default-features = false }
+# The cdylib compiles its own copy of gameplay, so it needs the voice engine directly.
+voicechat_engine = { path = "../voicechat-engine" }
 # Upstream's split engine crates, used by the shared gameplay/Android host glue.
 horizon-hooks = { path = "../horizon-hooks" }
 horizon-cosmetics = { path = "../horizon-cosmetics" }
@@ -67,7 +69,8 @@ base64 = "0.22"
 # hlsl-out: the gfx.rs tests translate every shader as wgpu's DirectX 12 backend does. A normal feature,
 # not a dev-dependency's, so builds, tests and examples share one build of naga, wgpu and this crate.
 naga = { version = "30.0.1", features = ["wgsl-in", "hlsl-out"] }
-# Sound (ALSA on Linux); the `audio` feature.
+# Sound (ALSA on Linux); the `audio` feature. Voice chat needs cpal capture on Android.
+cpal = { version = "0.16", optional = true }
 symphonia = { version = "0.5", default-features = false, features = ["ogg", "vorbis"] }
 miniz_oxide = "0.8"
 ab_glyph = "0.2.32"
@@ -90,7 +93,7 @@ rustix = { version = "1", default-features = false, features = ["std", "time", "
 
 [features]
 default = ["mods", "audio"]
-audio = ["horizon-client/audio"]
+audio = ["horizon-client/audio", "horizon-client-render/audio", "dep:cpal"]
 controllers = []
 mods = ["horizon-client/mods", "horizon-mods/runtime"]
 # Shared gameplay source gates these; Android intentionally keeps them off.

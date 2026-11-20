@@ -385,7 +385,7 @@ pub fn news(status: &voicechat_engine::Status) -> Option<String> {
         }
         match &status.problem {
             Some(p) if st.told.as_deref() != Some(p) => {
-                st.told = Some(p.clone());
+                st.told = Some(p.to_string());
                 Some(format!("Complex Voice Chat: {p}"))
             }
             _ => None,
