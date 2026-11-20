@@ -1,0 +1,45 @@
+[package]
+name = "voicechat_engine"
+version = "2.0.0"
+edition = "2024"
+description = "Simple Voice Chat compatible client (protocol, groups, Opus, UDP, audio), ported from Starling PR #310."
+license = "MIT"
+publish = false
+
+[features]
+# Noise suppression is optional: enabling it pulls in nnnoiseless, which is
+# not in this fork's Cargo.lock. The filter is cfg-gated and works without it.
+default = []
+rnnoise = ["dep:nnnoiseless"]
+
+[dependencies]
+cpal = "0.16"
+log = "0.4"
+nnnoiseless = { version = "0.5", optional = true }
+png = "0.18"
+ring = "0.17"
+
+[build-dependencies]
+cc = "1.6"
+
+# The engine is a direct port of Starling PR #310. Keep its lint exceptions
+# local to this crate instead of loosening the workspace's lints.
+[lints.rust]
+dead_code = "allow"
+private_interfaces = "allow"
+unknown_lints = "allow"
+
+[lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
+needless_range_loop = "allow"
+large_enum_variant = "allow"
+collapsible_match = "allow"
+unusual_byte_groupings = "allow"
+items_after_test_module = "allow"
+field_reassign_with_default = "allow"
+bool_assert_comparison = "allow"
+nonminimal_bool = "allow"
+collapsible_if = "allow"
+manual_slice_size_calculation = "allow"
+manual_range_contains = "allow"
