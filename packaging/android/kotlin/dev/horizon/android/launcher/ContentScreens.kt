@@ -76,8 +76,10 @@ private fun iconOf(kind: String) = when (kind) {
 }
 
 @Composable
-private fun FolderButton(kind: String, modifier: Modifier = Modifier) {
-    FilledTonalButton(onClick = { act("open_folder", kind) }, modifier = modifier) {
+private fun FolderButton(onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    // The Documents provider was removed, so the old "open_folder" bridge call
+    // silently failed. Take the player to the in-app browser instead.
+    FilledTonalButton(onClick = onOpen, modifier = modifier) {
         Icon(Icons.Rounded.FolderOpen, null, Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
         Text("Folder", maxLines = 1)
@@ -173,14 +175,14 @@ fun CatalogScreen(page: Destination, state: Snapshot, wide: Boolean, short: Bool
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FolderButton(kind, Modifier.weight(1f))
+                            FolderButton(actions.openGameFiles, Modifier.weight(1f))
                             ImportButton(Modifier.weight(1f)) { actions.import(kind) }
                         }
                         SourcePicker(page, state, Modifier.weight(2f), short)
                     }
                 } else {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FolderButton(kind, Modifier.weight(1f))
+                        FolderButton(actions.openGameFiles, Modifier.weight(1f))
                         ImportButton(Modifier.weight(1f)) { actions.import(kind) }
                     }
                     if (hasSources) {

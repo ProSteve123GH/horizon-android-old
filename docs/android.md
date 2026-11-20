@@ -194,7 +194,7 @@ both a QWERTY keyboard and a mouse. **Keyboard & mouse** selects it explicitly;
 The Compose launcher is Kotlin in the main process. The Rust game is an
 `android.app.NativeActivity` in the `:game` process, so closing the game does not
 destroy the launcher and the two cannot share a winit event loop. Kotlin starts
-the Android document pickers and owns the documents provider; Rust/JNI provides
+the Android document pickers and the in-app Game files browser; Rust/JNI provides
 the controller bridge, persisted document reads, storage checks and the system
 keyboard. The system keyboard uses Android's stock text editor and input-method
 service through Rust/JNI on the UI thread. There is one engine library in the
@@ -251,8 +251,8 @@ already published to Pictures.
 
 Horizon keeps the player's worlds, mods, packs, shader packs, options, saved
 servers, screenshots, instances and the shareable reports in app storage
-until you move them; they are reachable from a file manager through the
-**Files → Horizon Android** entry, backed by Horizon's documents provider.
+until you move them; you can browse them in the launcher's **Game files**
+screen (Settings → Storage & Files → Browse game files).
 
 **Settings → Storage → Game files location** is a two-option chooser:
 **Internal storage** (recommended) keeps those files in
@@ -260,7 +260,7 @@ until you move them; they are reachable from a file manager through the
 open directly, while **App storage (SAF)** keeps them in app storage. On first
 launch — or while the files are still in app storage — Horizon asks once
 whether to move them; the prompt never shows again after either choice, and
-denying it keeps the SAF entry fully working as before. The move happens only
+denying it keeps the Game files screen fully working as before. The move happens only
 after you grant the access Android shows in system settings: All files access
 on Android 11 and newer, or the legacy storage permission on Android 9 and 10.
 **Move back to app storage** reverses the move from the same chooser.

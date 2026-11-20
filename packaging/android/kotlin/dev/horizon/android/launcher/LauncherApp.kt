@@ -422,7 +422,14 @@ private fun LauncherContent(
             )
             Overlay.GameFiles -> Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                 Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-                    val root = state.storage.dir?.let { java.io.File(it) } ?: sharedStorageDir()
+                    // Before the one-way migration the recorded dir is null and the shared
+                    // folder does not exist yet: browse the app-private files instead so the
+                    // browser works immediately rather than opening a missing path.
+                    val root = if (state.storage.state == "private") {
+                        context.filesDir
+                    } else {
+                        state.storage.dir?.let { java.io.File(it) } ?: sharedStorageDir()
+                    }
                     GameFilesScreen(root = root, onBack = { overlay = null })
                 }
             }

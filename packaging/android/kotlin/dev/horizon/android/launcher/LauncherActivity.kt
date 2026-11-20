@@ -2,10 +2,13 @@ package dev.horizon.android.launcher
 
 import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.platform.LocalContext
 import dev.horizon.android.HorizonActivity
 import dev.horizon.android.NativeBridge
 import java.io.File
@@ -20,13 +23,19 @@ import java.io.File
  */
 class LauncherActivity : ComponentActivity() {
     private val granted = mutableStateOf(false)
+    // State, not a local val: the gate and the launcher are two different branches
+    // of the same composition, and the notice must be consumed exactly once.
+    private val crashNotice = mutableStateOf<String?>(null)
     private var bridgeStarted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         copyEngineData()
-        val crashNotice = CrashHandler.pendingReport(this)
+        // Read the notice unconditionally, before any grant check: a crash from the
+        // previous run must be shown as soon as the launcher composes, whether the
+        // storage gate is up or the native bridge is already available.
+        crashNotice.value = CrashHandler.pendingReport(this)
         granted.value = hasAllFilesAccess(this)
         if (granted.value) startBridge()
         setContent {
@@ -35,9 +44,17 @@ class LauncherActivity : ComponentActivity() {
                     onPlay = ::startGame,
                     onImport = { kind, uri -> NativeBridge.importDocument(this, kind, uri) },
                     onImportNative = { uri -> NativeBridge.importNativeDocument(this, uri) },
-                    crashNotice = crashNotice,
+                    crashNotice = crashNotice.value,
                 )
             } else {
+                val context = LocalContext.current
+                LaunchedEffect(Unit) {
+                    crashNotice.value?.let { notice ->
+                        Toast.makeText(context, notice, Toast.LENGTH_LONG).show()
+                        CrashHandler.clear(context)
+                        crashNotice.value = null
+                    }
+                }
                 StorageAccessGate(onRecheck = ::recheck)
             }
         }

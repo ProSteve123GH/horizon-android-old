@@ -182,12 +182,9 @@ impl Controller {
         {
             self.diagnostic_export = None;
             self.catalog.status = match result {
-                Ok(name) => {
-                    let _ = crate::platform::open_documents("reports");
-                    format!(
-                        "Saved {name} in Reports. Review the ZIP before sharing; nothing was uploaded."
-                    )
-                }
+                Ok(name) => format!(
+                    "Saved {name} in Reports. Review the ZIP before sharing; nothing was uploaded."
+                ),
                 Err(error) => format!("Diagnostic export failed: {error}"),
             };
         }
@@ -314,8 +311,8 @@ impl Controller {
             {"group": "Storage", "rows": [
                 row("storage", "Game files location", self.storage_summary(), "action"),
                 row("screenshots", "Screenshots", "Browse, preview, share or delete".into(), "action"),
-                row("game_files", "Game files", "Open in system Files".into(), "action"),
-                row("world_files", "World files", "Import / copy / back up in Files".into(), "action"),
+                row("game_files", "Game files", "Browse worlds, mods, packs and shaders".into(), "action"),
+                row("world_files", "World files", "Import / copy / back up world folders".into(), "action"),
             ]},
             {"group": "Diagnostics", "rows": [
                 switch("gpu_profile", "GPU profiling", if c.device.gpu_profile { "On / included in report" } else { "Off" }, c.device.gpu_profile),
@@ -906,7 +903,7 @@ impl Controller {
                 self.catalog.status = if crate::platform::open_documents(&id) {
                     "Opened in Files. Return here after copying files.".into()
                 } else {
-                    "Open the system Files app and choose Horizon Android.".into()
+                    "System Files is unavailable. Use Game files in Settings to browse this folder.".into()
                 };
             }
             "storage_migrate" => {
@@ -1012,7 +1009,7 @@ impl Controller {
                 ) {
                     "Game files opened. Worlds, mods, packs, shaders and reports are available here.".into()
                 } else {
-                    "Open system Files > Horizon Android.".into()
+                    "System Files is unavailable. Use the Game files screen in Settings to browse worlds, mods, packs, shaders and reports.".into()
                 };
             }
             "screenshots" => return Ok(self.screenshots("newest")),
@@ -1039,7 +1036,7 @@ impl Controller {
                 self.catalog.status = if crate::platform::open_documents(&id) {
                     "Copy a complete world folder to back up or import. Finish copying before Play; never replace an existing world silently.".into()
                 } else {
-                    "Open system Files > Horizon Android > Worlds. Copy complete world folders while the game is closed.".into()
+                    "System Files is unavailable. Use Game files in Settings to copy world folders while the game is closed.".into()
                 };
             }
             "select_account" => {
@@ -1231,7 +1228,7 @@ impl Controller {
             "export_diagnostics" => {}
             "export_performance" => {
                 self.catalog.status = match crate::performance::export(&home) {
-                    Ok(()) => "Reports opened in Files. Copy or share a report from there.".into(),
+                    Ok(()) => "Performance report saved. Find it in Reports in the Game files screen.".into(),
                     Err(e) => e,
                 };
             }
@@ -1852,7 +1849,7 @@ impl Controller {
         }
         if crate::shared_storage::state(&self.home) == crate::shared_storage::State::Missing {
             self.catalog.status =
-                "Horizon cannot find the Horizon-Android folder with your worlds. Re-create it from Settings → Storage → Game files location (or from a file manager), or move the game files back in the same place.".into();
+                "Horizon cannot find the Horizon-Android folder with your worlds. Re-create it from Settings → Storage → Game files location (or from a file manager).".into();
             return Ok(json!({"launch": false}));
         }
         if horizon_client::official_install::ready(&self.home) {

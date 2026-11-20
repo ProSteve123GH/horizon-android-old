@@ -35,16 +35,23 @@ static GAME_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 /// keep the marker name and semantics in sync with `shared_storage.rs`.
 /// Only the game files re-anchor — the launcher's own `android-*` state is
 /// always read from `home` itself.
+///
+/// A recorded folder that is missing or unreadable is *not* a reason to fall
+/// back to the private home: `shared_storage::state` reports `Missing` and
+/// keeps its recorded root. Re-anchoring here would make SAF show and edit
+/// stale private copies while the game reads the shared folder. Mirror
+/// `shared_storage::recorded_dir` — only the marker's absoluteness matters,
+/// never whether `read_dir` currently succeeds (it fails without all-files
+/// access and on a transient mount).
 fn resolve_base(home: &Path) -> PathBuf {
-    fn marker_dir(home: &Path) -> Option<PathBuf> {
+    fn recorded_dir(home: &Path) -> Option<PathBuf> {
         let bytes = fs::read(home.join("shared-storage.json")).ok()?;
         let value = serde_json::from_slice::<Value>(&bytes).ok()?;
         let dir = value.get("dir")?.as_str()?;
         let path = PathBuf::from(dir);
-        // stat() succeeds even without the all-files access, so probe by opening.
-        (path.is_absolute() && fs::read_dir(&path).is_ok()).then_some(path)
+        path.is_absolute().then_some(path)
     }
-    marker_dir(home).unwrap_or_else(|| home.to_path_buf())
+    recorded_dir(home).unwrap_or_else(|| home.to_path_buf())
 }
 static GAME_LOCK: std::sync::Mutex<Option<File>> = std::sync::Mutex::new(None);
 const GAME_LOCK_FILE: &str = "game.lock";
@@ -525,7 +532,10 @@ pub fn call(home: &Path, op: &str, id: &str, arg: &str) -> io::Result<Value> {
             if target.path.try_exists()? {
                 return Err(io::Error::from(ErrorKind::AlreadyExists));
             }
-            fs::rename(&source.path, &target.path)?;
+            // Same no-clobber guarantee as `rename`: a target created between
+            // the existence check and here (or a race with another provider)
+            // must fail instead of overwriting the player's file.
+            rename_new(&source.path, &target.path)?;
             Ok(json!(child))
         }
         _ => Err(invalid()),
@@ -559,6 +569,35 @@ fn rename_new(source: &Path, target: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn missing_shared_folder_keeps_the_recorded_root() {
+        let home = std::env::temp_dir().join(format!(
+            "horizon-doc-storage-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(home.join("horizon-mods")).unwrap();
+        // A stale private copy that SAF must never show after the move.
+        fs::write(home.join("horizon-mods/stale.hmod"), b"stale").unwrap();
+        let recorded = home.join("gone");
+        fs::write(
+            home.join("shared-storage.json"),
+            json!({"version": 1, "dir": recorded.to_string_lossy()}).to_string(),
+        )
+        .unwrap();
+        // The folder cannot be opened, but the marker is authoritative: SAF
+        // keeps the shared root instead of silently editing private copies.
+        assert_eq!(resolve_base(&home), recorded);
+        let doc = resolve(&home, "p0/mods/stale.hmod").unwrap();
+        assert_eq!(doc.path, recorded.join("horizon-mods/stale.hmod"));
+        // The private copy is untouched; resolving never redirects to it.
+        assert!(home.join("horizon-mods/stale.hmod").is_file());
+        fs::remove_dir_all(&home).unwrap();
+    }
+
     #[test]
     fn boundaries_profiles_and_non_overwriting_operations() {
         let home = std::env::temp_dir().join(format!(

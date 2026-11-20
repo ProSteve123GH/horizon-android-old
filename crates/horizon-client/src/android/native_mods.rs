@@ -195,6 +195,67 @@ fn copy_new(source: &Path, destination: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Reserve a sibling temp file next to `destination` by copying `source` into
+/// it with `create_new`, so no existing file or symlink is ever followed or
+/// replaced. The dot-prefixed name keeps a half-written copy invisible to the
+/// content and native mod installers, which only scan for `.hmod` / `.hnmod`.
+fn copy_to_temp(source: &Path, destination: &Path) -> Result<PathBuf, String> {
+    let name = destination
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "bundle".to_owned());
+    for attempt in 0..32 {
+        let temp_name = if attempt == 0 {
+            format!(".{name}.tmp")
+        } else {
+            format!(".{name}.tmp.{attempt}")
+        };
+        let temp = destination.with_file_name(temp_name);
+        if fs::symlink_metadata(&temp).is_ok() {
+            continue; // a leftover (or planted) name: try the next one
+        }
+        match copy_new(source, &temp) {
+            Ok(()) => return Ok(temp),
+            Err(error) => {
+                // `create_new` refused a path that appeared in between, or a
+                // copy failed part way; never leave a partial temp behind.
+                let _ = fs::remove_file(&temp);
+                return Err(error);
+            }
+        }
+    }
+    Err(format!(
+        "could not reserve a temporary file next to {}",
+        destination.display()
+    ))
+}
+
+/// Publish a prepared temp into its final path without replacing an existing
+/// file or following a symlink. The temp is consumed on success and left in
+/// place on failure so the caller can roll it back.
+fn publish_temp(temp: &Path, destination: &Path) -> Result<(), String> {
+    if fs::hard_link(temp, destination).is_ok() {
+        let _ = fs::remove_file(temp);
+        return Ok(());
+    }
+    // FUSE-backed shared storage may not support hard links; `copy_new` keeps
+    // the same create_new / no-follow guarantees within the directory.
+    copy_new(temp, destination)?;
+    let _ = fs::remove_file(temp);
+    Ok(())
+}
+
+/// The id in a file's own `horizon-mod.toml`. A file name with the right id is
+/// not proof of ownership: the content manifest is what identifies a mod.
+fn content_manifest_id(path: &Path) -> Option<String> {
+    let file = fs::File::open(path).ok()?;
+    let mut zip = zip::ZipArchive::new(file).ok()?;
+    let mut manifest = zip.by_name(horizon_mods::manifest::MANIFEST).ok()?;
+    let mut text = String::new();
+    manifest.take(1 << 20).read_to_string(&mut text).ok()?;
+    horizon_mods::Manifest::parse(&text).ok().map(|parsed| parsed.id)
+}
+
 /// The loader state, app-private: the same folder `HorizonActivity` reads.
 fn priv_native(home: &Path) -> PathBuf {
     home.join("native")
@@ -365,6 +426,9 @@ pub(crate) fn install_staged(
         return Err(format!("a native mod with id '{id}' is installed; remove it first"));
     }
     let target = bundle_file(game_home, &id, extension);
+    if fs::symlink_metadata(&target).is_ok() {
+        return Err(format!("a native mod with id '{id}' is installed; remove it first"));
+    }
     // A combined bundle is content as well. Refuse an id collision before
     // writing anything, and never replace an existing content mod.
     let mirror = if has_content {
@@ -385,49 +449,70 @@ pub(crate) fn install_staged(
     } else {
         None
     };
-    // The cache and the instance can be on different filesystems (app
-    // storage and shared storage), so a plain rename can fail with EXDEV.
-    match fs::rename(staged, &target) {
-        Ok(()) => {}
-        Err(rename_error) => {
-            if fs::copy(staged, &target).is_ok() {
-                let _ = fs::remove_file(staged);
-            } else {
-                let _ = fs::remove_file(&target);
-                return Err(format!(
-                    "could not store the bundle: rename failed ({rename_error}); copy failed"
-                ));
+    // Prepare both destinations as sibling temps before publishing either.
+    // The staged source is never consumed until both files are in place, so a
+    // failure anywhere below leaves the user's picked file untouched and a
+    // retry does not ask them to pick it again. The cache and the instance may
+    // be on different filesystems, so copying (rather than renaming) avoids
+    // EXDEV surprises too.
+    let native_temp = copy_to_temp(staged, &target)?;
+    let mirror_temp = match &mirror {
+        Some(mirror) => match copy_to_temp(staged, mirror) {
+            Ok(temp) => Some(temp),
+            Err(error) => {
+                let _ = fs::remove_file(&native_temp);
+                return Err(error);
             }
+        },
+        None => None,
+    };
+    let result = (|| -> Result<(), String> {
+        publish_temp(&native_temp, &target)?;
+        if let (Some(temp), Some(mirror)) = (&mirror_temp, &mirror) {
+            publish_temp(temp, mirror)?;
         }
-    }
-    if let Some(mirror) = mirror {
-        if let Err(error) = copy_new(&target, &mirror) {
-            // Roll back both files: a half-imported combined mod is worse
-            // than no import at all, and would block the next attempt.
-            let _ = fs::remove_file(&mirror);
-            let _ = fs::remove_file(&target);
-            return Err(format!("could not mirror the content part: {error}"));
+        Ok(())
+    })();
+    if result.is_err() {
+        // Neither destination existed when we started (collisions are refused
+        // above), so removing them here cannot delete someone else's file: it
+        // only clears a partial or half-published install. The temps and the
+        // staged source stay untouched so a retry needs no new file pick.
+        if let Some(mirror) = &mirror {
+            let _ = fs::remove_file(mirror);
         }
+        let _ = fs::remove_file(&target);
+        let _ = fs::remove_file(&native_temp);
+        if let Some(temp) = &mirror_temp {
+            let _ = fs::remove_file(temp);
+        }
+        return result;
     }
+    // Both files are safely in place; the staged copy is now ours to consume.
+    let _ = fs::remove_file(staged);
     Ok((id, version))
 }
 
 // ---- removal -----------------------------------------------------------------
 
-/// `native_remove`: delete the stored bundle (either extension) and the
-/// mirrored content file of a combined `.hmod`, if present. The installed
-/// build, if any, is left alone; it only loads on its own APK version anyway.
+/// `native_remove`: delete the stored bundle (either extension) and, only when
+/// it provably belongs to this bundle, the mirrored content file. An active
+/// compiled build that names the removed mod is discarded so Play loads stock.
 pub(crate) fn remove(game_home: &Path, id: &str) -> Result<(), String> {
     if !horizon_mods::index::valid_id(id) {
         return Err("Invalid native mod id".into());
     }
     let mut removed = false;
+    // Only a combined native bundle (stored as `.hmod`) ever creates a mirror;
+    // a native-only `.hnmod` cannot own one.
+    let mut stored_combined = false;
     for &extension in &BUNDLE_EXTENSIONS {
         let file = bundle_file(game_home, id, extension);
         match fs::symlink_metadata(&file) {
             Ok(metadata) if metadata.is_file() => {
                 fs::remove_file(&file).map_err(|error| format!("could not remove {id}: {error}"))?;
                 removed = true;
+                stored_combined |= extension == "hmod";
             }
             Ok(_) => return Err(format!("Refusing to remove a redirected native mod with id '{id}'")),
             Err(_) => {}
@@ -436,15 +521,53 @@ pub(crate) fn remove(game_home: &Path, id: &str) -> Result<(), String> {
     if !removed {
         return Err(format!("No native mod with id '{id}' is installed"));
     }
-    // Only combined bundles have a mirror, and we never remove content for an
-    // id that has no native bundle installed.
-    let mirror = game_home.join("horizon-mods").join(format!("{id}.hmod"));
-    if let Ok(metadata) = fs::symlink_metadata(&mirror) {
-        if metadata.is_file() {
-            fs::remove_file(&mirror).map_err(|error| format!("could not remove {id}: {error}"))?;
+    // A matching file name is not proof of ownership: a separate content mod
+    // with the same id may live at that path (e.g. a content `foo.hmod`
+    // installed before a native-only `foo.hnmod`). Delete the mirror only when
+    // the stored native file was combined *and* the mirror's own content
+    // manifest names this id. If either signal is missing, leave it alone.
+    if stored_combined {
+        let mirror = game_home.join("horizon-mods").join(format!("{id}.hmod"));
+        if let Ok(metadata) = fs::symlink_metadata(&mirror) {
+            if metadata.is_file() && content_manifest_id(&mirror).as_deref() == Some(id) {
+                fs::remove_file(&mirror).map_err(|error| format!("could not remove {id}: {error}"))?;
+            }
         }
     }
+    // A build compiled with this mod would still load it on the next Play.
+    // Discard it so the stock game runs. Let the launcher's result status say
+    // so; a rejected build already boots stock and keeps its reason visible.
+    if let Some(home) = crate::backend::try_data_dir()
+        && disable_build_using(&home, id)
+    {
+        finish(format!(
+            "Removed native mod {id}. The active modded build was disabled; the stock game runs on the next start."
+        ));
+    }
     Ok(())
+}
+
+/// If the active `current.json` build names `id`, discard it by reusing the
+/// normal disable path (which clears the build, its rollback target and crash
+/// attribution so the removed mod cannot silently come back). A rejected
+/// build is the stock-fallback state: it already boots stock and keeps its
+/// rejection reason on screen, so it is deliberately left untouched.
+fn disable_build_using(home: &Path, id: &str) -> bool {
+    let Some(current) = read_json(&priv_native(home).join("current.json")) else {
+        return false;
+    };
+    let uses_id = current
+        .get("mods")
+        .and_then(Value::as_array)
+        .is_some_and(|mods| {
+            mods.iter()
+                .any(|entry| entry.get("id").and_then(Value::as_str) == Some(id))
+        });
+    if !uses_id {
+        return false;
+    }
+    let _ = disable(home);
+    true
 }
 
 /// `native_disable`: forget any selected modded build. The next start loads
@@ -1995,6 +2118,105 @@ mod tests {
         assert_eq!(shown["reject_reason"], "engine commit mismatch");
         assert_eq!(shown["lastFailedMod"], "bad-mod");
         assert_eq!(shown["rollbackAvailable"], true);
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// Removing a native-only bundle must not delete a content mod that merely
+    /// shares its id (the P1 data-loss trigger).
+    #[test]
+    fn remove_native_only_leaves_a_content_mod_mirror_alone() {
+        let home = std::env::temp_dir().join(format!(
+            "hz-native-remove-native-only-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(bundle_dir(&home)).unwrap();
+        fs::create_dir_all(home.join("horizon-mods")).unwrap();
+        fs::write(bundle_file(&home, "foo", "hnmod"), b"native").unwrap();
+        let mirror = home.join("horizon-mods/foo.hmod");
+        fs::write(&mirror, b"someone else's content").unwrap();
+
+        remove(&home, "foo").unwrap();
+        assert_eq!(stored_bundle(&home, "foo"), None);
+        assert_eq!(fs::read(&mirror).unwrap(), b"someone else's content");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    fn content_hmod(id: &str) -> Vec<u8> {
+        let toml = format!(
+            "id=\"{id}\"\nname=\"Foo\"\nversion=\"1.0.0\"\napi=\"0.2\"\ncapabilities=[\"registries\"]\n"
+        );
+        let mut body = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut body));
+            let options = zip::write::SimpleFileOptions::default();
+            zip.start_file(horizon_mods::manifest::MANIFEST, options)
+                .unwrap();
+            zip.write_all(toml.as_bytes()).unwrap();
+            zip.finish().unwrap();
+        }
+        body
+    }
+
+    /// A combined native bundle may remove a mirror only when that mirror's own
+    /// content manifest names the same id. A mirror naming another id is left
+    /// alone even at the expected path.
+    #[test]
+    fn remove_deletes_only_a_mirror_that_proves_its_identity() {
+        let home = std::env::temp_dir().join(format!(
+            "hz-native-remove-combined-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(bundle_dir(&home)).unwrap();
+        let content_dir = home.join("horizon-mods");
+        fs::create_dir_all(&content_dir).unwrap();
+
+        fs::write(bundle_file(&home, "foo", "hmod"), b"combined").unwrap();
+        let own = content_dir.join("foo.hmod");
+        fs::write(&own, content_hmod("foo")).unwrap();
+        remove(&home, "foo").unwrap();
+        assert!(!own.exists(), "a proven mirror belongs to the native bundle");
+
+        fs::write(bundle_file(&home, "bar", "hmod"), b"combined").unwrap();
+        let foreign = content_dir.join("bar.hmod");
+        fs::write(&foreign, content_hmod("other")).unwrap();
+        remove(&home, "bar").unwrap();
+        assert!(foreign.is_file(), "an unproven mirror must be left alone");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// A removed mod listed in the active build disables that build so Play
+    /// falls back to stock. A build naming another mod, and a rejected build
+    /// (the stock-fallback state), are left intact.
+    #[test]
+    fn remove_disables_only_an_active_build_naming_the_mod() {
+        let home = std::env::temp_dir().join(format!(
+            "hz-native-remove-build-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&home);
+        let dir = priv_native(&home);
+        fs::create_dir_all(&dir).unwrap();
+        let build = json!({
+            "id": "foo",
+            "mods": [{"id": "foo", "version": "1.0"}],
+        })
+        .to_string();
+
+        atomic_write(&dir.join("current.json"), build.as_bytes()).unwrap();
+        assert!(disable_build_using(&home, "foo"));
+        assert!(!dir.join("current.json").exists());
+
+        atomic_write(&dir.join("current.json"), build.as_bytes()).unwrap();
+        assert!(!disable_build_using(&home, "bar"));
+        assert!(dir.join("current.json").is_file());
+
+        fs::remove_file(dir.join("current.json")).unwrap();
+        let rejected = dir.join("current.json.rejected");
+        fs::write(&rejected, build.as_bytes()).unwrap();
+        assert!(!disable_build_using(&home, "foo"));
+        assert!(rejected.is_file());
         let _ = fs::remove_dir_all(&home);
     }
 }

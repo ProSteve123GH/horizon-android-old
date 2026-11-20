@@ -48,7 +48,7 @@ pub fn open_folder(dir: &Path) {
             let id =
                 crate::document_store::folder_id(crate::document_store::profile(&home), folder);
             if !crate::platform::open_documents(&id) {
-                log::warn!("Open Files, then choose Horizon Android / {folder}");
+                log::warn!("Folder opening is unavailable; browse {folder} in the Game files screen");
             }
         }
     }

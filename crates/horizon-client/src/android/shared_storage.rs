@@ -54,6 +54,12 @@ const JOURNAL: &str = ".storage-migration.json";
 /// Top-level entries of the private home that never move to shared storage:
 /// the prepared engine build, private diagnostics, account sessions and the
 /// launcher's own state. Reports the user asked to see travel separately.
+///
+/// `native/` holds the Java loader's `current.json` and the compiled modded
+/// libraries under `builds/` (`filesDir/native/...` in
+/// `NativeMods.prepareAndLoad`). It must stay app-private: moving it leaves the
+/// loader with no manifest and silently boots the stock game. Native-mod
+/// *bundles* live in the separate `horizon-native-mods/` folder and do travel.
 const PRIVATE_TOP_LEVEL: &[&str] = &[
     "engine-data.zip",
     "engine-data.partial",
@@ -65,6 +71,7 @@ const PRIVATE_TOP_LEVEL: &[&str] = &[
     "control.json",
     "launch-request.json",
     "game.lock",
+    "native",
 ];
 
 /// Entries that never move even inside instance folders: account sessions
@@ -448,12 +455,33 @@ fn copy_one(plan: &EntryPlan, created: &mut Vec<Created>) -> std::io::Result<u64
     Ok(copied)
 }
 
+/// Byte-for-byte comparison of two files. Used both to verify a copy and, on
+/// recovery, to confirm that a journal source still holds the migrated
+/// original — no hashing dependency, and the verified destination is a
+/// stronger reference than a recorded hash would be.
+fn files_equal(a: &Path, b: &Path) -> std::io::Result<bool> {
+    use std::io::Read;
+
+    let mut left = fs::File::open(a)?;
+    let mut right = fs::File::open(b)?;
+    let mut left_buf = [0u8; 64 * 1024];
+    let mut right_buf = [0u8; 64 * 1024];
+    loop {
+        let read_left = left.read(&mut left_buf)?;
+        let read_right = right.read(&mut right_buf)?;
+        if read_left != read_right || left_buf[..read_left] != right_buf[..read_right] {
+            return Ok(false);
+        }
+        if read_left == 0 {
+            return Ok(true);
+        }
+    }
+}
+
 /// Re-reads a copied file end to end and compares it with the source, byte
 /// for byte. A truncated or torn copy would otherwise become the only copy
 /// of a world; the size check alone cannot catch a same-length corruption.
 fn verify_file(plan: &EntryPlan) -> std::io::Result<()> {
-    use std::io::Read;
-
     let source = fs::metadata(&plan.src)?;
     let copied = fs::metadata(&plan.dst)?;
     if source.len() != plan.bytes || copied.len() != plan.bytes {
@@ -467,23 +495,13 @@ fn verify_file(plan: &EntryPlan) -> std::io::Result<()> {
             ),
         ));
     }
-    let mut src = fs::File::open(&plan.src)?;
-    let mut dst = fs::File::open(&plan.dst)?;
-    let mut a = [0u8; 64 * 1024];
-    let mut b = [0u8; 64 * 1024];
-    loop {
-        let read_a = src.read(&mut a)?;
-        let read_b = dst.read(&mut b)?;
-        if read_a != read_b || a[..read_a] != b[..read_b] {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Contents differ between {} and {}", plan.src.display(), plan.dst.display()),
-            ));
-        }
-        if read_a == 0 {
-            return Ok(());
-        }
+    if !files_equal(&plan.src, &plan.dst)? {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("Contents differ between {} and {}", plan.src.display(), plan.dst.display()),
+        ));
     }
+    Ok(())
 }
 
 /// Every directory the destination side of `plans` needs to exist, from the
@@ -520,6 +538,18 @@ fn rollback(created: &[Created]) {
     }
 }
 
+/// One file of an in-flight migration. `bytes` is the source length at the
+/// moment the journal was written; recovery in the `deleting` phase uses it
+/// (plus a byte-for-byte comparison with the verified `dst`) to make sure a
+/// source path still holds the original before removing it. Without that check
+/// a stale journal could delete an unrelated file placed at the same path
+/// after the crash. `None` means an older journal that did not record a length.
+struct JournalFile {
+    src: PathBuf,
+    dst: PathBuf,
+    bytes: Option<u64>,
+}
+
 /// A snapshot of an in-flight migration, written to the private home before
 /// anything is copied. The journal is the only state a killed or crashed
 /// migration leaves behind; [`recover`] finishes or undoes exactly what it
@@ -531,8 +561,8 @@ struct MigrationJournal {
     to_shared: bool,
     from: PathBuf,
     target: PathBuf,
-    /// `(src, dst)` for every file that travels, in copy order.
-    files: Vec<(PathBuf, PathBuf)>,
+    /// Every file that travels, in copy order.
+    files: Vec<JournalFile>,
     /// Every directory the destination side needs, including `target`
     /// itself. Recovery removes these deepest-first and only when empty.
     created_dirs: Vec<PathBuf>,
@@ -549,9 +579,10 @@ impl MigrationJournal {
             "to_shared": self.to_shared,
             "from": self.from.to_string_lossy(),
             "target": self.target.to_string_lossy(),
-            "files": self.files.iter().map(|(src, dst)| json!({
-                "src": src.to_string_lossy(),
-                "dst": dst.to_string_lossy(),
+            "files": self.files.iter().map(|file| json!({
+                "src": file.src.to_string_lossy(),
+                "dst": file.dst.to_string_lossy(),
+                "bytes": file.bytes,
             })).collect::<Vec<_>>(),
             "created_dirs": self.created_dirs.iter()
                 .map(|dir| dir.to_string_lossy().into_owned())
@@ -573,10 +604,13 @@ impl MigrationJournal {
             .as_array()?
             .iter()
             .map(|entry| {
-                Some((
-                    PathBuf::from(entry.get("src")?.as_str()?),
-                    PathBuf::from(entry.get("dst")?.as_str()?),
-                ))
+                Some(JournalFile {
+                    src: PathBuf::from(entry.get("src")?.as_str()?),
+                    dst: PathBuf::from(entry.get("dst")?.as_str()?),
+                    // Older journals did not record the source length; those
+                    // rely on the byte-for-byte match with `dst` alone.
+                    bytes: entry.get("bytes").and_then(|v| v.as_u64()),
+                })
             })
             .collect::<Option<Vec<_>>>()?;
         let dirs = |key: &str| -> Option<Vec<PathBuf>> {
@@ -625,8 +659,11 @@ fn journal_paths_are_safe(journal: &MigrationJournal) -> bool {
     if !journal.from.is_absolute() || !journal.target.is_absolute() {
         return false;
     }
-    journal.files.iter().all(|(src, dst)| {
-        src.is_absolute() && dst.is_absolute() && src.starts_with(&journal.from) && dst.starts_with(&journal.target)
+    journal.files.iter().all(|file| {
+        file.src.is_absolute()
+            && file.dst.is_absolute()
+            && file.src.starts_with(&journal.from)
+            && file.dst.starts_with(&journal.target)
     }) && journal.created_dirs.iter().all(|dir| dir.starts_with(&journal.target))
         && journal
             .source_dirs
@@ -638,12 +675,12 @@ fn journal_paths_are_safe(journal: &MigrationJournal) -> bool {
 /// directories this run created (only while they are empty). Sources are
 /// left untouched. Used after a crash in the `copying` phase.
 fn recover_copying(home: &Path, journal: &MigrationJournal) {
-    for (_, dst) in journal.files.iter().rev() {
+    for file in journal.files.iter().rev() {
         // The destination was created by the interrupted run; only files
         // (never directories) are removed by path.
-        match fs::symlink_metadata(dst) {
+        match fs::symlink_metadata(&file.dst) {
             Ok(meta) if !meta.is_dir() => {
-                let _ = fs::remove_file(dst);
+                let _ = fs::remove_file(&file.dst);
             }
             _ => {}
         }
@@ -656,13 +693,35 @@ fn recover_copying(home: &Path, journal: &MigrationJournal) {
     let _ = fs::remove_file(journal_path(home));
 }
 
+/// True when a journal source still holds the very bytes we copied to `dst`.
+/// The recorded length rejects a replacement of a different size; comparing
+/// against the verified destination also rejects a same-length replacement
+/// without pulling a hashing crate into this standalone-compiled file.
+fn source_still_original(file: &JournalFile) -> bool {
+    let Ok(meta) = fs::symlink_metadata(&file.src) else {
+        return false; // already removed, or gone: nothing to delete
+    };
+    // A directory or symlink now at this path is not the file we migrated.
+    if !meta.is_file() {
+        return false;
+    }
+    if file.bytes.is_some_and(|bytes| meta.len() != bytes) {
+        return false;
+    }
+    files_equal(&file.src, &file.dst).unwrap_or(false)
+}
+
 /// Finishes the delete phase the interrupted run started: the destination
 /// was fully copied and verified, so the recorded sources may be removed,
 /// the empty source directories pruned, and the marker recorded. Used after
-/// a crash in the `deleting` phase.
+/// a crash in the `deleting` phase. A source that no longer matches the copy
+/// is left in place — deleting it would destroy unrelated data placed there
+/// after the crash.
 fn recover_deleting(home: &Path, journal: &MigrationJournal) {
-    for (src, _) in &journal.files {
-        let _ = fs::remove_file(src);
+    for file in &journal.files {
+        if source_still_original(file) {
+            let _ = fs::remove_file(&file.src);
+        }
     }
     let mut dirs = journal.source_dirs.clone();
     dirs.sort_by_key(|dir| std::cmp::Reverse(dir.components().count()));
@@ -860,9 +919,13 @@ fn migrate_inner(home: &Path, shared: &Path, to_shared: bool) -> Result<String, 
 
     // Journal the copy before anything is written, so a crash at any point
     // can be undone (copying) or completed (deleting) on the next start.
-    let journal_files: Vec<(PathBuf, PathBuf)> = plans
+    let journal_files: Vec<JournalFile> = plans
         .iter()
-        .map(|plan| (plan.src.clone(), plan.dst.clone()))
+        .map(|plan| JournalFile {
+            src: plan.src.clone(),
+            dst: plan.dst.clone(),
+            bytes: Some(plan.bytes),
+        })
         .collect();
     let journal_dirs = destination_dirs(to, &plans);
     let journal = MigrationJournal {
@@ -1094,6 +1157,37 @@ mod tests {
     }
 
     #[test]
+    fn native_builds_stay_private_while_native_mod_bundles_move() {
+        let home = scratch();
+        // What the Java loader reads from filesDir/native on every start.
+        fs::create_dir_all(home.join("native/builds")).unwrap();
+        fs::write(home.join("native/current.json"), b"current").unwrap();
+        fs::write(home.join("native/builds/lib.so"), b"lib").unwrap();
+        // Native-mod bundles are player files and must still travel.
+        fs::create_dir_all(home.join("horizon-native-mods")).unwrap();
+        fs::write(home.join("horizon-native-mods/mod.hmod"), b"bundle").unwrap();
+        let shared = home.with_file_name(format!(
+            "{}-shared",
+            home.file_name().unwrap().to_string_lossy()
+        ));
+        migrate(&home, &shared, true).unwrap();
+        assert_eq!(
+            fs::read(home.join("native/current.json")).unwrap(),
+            b"current",
+            "the loader manifest must stay app-private"
+        );
+        assert_eq!(fs::read(home.join("native/builds/lib.so")).unwrap(), b"lib");
+        assert!(!shared.join("native").exists(), "native builds must not move");
+        assert_eq!(
+            fs::read(shared.join("horizon-native-mods/mod.hmod")).unwrap(),
+            b"bundle"
+        );
+        assert!(!home.join("horizon-native-mods").exists());
+        fs::remove_dir_all(&home).unwrap();
+        fs::remove_dir_all(&shared).unwrap();
+    }
+
+    #[test]
     fn shared_target_must_be_empty() {
         let home = scratch();
         seed(&home);
@@ -1232,6 +1326,7 @@ mod tests {
             "android-launcher.json",
             ".local",
             ".git",
+            "native",
         ] {
             assert!(is_private_top_level(name), "{name} must stay private");
         }
@@ -1259,6 +1354,7 @@ mod tests {
             "files": files.iter().map(|(src, dst)| json!({
                 "src": src.to_string_lossy(),
                 "dst": dst.to_string_lossy(),
+                "bytes": fs::metadata(src).ok().map(|m| m.len()),
             })).collect::<Vec<_>>(),
             "created_dirs": created_dirs.iter()
                 .map(|dir| dir.to_string_lossy().into_owned())
@@ -1349,6 +1445,52 @@ mod tests {
         assert!(target.join("options.txt").is_file(), "copy must stay in place");
         assert_eq!(state(&home), State::Shared);
         assert_eq!(resolve(&home), target);
+        assert!(!journal_path(&home).exists());
+        fs::remove_dir_all(&home).unwrap();
+        fs::remove_dir_all(&target).unwrap();
+    }
+
+    #[test]
+    fn journal_deleting_phase_leaves_replaced_sources_alone() {
+        let home = scratch();
+        let target = scratch();
+        // Same length, different content: only the byte match with dst can
+        // tell this is no longer the file we migrated.
+        fs::write(home.join("options.txt"), b"CHANGED").unwrap();
+        fs::write(target.join("options.txt"), b"options").unwrap();
+        // Different length: the recorded size rejects it before any read.
+        fs::write(home.join("servers.dat"), b"new").unwrap();
+        fs::write(target.join("servers.dat"), b"old servers").unwrap();
+        // Still the original: this one must be removed.
+        fs::write(home.join("options-old.txt"), b"same").unwrap();
+        fs::write(target.join("options-old.txt"), b"same").unwrap();
+        let journal = journal_body(
+            "deleting",
+            true,
+            &home,
+            &target,
+            &[
+                (&home.join("options.txt"), &target.join("options.txt")),
+                (&home.join("servers.dat"), &target.join("servers.dat")),
+                (
+                    &home.join("options-old.txt"),
+                    &target.join("options-old.txt"),
+                ),
+            ],
+            &[],
+            &[],
+        );
+        fs::write(home.join(JOURNAL), journal).unwrap();
+        assert!(recover(&home).unwrap().is_some());
+        assert_eq!(fs::read(home.join("options.txt")).unwrap(), b"CHANGED");
+        assert_eq!(fs::read(home.join("servers.dat")).unwrap(), b"new");
+        assert!(!home.join("options-old.txt").exists());
+        // The verified copies were never touched.
+        assert_eq!(fs::read(target.join("options.txt")).unwrap(), b"options");
+        assert_eq!(
+            fs::read(target.join("servers.dat")).unwrap(),
+            b"old servers"
+        );
         assert!(!journal_path(&home).exists());
         fs::remove_dir_all(&home).unwrap();
         fs::remove_dir_all(&target).unwrap();

@@ -9,7 +9,7 @@ how the two modes work, and how recovery behaves on failure.
 | | App storage (SAF) | Internal storage (recommended) |
 | --- | --- | --- |
 | Path | `getFilesDir()` | `/storage/emulated/0/Horizon-Android` (all builds) |
-| File manager access | Through the documents provider (**Files → Horizon Android**) | Any file manager, directly |
+| How to browse | In the launcher's **Game files** screen | Any file manager, directly |
 | Permission | None | All files access (Android 11+), or the legacy storage permission (Android 9–10) |
 | Marker file | — | `shared-storage.json` in app storage |
 
@@ -35,8 +35,8 @@ Everything the game and the instances need and the player owns:
   `screenshots/`, `servers.dat`, `horizon-player.txt`, and any files
   with those roots that the game creates in the game folder.
 - The shareable reports: `horizon-diagnostics-*.zip` and
-  `horizon-performance-*.jsonl` from `performance/`. These are exactly what the
-  documents provider exposes as **Reports**.
+  `horizon-performance-*.jsonl` from `performance/`. These are what the
+  launcher's Game files screen shows under **Reports**.
 
 ## What stays private
 
@@ -80,11 +80,11 @@ and a nested one (android-* and dotfiles also never match):
   and the marker recorded, since the copies were verified). The journal is
   validated to describe only paths under the two roots it records; a
   journal that fails validation changes nothing.
-- **Game running:** the move refuses while a game is playing, using the same
-  `game.lock` the documents provider uses to refuse access mid-game.
+- **Game running:** the move refuses while a game is playing, using the
+  `game.lock` file the game holds while it runs.
 - **Marker:** `shared-storage.json` in app storage records the choice and the
-  shared folder's absolute path. Every reader (game, launcher, documents
-  provider, screenshot gallery) resolves through it. If the shared folder is
+  shared folder's absolute path. Every reader (game, launcher, Game files
+  browser, screenshot gallery) resolves through it. If the shared folder is
   deleted, readers fall back to app storage and the launcher blocks Play with
   a message instead of opening an empty world list.
 - **Missing folder:** Settings → Storage → Game files location shows the
@@ -96,10 +96,11 @@ and a nested one (android-* and dotfiles also never match):
   accidental re-create or a re-mounted volume). Play stays blocked until the
   folder is readable or the marker is moved back.
 - **Reports:** the recorder and the diagnostics exporter write to the active
-  Reports location, so Files shows the same reports after a move.
-- **SAF provider:** unchanged and still allowlisted. It serves the active
-  game-files location (the recorded shared folder, or app storage); the
-  shareable-reports subset is what it exposes as Reports.
+  Reports location, so the Game files screen shows the same reports after a
+  move.
+- **Game files browser:** the launcher's Game files screen reads the active
+  game-files location (the recorded shared folder, or app storage) and shows
+  the shareable reports under **Reports**.
 - **Both locations holding files:** adopting an empty app storage onto an
   existing shared folder (the reinstall path) refuses when anything is left
   to lose in app storage, and so does moving; nothing is overwritten and the

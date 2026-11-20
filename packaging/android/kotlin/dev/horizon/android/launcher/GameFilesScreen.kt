@@ -1,7 +1,5 @@
 package dev.horizon.android.launcher
 
-import android.content.Intent
-import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,9 +21,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.InsertDriveFile
-import androidx.compose.material.icons.rounded.OpenInBrowser
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,7 +37,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -66,20 +61,17 @@ private fun isConfigFile(name: String): Boolean =
         .any { name.endsWith(it, ignoreCase = true) }
 
 /**
- * Browses the shared game folder directly with [File] now that all-files access
- * is mandatory. Friendly labels are presentation only; "Open raw folder" is the
- * escape hatch to the system Files app.
+ * Browses the game folder directly with [File]. Friendly labels are presentation
+ * only. Everything happens inside the app: handing a `file://` URI to another app
+ * throws `FileUriExposedException` on modern Android, so there is no external
+ * "open raw folder" escape hatch here.
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun GameFilesScreen(root: File, onBack: () -> Unit) {
-    val context = LocalContext.current
     var stack by remember { mutableStateOf(listOf(root)) }
     var advanced by rememberSaveable { mutableStateOf(false) }
     val current = stack.last()
-    val openRaw = stringResource(R.string.game_files_open_raw)
-    val systemFiles = stringResource(R.string.game_files_system_files)
-    val openFailed = stringResource(R.string.game_files_open_failed)
 
     fun up() {
         if (stack.size > 1) stack = stack.dropLast(1) else onBack()
@@ -88,22 +80,6 @@ fun GameFilesScreen(root: File, onBack: () -> Unit) {
 
     fun openFolder(folder: File) {
         if (folder.isDirectory) stack = stack + folder
-    }
-
-    fun openRawFolder(folder: File) {
-        val uri = Uri.fromFile(folder)
-        val view = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "*/*")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        val chooser = Intent.createChooser(view, systemFiles)
-        val opened = runCatching { context.startActivity(chooser) }.isSuccess ||
-            runCatching {
-                context.startActivity(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-                    putExtra("android.provider.extra.INITIAL_URI", uri)
-                })
-            }.isSuccess
-        if (!opened) android.widget.Toast.makeText(context, openFailed, android.widget.Toast.LENGTH_SHORT).show()
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -161,24 +137,15 @@ fun GameFilesScreen(root: File, onBack: () -> Unit) {
                         items(children, key = { it.absolutePath }) { entry ->
                             FileRow(
                                 file = entry,
-                                onOpen = { if (entry.isDirectory) openFolder(entry) else openRawFolder(entry) },
+                                // Browsing stays in-app; individual files have no safe external
+                                // open path without a FileProvider, so only folders navigate.
+                                onOpen = { if (entry.isDirectory) openFolder(entry) },
                             )
                         }
                     }
                 }
             }
         }
-
-        Spacer(Modifier.height(8.dp))
-        FilledTonalButton(
-            onClick = { openRawFolder(current) },
-            modifier = Modifier.fillMaxWidth().height(48.dp),
-        ) {
-            Icon(Icons.Rounded.OpenInBrowser, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(openRaw)
-        }
-        Spacer(Modifier.height(8.dp))
     }
 }
 

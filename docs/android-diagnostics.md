@@ -7,8 +7,9 @@ On an APK containing the 0.7.6 diagnostic changes:
 1. Reproduce the problem. If Android closes the app, open Horizon again and wait
    a few seconds so its background system-exit collector can finish.
 2. Open launcher Settings > **Diagnostic report** > **Export ZIP**.
-3. The system Files app opens **Horizon Android / Reports**. Copy/share the newest
-   `horizon-diagnostics-*.zip`. Review it before attaching it to an issue.
+3. Open the launcher's **Game files** screen (Settings → Storage & Files → Browse game
+   files) and go to **Reports**. Copy/share the newest `horizon-diagnostics-*.zip`.
+   Review it before attaching it to an issue.
 4. Include the exact APK version/source commit, device, renderer, resolution,
    and what you did immediately before the failure. State whether you returned
    to the Horizon launcher or the Android home screen.
@@ -41,8 +42,8 @@ by the user also lacks that marker; it is not automatically labelled a crash.
   and Build IDs. Unknown/malformed/truncated traces may have no usable frames.
 
 Raw system traces remain in private app storage, bounded to 1 MiB each / eight files.
-The Files provider exposes exported diagnostic ZIPs and standalone performance
-JSONL files only; session snapshots, raw logs and OS traces cannot be opened through it.
+The launcher's Game files screen shows exported diagnostic ZIPs and standalone performance
+JSONL files under **Reports** only; session snapshots, raw logs and OS traces are not available there.
 They may contain private memory/path information. The ZIP excludes their raw
 memory/register dumps and instead includes a readable crashed-thread summary
 when decoding succeeds. ANR/plain-text traces get best-effort text redaction.
