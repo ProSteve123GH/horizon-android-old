@@ -1349,6 +1349,14 @@ fn audio_stream_config(config: &cpal::SupportedStreamConfig) -> cpal::StreamConf
     sc
 }
 
+/// Non-blocking tap of the mixed game audio, used by the built-in Simple Voice
+/// Chat client (Starling PR #310) for echo suppression. Set once, never cleared.
+static OUTPUT_TAP: std::sync::OnceLock<fn(&[f32], usize, u32)> = std::sync::OnceLock::new();
+
+pub fn set_output_tap(tap: fn(&[f32], usize, u32)) {
+    let _ = OUTPUT_TAP.set(tap);
+}
+
 #[cfg(feature = "audio")]
 fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
     device: &cpal::Device,
@@ -1368,6 +1376,9 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                 mix(&mut m, &mut scratch, channels, rate);
             } else {
                 scratch.fill(0.0);
+            }
+            if let Some(tap) = OUTPUT_TAP.get() {
+                tap(&scratch, channels, rate);
             }
             for (out, s) in data.iter_mut().zip(&scratch) {
                 *out = T::from_sample(*s);

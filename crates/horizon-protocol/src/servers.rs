@@ -253,6 +253,17 @@ pub fn parse_address(text: &str) -> Option<(String, u16)> {
     }
 }
 
+/// Resolves a server address (`host`, `host:port` or `[v6]:port`) through SRV
+/// and DNS to its first IP address. The built-in Simple Voice Chat client uses
+/// this when the server sends an empty or relative `voice_host`.
+pub fn resolve_address_ip(text: &str) -> Option<std::net::IpAddr> {
+    let (host, port) = parse_address(text)?;
+    crate::resolver::resolve(&host, port)
+        .ok()
+        .and_then(|v| v.addresses.into_iter().next())
+        .map(|a| a.ip())
+}
+
 /// HostAndPort uses the default for an empty port, refuses a leading plus,
 /// and accepts signed zero on its non-bracketed path before checking range.
 fn parse_port(text: &str) -> Option<u16> {

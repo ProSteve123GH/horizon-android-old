@@ -281,3 +281,21 @@ pub fn pad_state() -> PadState {
 
 #[cfg(test)]
 mod tests;
+
+// Built-in Simple Voice Chat (ported from Starling PR #310). The in-game
+// Mods page can turn it off; it only draws its own HUD icon while connected.
+static EXPERIMENTAL_SVC_ENABLED: AtomicBool = AtomicBool::new(true);
+static EXPERIMENTAL_SVC_RNNOISE: AtomicBool = AtomicBool::new(true);
+
+pub fn set_experimental_svc(enabled: bool, rnnoise: bool) {
+    EXPERIMENTAL_SVC_ENABLED.store(enabled, Ordering::Relaxed);
+    EXPERIMENTAL_SVC_RNNOISE.store(rnnoise, Ordering::Relaxed);
+}
+
+pub fn experimental_svc_enabled() -> bool {
+    EXPERIMENTAL_SVC_ENABLED.load(Ordering::Relaxed)
+}
+
+pub fn experimental_svc_rnnoise() -> bool {
+    EXPERIMENTAL_SVC_RNNOISE.load(Ordering::Relaxed)
+}

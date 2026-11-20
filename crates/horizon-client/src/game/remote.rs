@@ -702,10 +702,10 @@ pub(super) struct Remote {
     /// `ClientSuggestionProvider.customCompletionSuggestions`: the extra chat
     /// completions this server sent (ClientboundCustomChatCompletionsPacket).
     custom_completions: std::collections::BTreeSet<String>,
-    players: HashMap<u128, String>,
+    pub(crate) players: HashMap<u128, String>,
     /// `ClientPacketListener.playerInfoMap` as player-list entries, and
     /// which of them are listed.
-    tab_players: HashMap<u128, horizon_client::tab_list::TabPlayer>,
+    pub(crate) tab_players: HashMap<u128, horizon_client::tab_list::TabPlayer>,
     /// Each listed profile's unpacked `textures` property.
     skin_textures: HashMap<u128, horizon_client::skins::Textures>,
     /// Active skin and cape from the services profile when the server sent none.
@@ -3277,6 +3277,11 @@ impl Game<'_> {
             // A native mod's server half to its client half.
             C::CustomPayload(p) if p.channel == horizon_protocol::mod_net::CHANNEL => {
                 self.remote_native_net(&p.data);
+            }
+            // Built-in Simple Voice Chat: handshake and state messages from a
+            // server running the SVC plugin (Starling PR #310).
+            C::CustomPayload(p) if p.channel.starts_with("voicechat:") => {
+                super::voicechat::push_payload(p.channel.clone(), p.data.clone());
             }
             // The synced attachments of a holder the server shows the window.
             C::CustomPayload(p) if p.channel == horizon_protocol::attachment_sync::CHANNEL => {

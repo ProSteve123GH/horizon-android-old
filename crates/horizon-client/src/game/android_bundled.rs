@@ -106,6 +106,7 @@ mod smartf3_click;
 
 pub(super) fn native_key(game: &mut Game<'_>, key: &str, pressed: bool) {
     let _ = (&game, &key, &pressed);
+    super::voicechat::key(game, key, pressed);
     #[cfg(target_os = "android")]
     {
         zoom_key::run(&mut *game, key, pressed);
@@ -130,6 +131,7 @@ pub(super) fn native_zoom(game: &Game<'_>, zoom: &mut Option<NativeZoom>) {
 
 pub(super) fn native_mods(game: &mut Game<'_>, mods: &mut Vec<NativeMod>) {
     let _ = (&game, &mods);
+    super::voicechat::listed(mods);
     #[cfg(target_os = "android")]
     {
         zoom_list::run(&mut *mods);
@@ -141,6 +143,7 @@ pub(super) fn native_mods(game: &mut Game<'_>, mods: &mut Vec<NativeMod>) {
 
 pub(super) fn native_settings(game: &mut Game<'_>, mod_id: &str, buttons: &mut Vec<String>) {
     let _ = (&game, &mod_id, &buttons);
+    super::voicechat::page(game, mod_id, buttons);
     #[cfg(target_os = "android")]
     {
         zoom_settings::run(&mut *game, mod_id, &mut *buttons);
@@ -152,6 +155,7 @@ pub(super) fn native_settings(game: &mut Game<'_>, mod_id: &str, buttons: &mut V
 
 pub(super) fn native_settings_click(game: &mut Game<'_>, mod_id: &str, button: usize) {
     let _ = (&game, &mod_id, &button);
+    super::voicechat::click(game, mod_id, button);
     #[cfg(target_os = "android")]
     {
         zoom_click::run(&mut *game, mod_id, button);
@@ -171,6 +175,7 @@ pub(super) fn native_minimap(game: &Game<'_>, minimap: &mut Option<NativeMinimap
 
 pub(super) fn native_frame(game: &mut Game<'_>, elapsed: Duration) {
     let _ = (&game, &elapsed);
+    super::voicechat::frame(game);
     #[cfg(target_os = "android")]
     {
         recipes_frame::run(&mut *game);

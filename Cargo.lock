@@ -1900,6 +1900,7 @@ dependencies = [
  "unicode-bidi",
  "ureq",
  "url",
+ "voicechat_engine",
  "wgpu",
  "winit",
  "winresource",
