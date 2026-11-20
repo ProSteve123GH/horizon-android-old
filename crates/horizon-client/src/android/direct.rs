@@ -53,7 +53,9 @@ fn clear_native_crash_guard_once() {
         return;
     };
     let pending = PathBuf::from(pending);
-    if pending.file_name().is_some_and(|name| name == "pending_crash")
+    if pending
+        .file_name()
+        .is_some_and(|name| name == "pending_crash")
         && std::fs::remove_file(&pending).is_ok()
     {
         let _ = std::fs::write(pending.with_file_name("crash_streak"), "0");
