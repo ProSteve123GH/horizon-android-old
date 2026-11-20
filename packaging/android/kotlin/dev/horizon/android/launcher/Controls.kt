@@ -49,14 +49,29 @@ fun HorizonCard(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(24.dp),
-        color = if (tonal) colors.secondaryContainer else colors.surfaceContainerLow,
-        contentColor = if (tonal) colors.onSecondaryContainer else colors.onSurface,
-        onClick = onClick,
-    ) {
-        Column(Modifier.padding(16.dp), content = content)
+    val shape = RoundedCornerShape(24.dp)
+    val background = if (tonal) colors.secondaryContainer else colors.surfaceContainerLow
+    val foreground = if (tonal) colors.onSecondaryContainer else colors.onSurface
+    val body: @Composable () -> Unit = { Column(Modifier.padding(16.dp), content = content) }
+    // Material's clickable Surface overload takes a non-null lambda; keep the
+    // plain overload for static cards so callers can omit onClick.
+    if (onClick != null) {
+        Surface(
+            modifier = modifier,
+            shape = shape,
+            color = background,
+            contentColor = foreground,
+            onClick = onClick,
+            content = body,
+        )
+    } else {
+        Surface(
+            modifier = modifier,
+            shape = shape,
+            color = background,
+            contentColor = foreground,
+            content = body,
+        )
     }
 }
 

@@ -521,14 +521,14 @@ fun LauncherScaffold(
     val barColors = NavigationBarItemDefaults.colors(
         selectedIconColor = scheme.onSecondaryContainer,
         selectedTextColor = scheme.onSurface,
-        selectedIndicatorColor = scheme.secondaryContainer,
+        indicatorColor = scheme.secondaryContainer,
         unselectedIconColor = scheme.onSurfaceVariant,
         unselectedTextColor = scheme.onSurfaceVariant,
     )
     val railColors = NavigationRailItemDefaults.colors(
         selectedIconColor = scheme.onSecondaryContainer,
         selectedTextColor = scheme.onSurface,
-        selectedIndicatorColor = scheme.secondaryContainer,
+        indicatorColor = scheme.secondaryContainer,
         unselectedIconColor = scheme.onSurfaceVariant,
         unselectedTextColor = scheme.onSurfaceVariant,
     )
