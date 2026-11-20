@@ -119,4 +119,9 @@
     <string name="touch_control_perspective">Perspective</string>
     <string name="touch_control_offhand">Offhand</string>
     <string name="touch_control_shield">Shield</string>
+    <string name="storage_conflict_note">The Horizon-Android folder already exists and holds files. Backing it up keeps those files; nothing is merged or deleted.</string>
+    <string name="storage_backups">Backups</string>
+    <string name="storage_restore_note">Restoring keeps the current folder as another backup.</string>
+    <string name="storage_backup_and_use">Back up and use this folder</string>
+    <string name="storage_restore">Restore</string>
 </resources>

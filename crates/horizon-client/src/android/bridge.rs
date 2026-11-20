@@ -35,6 +35,9 @@ struct Controller {
     worker: Option<mpsc::Receiver<Result<(), String>>>,
     diagnostic_export: Option<mpsc::Receiver<Result<String, String>>>,
     storage_worker: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Shared folder used by the last backup listing, so a backup can be
+    /// restored by name alone even before the storage marker exists.
+    storage_dir: Option<PathBuf>,
     /// Manual server status checks, keyed by the address in `servers.dat`. The UI asks for one
     /// check and reads the result; nothing polls the network by itself.
     server_pings: Arc<Mutex<HashMap<String, crate::servers::Ping>>>,
@@ -134,6 +137,7 @@ impl Controller {
             worker: None,
             diagnostic_export: None,
             storage_worker: None,
+            storage_dir: None,
             server_pings: Arc::default(),
             error: None,
         };
@@ -924,6 +928,16 @@ impl Controller {
                 {
                     return Err("The game files are on shared storage already".into());
                 }
+                // Report the "folder already exists and has files" conflict
+                // synchronously so the UI can offer the explicit backup flow
+                // instead of a late, vague error from the worker. A plain
+                // reinstall (nothing in app storage) keeps the existing
+                // adopt-on-worker fallback below and adopts the folder as-is.
+                if crate::shared_storage::folder_has_files(&target)
+                    && crate::shared_storage::has_game_files(&self.home)
+                {
+                    return Err("The Horizon-Android folder already exists and holds game files. Back it up before using it.".into());
+                }
                 let home = self.home.clone();
                 let (sender, receiver) = mpsc::channel();
                 self.storage_worker = Some(receiver);
@@ -940,6 +954,73 @@ impl Controller {
                                 Err(error)
                             }
                         });
+                    let _ = sender.send(result);
+                });
+            }
+            "storage_adopt_with_backup" => {
+                // Explicit, conservative alternative to `storage_migrate`:
+                // back up the existing folder, then run the normal guarded
+                // move so neither set of worlds is merged or discarded.
+                let target = PathBuf::from(arg);
+                if !target.is_absolute() || arg.trim().is_empty() {
+                    return Err("The shared folder path must be absolute".into());
+                }
+                if self.worker.is_some()
+                    || self.storage_worker.is_some()
+                    || crate::android_minecraft_import::busy()
+                    || crate::documents::busy()
+                {
+                    return Err("Finish the current task first".into());
+                }
+                let home = self.home.clone();
+                let (sender, receiver) = mpsc::channel();
+                self.storage_worker = Some(receiver);
+                self.catalog.status = "Backing up the existing folder and moving game files…".into();
+                std::thread::spawn(move || {
+                    let result = crate::shared_storage::adopt_with_backup(&home, &target);
+                    let _ = sender.send(result);
+                });
+            }
+            "storage_backups" => {
+                // The Compose dialog passes the shared folder's absolute path.
+                // Remember it so a later `storage_restore_backup <name>` needs
+                // only the name, even before the storage marker exists.
+                if arg.trim().is_empty() {
+                    return Ok(json!([]));
+                }
+                let dir = PathBuf::from(arg);
+                if !dir.is_absolute() {
+                    return Err("The shared folder path must be absolute".into());
+                }
+                self.storage_dir = Some(dir.clone());
+                return Ok(json!(crate::shared_storage::backups(&dir)));
+            }
+            "storage_restore_backup" => {
+                if self.worker.is_some()
+                    || self.storage_worker.is_some()
+                    || crate::android_minecraft_import::busy()
+                    || crate::documents::busy()
+                {
+                    return Err("Finish the current task first".into());
+                }
+                if !crate::shared_storage::is_backup_name(arg) {
+                    return Err("Invalid backup name".into());
+                }
+                // Never fall back to `resolve` here: with no marker that is the
+                // app-private home, which must not be renamed over a backup.
+                let Some(shared) = self
+                    .storage_dir
+                    .clone()
+                    .or_else(|| crate::shared_storage::recorded_dir(&home))
+                else {
+                    return Err("Open Storage settings to load the backup list first".into());
+                };
+                let name = arg.to_owned();
+                let (sender, receiver) = mpsc::channel();
+                self.storage_worker = Some(receiver);
+                self.catalog.status = "Restoring the backup…".into();
+                std::thread::spawn(move || {
+                    let result = crate::shared_storage::restore_backup(&home, &shared, &name);
                     let _ = sender.send(result);
                 });
             }

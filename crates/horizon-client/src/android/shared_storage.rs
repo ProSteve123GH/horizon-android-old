@@ -41,6 +41,12 @@ use std::{
 pub const MARKER: &str = "shared-storage.json";
 const MARKER_PARTIAL: &str = "shared-storage.json.partial";
 
+/// Sibling folders that hold a safety copy of an existing `Horizon-Android`
+/// folder: `Horizon-Android-backup-<UTC milliseconds>`. This module only ever
+/// creates and renames them — never deletes or overwrites one. The launcher's
+/// "Restore backup" list reads them by name through [`backups`]/[`restore_backup`].
+pub const BACKUP_PREFIX: &str = "Horizon-Android-backup-";
+
 /// One-shot marker for the first-run prompt. Starts with `android-` so the
 /// migration keeps it private on both moves.
 pub const PROMPT_MARKER: &str = "android-storage-prompt.json";
@@ -195,6 +201,104 @@ pub fn display_name(home: &Path) -> String {
             .unwrap_or_else(|| "Horizon-Android".into()),
         None => "App storage".into(),
     }
+}
+
+/// UTC time in milliseconds, used only to name a backup folder uniquely.
+fn utc_millis() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
+/// Strict validation of a backup name coming from the launcher: one path
+/// component, no separators, no `..`, a non-empty suffix and the backup prefix.
+/// Nothing here is ever joined blindly with another path after this check.
+pub fn is_backup_name(name: &str) -> bool {
+    if !name.starts_with(BACKUP_PREFIX) || name.len() <= BACKUP_PREFIX.len() {
+        return false;
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") || name.contains('\0') {
+        return false;
+    }
+    name.trim() == name && !name.chars().any(|c| c.is_control())
+}
+
+/// Quick, read-only preflight used by the launcher: does app storage hold
+/// player files a move would have to touch? A single stat per known entry is
+/// enough to *warn*; no decision to delete is ever made from this.
+pub fn has_game_files(home: &Path) -> bool {
+    [
+        "options.txt",
+        "options.json",
+        "servers.dat",
+        "saves",
+        "resourcepacks",
+        "shaderpacks",
+        "horizon-mods",
+        "mods",
+        "profiles",
+        "performance",
+    ]
+    .iter()
+    .any(|name| home.join(name).exists())
+}
+
+/// True when `dir` is a real directory (never a symlink) holding at least one
+/// entry. An unreadable existing directory counts as non-empty on purpose, so
+/// the backup path is chosen rather than risking an overwrite.
+pub fn folder_has_files(dir: &Path) -> bool {
+    match fs::symlink_metadata(dir) {
+        Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {
+            fs::read_dir(dir).map(|mut d| d.next().is_some()).unwrap_or(true)
+        }
+        _ => false,
+    }
+}
+
+/// Moves `shared` aside to a fresh `Horizon-Android-backup-<UTCms>` sibling.
+/// Atomic, and never deletes or overwrites: an existing name (including a
+/// symlink) is skipped. Returns the new folder's name.
+fn back_up_shared(shared: &Path) -> Result<String, String> {
+    let parent = shared
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .ok_or_else(|| "The shared folder has no parent directory".to_owned())?;
+    let millis = utc_millis();
+    for offset in 0..1000u128 {
+        let name = format!("{BACKUP_PREFIX}{}", millis.saturating_add(offset));
+        let candidate = parent.join(&name);
+        if fs::symlink_metadata(&candidate).is_ok() {
+            continue; // never overwrite an existing backup
+        }
+        fs::rename(shared, &candidate)
+            .map_err(|e| format!("Could not back up the existing folder: {e}"))?;
+        return Ok(name);
+    }
+    Err("Could not find a free name for the backup folder".into())
+}
+
+/// Names of the backup folders next to `shared`, sorted oldest first (the UTC
+/// timestamp is the suffix). Plain files and symlinks are ignored.
+pub fn backups(shared: &Path) -> Vec<String> {
+    let Some(parent) = shared.parent().filter(|p| !p.as_os_str().is_empty()) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = fs::read_dir(parent)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let ty = entry.file_type().ok()?;
+            if !ty.is_dir() || ty.is_symlink() {
+                return None;
+            }
+            let name = entry.file_name().to_str()?.to_owned();
+            is_backup_name(&name).then_some(name)
+        })
+        .collect();
+    names.sort();
+    names
 }
 
 fn is_private_top_level(name: &str) -> bool {
@@ -831,6 +935,126 @@ fn adopt_inner(home: &Path, shared: &Path) -> Result<String, String> {
     write_marker(home, shared)
         .map_err(|e| format!("Could not record the storage location: {e}"))?;
     Ok("Horizon is using the game files in Horizon-Android".into())
+}
+
+/// Uses an existing shared folder even when app storage also holds files.
+///
+/// This is the explicit, conservative alternative to the two refusals in
+/// [`adopt`] and [`migrate`]:
+///
+/// * Nothing in app storage worth keeping (uninstall/reinstall or a fresh
+///   install with a leftover folder): adopt the existing folder as-is, so the
+///   worlds in it stay active and nothing is renamed.
+/// * Both places hold files: move the existing shared folder aside to a
+///   timestamped backup (never deleted, never overwritten), then run the
+///   normal, journalled move of the app-private files into a fresh shared
+///   folder. The two sets of worlds are never merged; the old set is
+///   recoverable with [`restore_backup`].
+///
+/// The game lock, crash recovery and the copy/delete journal all still apply.
+pub fn adopt_with_backup(home: &Path, shared: &Path) -> Result<String, String> {
+    if !shared.is_absolute() {
+        return Err("The shared folder path must be absolute".into());
+    }
+    if MOVING.swap(true, Ordering::AcqRel) {
+        return Err("Game files are already being moved".into());
+    }
+    PROGRESS_DONE.store(0, Ordering::Relaxed);
+    PROGRESS_TOTAL.store(0, Ordering::Relaxed);
+    let result = adopt_with_backup_inner(home, shared);
+    MOVING.store(false, Ordering::Release);
+    result
+}
+
+fn adopt_with_backup_inner(home: &Path, shared: &Path) -> Result<String, String> {
+    if let Err(error) = recover(home) {
+        return Err(error);
+    }
+    if let Ok(meta) = fs::symlink_metadata(shared) {
+        if meta.file_type().is_symlink() {
+            return Err("The shared folder is a shortcut; use a real folder instead".into());
+        }
+    }
+    if game_in_use(&resolve(home)) || game_in_use(shared) {
+        return Err("Close the game before moving the game files".into());
+    }
+    // Decide between "adopt as-is" and "back up, then move" from what is in
+    // app storage. A plain reinstall has nothing there and keeps its worlds;
+    // an install with options/saves must not have them silently discarded.
+    let (private_plans, _, _) =
+        collect_jobs(home, shared, true).map_err(|e| format!("Cannot read the game files: {e}"))?;
+    if private_plans.is_empty() {
+        return adopt_inner(home, shared)
+            .map(|note| format!("{note} The existing folder was kept as it is."));
+    }
+    let backup_note = if folder_has_files(shared) {
+        let name = back_up_shared(shared)?;
+        format!(" The existing folder was saved as {name}.")
+    } else {
+        String::new()
+    };
+    // `migrate_inner` creates the now-absent shared folder, journals the copy,
+    // verifies it, then records the marker — the same guarded flow as usual.
+    let moved = migrate_inner(home, shared, true)?;
+    Ok(format!("{moved}{backup_note}"))
+}
+
+/// Replaces the current shared folder with a named backup folder.
+///
+/// The current folder is first moved aside to a *new* backup, so a restore
+/// never deletes or overwrites data. The chosen backup is then renamed into
+/// place and the marker is updated. Names are strictly validated and symlinks
+/// are refused on both sides; the game must be closed.
+pub fn restore_backup(home: &Path, shared: &Path, name: &str) -> Result<String, String> {
+    if !is_backup_name(name) {
+        return Err("Invalid backup name".into());
+    }
+    if !shared.is_absolute() {
+        return Err("The shared folder path must be absolute".into());
+    }
+    if MOVING.swap(true, Ordering::AcqRel) {
+        return Err("Game files are already being moved".into());
+    }
+    PROGRESS_DONE.store(0, Ordering::Relaxed);
+    PROGRESS_TOTAL.store(0, Ordering::Relaxed);
+    let result = restore_backup_inner(home, shared, name);
+    MOVING.store(false, Ordering::Release);
+    result
+}
+
+fn restore_backup_inner(home: &Path, shared: &Path, name: &str) -> Result<String, String> {
+    if let Err(error) = recover(home) {
+        return Err(error);
+    }
+    let parent = shared
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .ok_or_else(|| "The shared folder has no parent directory".to_owned())?;
+    if game_in_use(&resolve(home)) || game_in_use(shared) {
+        return Err("Close the game before moving the game files".into());
+    }
+    let backup = parent.join(name);
+    let backup_meta = fs::symlink_metadata(&backup)
+        .map_err(|_| "That backup no longer exists; nothing was changed".to_owned())?;
+    if !backup_meta.is_dir() || backup_meta.file_type().is_symlink() {
+        return Err("That backup is not a folder; nothing was changed".into());
+    }
+    if let Ok(meta) = fs::symlink_metadata(shared) {
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            return Err("The shared path is not a real folder; nothing was changed".into());
+        }
+        back_up_shared(shared)?; // preserve the current folder, never delete it
+    }
+    // The target is free now; the chosen backup still has to be there.
+    if fs::symlink_metadata(&backup).is_err() {
+        return Err("That backup no longer exists; nothing was changed".into());
+    }
+    fs::rename(&backup, shared).map_err(|e| format!("Could not restore the backup: {e}"))?;
+    write_marker(home, shared)
+        .map_err(|e| format!("Could not record the storage location: {e}"))?;
+    Ok(format!(
+        "Restored {name}. The previous folder was kept as a backup."
+    ))
 }
 
 /// Moves the player's game files from the private home to `shared` — one way.
@@ -1584,5 +1808,56 @@ mod tests {
         mark_prompt_done(&home).unwrap();
         assert!(prompt_done(&home));
         fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn adopt_with_backup_preserves_both_sets_and_can_restore() {
+        let home = scratch();
+        seed(&home); // app storage holds a fresh install's game files
+        let root = scratch();
+        let shared = root.join("Horizon-Android");
+        fs::create_dir_all(&shared).unwrap();
+        fs::write(shared.join("old-world.txt"), b"old").unwrap();
+        let parent = shared.parent().unwrap();
+
+        let note = adopt_with_backup(&home, &shared).unwrap();
+        assert!(note.contains(BACKUP_PREFIX), "{note}");
+        assert_eq!(state(&home), State::Shared);
+        // The private files were moved into shared by the normal flow.
+        assert_eq!(fs::read(shared.join("options.txt")).unwrap(), b"options");
+        assert!(!shared.join("old-world.txt").exists());
+        // The pre-existing folder survives as a backup, nothing was merged.
+        let list = backups(&shared);
+        assert_eq!(list.len(), 1, "{list:?}");
+        let name = list[0].clone();
+        assert!(is_backup_name(&name));
+        assert_eq!(
+            fs::read(parent.join(&name).join("old-world.txt")).unwrap(),
+            b"old"
+        );
+        assert!(!parent.join(&name).join("options.txt").exists());
+
+        // Restoring backs up the current folder again, then puts the chosen
+        // backup in place, so both sets of files remain recoverable.
+        let note = restore_backup(&home, &shared, &name).unwrap();
+        assert!(note.contains("Restored"), "{note}");
+        assert_eq!(fs::read(shared.join("old-world.txt")).unwrap(), b"old");
+        assert!(!shared.join("options.txt").exists());
+        let after = backups(&shared);
+        assert_eq!(after.len(), 1, "{after:?}");
+        assert_eq!(
+            fs::read(parent.join(&after[0]).join("options.txt")).unwrap(),
+            b"options"
+        );
+
+        // Names are validated before any filesystem operation.
+        assert!(restore_backup(&home, &shared, "Horizon-Android-backup-../x").is_err());
+        assert!(restore_backup(&home, &shared, "something-else").is_err());
+        assert!(!is_backup_name("Horizon-Android-backup-1/evil"));
+        assert!(!is_backup_name("Horizon-Android-backup-.."));
+        assert!(!is_backup_name("Horizon-Android-backup-"));
+
+        fs::remove_dir_all(&home).unwrap();
+        fs::remove_dir_all(&root).unwrap();
     }
 }

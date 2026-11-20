@@ -1094,7 +1094,9 @@ impl Game<'_> {
     /// The left stick as the move vector, while playing.
     pub(super) fn pad_move(&self) -> Option<[f32; 2]> {
         let settings = &self.settings.controller;
-        if !settings.enabled
+        // On Android touch is the pad: Controllers being off must not stop the
+        // movement stick from reaching gameplay, matching poll_pads and pad_rumble.
+        if (!settings.enabled && !cfg!(target_os = "android"))
             || self.pad_in_menu()
             || !self.pad_focused()
             || (self.pad_radial_captures() && self.pad_radial_selects(0))

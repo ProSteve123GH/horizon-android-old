@@ -87,6 +87,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -115,6 +116,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import java.io.File
+import org.json.JSONArray
 
 /**
  * Entry point kept for the rest of the launcher. The landing page, category
@@ -762,7 +764,19 @@ private fun rememberStorageGrant(onGranted: () -> Unit): StorageGrant {
 @Composable
 private fun StorageDialog(storage: StorageState, onDismiss: () -> Unit) {
     val sharedDir = remember { sharedStorageDir() }
-    val grant = rememberStorageGrant(onGranted = { act("storage_migrate", sharedDir.absolutePath) })
+    var conflict by remember { mutableStateOf(false) }
+    val grant = rememberStorageGrant(onGranted = {
+        // The normal move reports the "folder already exists" case immediately;
+        // only then do we offer the explicit back-up-and-use flow.
+        conflict = act("storage_migrate", sharedDir.absolutePath).error?.contains("already exists") == true
+    })
+    var backups by remember { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        val reply = act("storage_backups", sharedDir.absolutePath)
+        backups = (reply.ok as? JSONArray)?.let { array ->
+            (0 until array.length()).mapNotNull { array.optString(it).takeIf { name -> name.isNotBlank() } }
+        } ?: emptyList()
+    }
     val state = storage.state
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -795,6 +809,13 @@ private fun StorageDialog(storage: StorageState, onDismiss: () -> Unit) {
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
+                    if (conflict) {
+                        Text(
+                            stringResource(R.string.storage_conflict_note),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                     Text(
                         stringResource(R.string.storage_dialog_private_note),
                         style = MaterialTheme.typography.bodySmall,
@@ -807,13 +828,55 @@ private fun StorageDialog(storage: StorageState, onDismiss: () -> Unit) {
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
+                    if (backups.isNotEmpty()) {
+                        HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                        Text(
+                            stringResource(R.string.storage_backups),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            stringResource(R.string.storage_restore_note),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        backups.forEach { name ->
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    name,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                TextButton(onClick = {
+                                    act("storage_restore_backup", name)
+                                    onDismiss()
+                                }) { Text(stringResource(R.string.storage_restore)) }
+                            }
+                        }
+                    }
                 }
             }
         },
         confirmButton = {
             when (state) {
-                "private" -> FilledTonalButton(onClick = grant.request) {
-                    Text(stringResource(R.string.storage_dialog_move))
+                "private" -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilledTonalButton(onClick = grant.request) {
+                        Text(stringResource(R.string.storage_dialog_move))
+                    }
+                    if (conflict) {
+                        OutlinedButton(onClick = {
+                            act("storage_adopt_with_backup", sharedDir.absolutePath)
+                            onDismiss()
+                        }) {
+                            Text(stringResource(R.string.storage_backup_and_use))
+                        }
+                    }
                 }
                 "missing" -> OutlinedButton(onClick = { act("storage_recreate") }) {
                     Text(stringResource(R.string.storage_dialog_recreate))
