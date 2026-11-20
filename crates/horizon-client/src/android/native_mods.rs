@@ -250,7 +250,7 @@ fn publish_temp(temp: &Path, destination: &Path) -> Result<(), String> {
 fn content_manifest_id(path: &Path) -> Option<String> {
     let file = fs::File::open(path).ok()?;
     let mut zip = zip::ZipArchive::new(file).ok()?;
-    let mut manifest = zip.by_name(horizon_mods::manifest::MANIFEST).ok()?;
+    let manifest = zip.by_name(horizon_mods::manifest::MANIFEST).ok()?;
     let mut text = String::new();
     manifest.take(1 << 20).read_to_string(&mut text).ok()?;
     horizon_mods::Manifest::parse(&text).ok().map(|parsed| parsed.id)
@@ -486,7 +486,7 @@ pub(crate) fn install_staged(
         if let Some(temp) = &mirror_temp {
             let _ = fs::remove_file(temp);
         }
-        return result;
+        return Err(result.unwrap_err());
     }
     // Both files are safely in place; the staged copy is now ours to consume.
     let _ = fs::remove_file(staged);
