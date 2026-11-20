@@ -238,7 +238,7 @@ impl Game<'_> {
                 Some(CursorGrabMode::Locked)
             } else if window.set_cursor_grab(CursorGrabMode::Confined).is_ok() {
                 Some(CursorGrabMode::Confined)
-            } else if native_capture_wanted() && native_capture(true) {
+            } else if Self::native_capture_wanted() && Self::native_capture(true) {
                 // Android: the native View bridge took the pointer. winit's own
                 // grab is unsupported there, so record the mode ourselves to
                 // keep `captured` and `capture_mode` in step.
@@ -271,7 +271,7 @@ impl Game<'_> {
             }
             // Release the native bridge even when the mode changed while we
             // held the pointer, so no Android capture is left behind.
-            let _ = native_capture(false);
+            let _ = Self::native_capture(false);
             self.captured = false;
             self.capture_mode = None;
         }

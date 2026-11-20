@@ -10,6 +10,7 @@
 //! 3. Post-AEC RNNoise (`nnnoiseless`) neural denoising at 48 kHz with soft-knee pre-conditioning
 //!    (never clipping `[-32768, 32767]`), full user Microphone Boost support, and `tanh` limiting.
 
+#[cfg(feature = "rnnoise")]
 use crate::opus::FRAME;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
@@ -472,7 +473,9 @@ impl MicFilter {
         }
 
         // Step 4: RNNoise neural denoising + human speech VAD probability.
+        #[cfg(feature = "rnnoise")]
         let dry: Vec<f32> = working.clone();
+        #[cfg_attr(not(feature = "rnnoise"), allow(unused_mut))]
         let mut vad_prob = 1.0f32;
         #[cfg(feature = "rnnoise")]
         if rnnoise_enabled && working.len() == FRAME {
