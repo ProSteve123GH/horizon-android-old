@@ -2168,7 +2168,7 @@ fn import_touch(env: &mut JNIEnv<'_>, activity: &JObject<'_>, uri: Option<String
             use std::io::Read;
             let result = (|| -> Result<String, String> {
                 let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
-                let (mut file, name) = crate::document_bridge::open(
+                let (file, name) = crate::document_bridge::open(
                     &mut env,
                     activity.as_obj(),
                     &uri,

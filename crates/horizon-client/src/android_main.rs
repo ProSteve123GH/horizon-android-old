@@ -435,7 +435,7 @@ fn android_main(app: AndroidApp) {
 #[cfg(target_os = "android")]
 #[unsafe(export_name = "Java_dev_horizon_android_HorizonActivity_nativeDocumentResult")]
 pub extern "system" fn native_document_result(
-    mut env: jni::JNIEnv<'_>,
+    env: jni::JNIEnv<'_>,
     activity: jni::objects::JObject<'_>,
     request: i32,
     result: i32,
