@@ -73,7 +73,7 @@ private fun kindOf(page: Destination) = when (page) {
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun CatalogScreen(page: Destination, state: Snapshot, wide: Boolean, actions: LauncherActions) {
+fun CatalogScreen(page: Destination, state: Snapshot, wide: Boolean, short: Boolean, actions: LauncherActions) {
     val catalog = state.catalog
     var query by rememberSaveable(page) { mutableStateOf(catalog.query) }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -99,7 +99,10 @@ fun CatalogScreen(page: Destination, state: Snapshot, wide: Boolean, actions: La
         contentPadding = PaddingValues(bottom = 8.dp),
     ) {
         item(key = "controls") {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(bottom = 4.dp)) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(if (short) 8.dp else 12.dp),
+                modifier = Modifier.padding(bottom = 4.dp),
+            ) {
                 TextField(
                     value = query,
                     onValueChange = { query = it },
@@ -144,7 +147,7 @@ fun CatalogScreen(page: Destination, state: Snapshot, wide: Boolean, actions: La
                                 selected = selected == id,
                                 onClick = { act("source", id) },
                                 shape = SegmentedButtonDefaults.itemShape(i, 2),
-                                modifier = Modifier.heightIn(min = 48.dp),
+                                modifier = Modifier.heightIn(min = if (short) 40.dp else 48.dp),
                                 label = { Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1) },
                             )
                         }

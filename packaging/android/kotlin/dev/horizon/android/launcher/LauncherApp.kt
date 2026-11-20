@@ -2,6 +2,7 @@ package dev.horizon.android.launcher
 
 import android.content.Intent
 import android.net.Uri
+import android.os.SystemClock
 import android.provider.OpenableColumns
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.animation.Crossfade
 import androidx.compose.material.icons.rounded.Close
@@ -128,28 +130,77 @@ fun LauncherApp(
     onPlay: () -> Unit,
     onImport: (String, String?) -> Unit,
     onImportNative: (String?) -> Unit,
+    crashNotice: String? = null,
 ) {
     var appearance by remember { mutableStateOf(LauncherAppearance.load()) }
+    val reducedMotion = rememberReducedMotion()
+
+    // ---- Snapshot loading state machine --------------------------------
+    // Poll the native launcher off the UI loop only while it is on screen. Both the
+    // bridge call and the parser are guarded: a missing key used to kill the coroutine
+    // and leave a permanent spinner. After a short run of failures, or three seconds
+    // without a snapshot, we surface a retryable failure and keep navigation mounted.
+    var loadState by remember { mutableStateOf<SnapshotState>(SnapshotState.Loading) }
+    var retryTick by remember { mutableStateOf(0) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle, retryTick) {
+        var ready = false
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            var failures = 0
+            val deadline = SystemClock.elapsedRealtime() + 3000L
+            while (true) {
+                val parsed = runCatching {
+                    NativeBridge.snapshot()?.let { Snapshot.parse(it) }
+                }.getOrNull()
+                if (parsed != null) {
+                    ready = true
+                    failures = 0
+                    loadState = SnapshotState.Ready(parsed)
+                } else {
+                    failures++
+                    if (!ready && (failures >= 10 || SystemClock.elapsedRealtime() >= deadline)) {
+                        loadState = SnapshotState.Failed(
+                            "The launcher could not load its data. Check the installation and try again.",
+                        )
+                    }
+                }
+                delay(200)
+            }
+        }
+    }
+    val retry = {
+        loadState = SnapshotState.Loading
+        retryTick++
+    }
+
     // Fade and grow in over the splash window so opening the app is a transition, not a cut.
     val appear = remember { Animatable(0f) }
-    LaunchedEffect(Unit) { appear.animateTo(1f, tween(durationMillis = 450, easing = FastOutSlowInEasing)) }
+    LaunchedEffect(Unit) {
+        appear.animateTo(1f, tween(durationMillis = if (reducedMotion) 0 else 450, easing = FastOutSlowInEasing))
+    }
     HorizonTheme(appearance) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    alpha = appear.value
-                    scaleX = 0.97f + 0.03f * appear.value
-                    scaleY = 0.97f + 0.03f * appear.value
-                },
-        ) {
-            LauncherContent(
-                appearance = appearance,
-                onAppearance = { appearance = it },
-                onPlay = onPlay,
-                onImport = onImport,
-                onImportNative = onImportNative,
-            )
+        Box(Modifier.fillMaxSize()) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        alpha = appear.value
+                        scaleX = 0.97f + 0.03f * appear.value
+                        scaleY = 0.97f + 0.03f * appear.value
+                    },
+            ) {
+                LauncherContent(
+                    loadState = loadState,
+                    onRetry = retry,
+                    crashNotice = crashNotice,
+                    appearance = appearance,
+                    onAppearance = { appearance = it },
+                    onPlay = onPlay,
+                    onImport = onImport,
+                    onImportNative = onImportNative,
+                )
+            }
+            LaunchSplash(visible = loadState is SnapshotState.Loading)
         }
     }
 }
@@ -157,25 +208,19 @@ fun LauncherApp(
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun LauncherContent(
+    loadState: SnapshotState,
+    onRetry: () -> Unit,
+    crashNotice: String?,
     appearance: LauncherAppearance,
     onAppearance: (LauncherAppearance) -> Unit,
     onPlay: () -> Unit,
     onImport: (String, String?) -> Unit,
     onImportNative: (String?) -> Unit,
 ) {
-    var snapshot by remember { mutableStateOf<Snapshot?>(null) }
-    // Poll only while the launcher is on screen: never while the game runs.
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(lifecycle) {
-        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            while (true) {
-                NativeBridge.snapshot()?.let { text -> Snapshot.parse(text)?.let { snapshot = it } }
-                delay(200)
-            }
-        }
-    }
-    LaunchedEffect(snapshot?.appearance) {
-        snapshot?.appearance?.let { if (it != appearance) onAppearance(it) }
+    val state = (loadState as? SnapshotState.Ready)?.snapshot
+    val failure = (loadState as? SnapshotState.Failed)?.message
+    LaunchedEffect(state?.appearance) {
+        state?.appearance?.let { if (it != appearance) onAppearance(it) }
     }
     var destination by rememberSaveable { mutableStateOf(Destination.Play) }
     // Settings is a layer over the current page, not a destination: closing it reveals that page as it was.
@@ -265,7 +310,6 @@ private fun LauncherContent(
         }
     }
     val snackbars = remember { SnackbarHostState() }
-    val state = snapshot
     LaunchedEffect(state?.status) {
         val status = state?.status.orEmpty()
         if (status.isNotBlank()) {
@@ -273,8 +317,22 @@ private fun LauncherContent(
             act("dismiss_status")
         }
     }
-    BackHandler(enabled = settingsOpen || destination != Destination.Play) {
-        if (settingsOpen) settingsOpen = false else destination = Destination.Play
+    // Show a crash notice from the previous run once, through the existing snackbar host,
+    // then consume the marker. [remember] keeps it to one show per composition lifetime.
+    val crashShown = rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(crashNotice) {
+        if (!crashNotice.isNullOrBlank() && !crashShown.value) {
+            crashShown.value = true
+            snackbars.showSnackbar(crashNotice, withDismissAction = true)
+            CrashHandler.clear(context)
+        }
+    }
+    BackHandler(enabled = overlay != null || settingsOpen || destination != Destination.Play) {
+        when {
+            overlay != null -> overlay = null
+            settingsOpen -> settingsOpen = false
+            else -> destination = Destination.Play
+        }
     }
 
     val actions = LauncherActions(
@@ -327,7 +385,17 @@ private fun LauncherContent(
         toggleSettings = { settingsOpen = !settingsOpen },
     )
 
-    LauncherScaffold(state, destination, { destination = it }, appearance, actions, snackbars, settingsOpen)
+    LauncherScaffold(
+        state = state,
+        destination = destination,
+        onDestination = { destination = it },
+        appearance = appearance,
+        actions = actions,
+        snackbars = snackbars,
+        settingsOpen = settingsOpen,
+        failure = failure,
+        onRetry = onRetry,
+    )
 
     if (state != null) {
         when (val o = overlay) {
@@ -370,6 +438,44 @@ private fun LauncherContent(
     }
 }
 
+/** Derived once from [BoxWithConstraints] and threaded through the pages. */
+private data class LayoutConfig(val wide: Boolean, val short: Boolean)
+
+/** Navigation labels stay visible in every layout; short landscape just makes them smaller. */
+@Composable
+private fun NavLabel(text: String, short: Boolean) {
+    Text(
+        text,
+        style = if (short) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
+        maxLines = 1,
+        softWrap = false,
+    )
+}
+
+/** What the content area shows before the first snapshot: a transient spinner or a retryable failure. */
+@Composable
+private fun LoadPlaceholder(failure: String?, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        if (failure == null) {
+            LoadingIndicator()
+        } else {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("Launcher unavailable", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    failure,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                FilledTonalButton(onClick = onRetry) { Text("Retry") }
+            }
+        }
+    }
+}
+
 /** Navigation and the current page; [LauncherApp] adds the bridge, dialogs and pickers. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -381,6 +487,8 @@ fun LauncherScaffold(
     actions: LauncherActions,
     snackbars: SnackbarHostState,
     settingsOpen: Boolean = false,
+    failure: String? = null,
+    onRetry: () -> Unit = {},
 ) {
     // Status snackbars sit over the page, never over the navigation bar or rail.
     val snackbarHost = @Composable { SnackbarHost(snackbars, Modifier.padding(bottom = 4.dp)) }
@@ -393,12 +501,19 @@ fun LauncherScaffold(
             contentWindowInsets = WindowInsets(0),
         ) { padding ->
             BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
-                val wide = maxWidth >= 600.dp
-                // Phones held sideways are ~400 dp tall: tighter header, no rail logo.
-                val short = maxHeight < 520.dp
-                if (state == null) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingIndicator() }
-                    return@BoxWithConstraints
+                val layout = LayoutConfig(
+                    wide = maxWidth >= 600.dp,
+                    // Phones held sideways are ~400 dp tall: tighter header, no rail logo.
+                    short = maxHeight < 520.dp,
+                )
+                val wide = layout.wide
+                val short = layout.short
+                val page: @Composable () -> Unit = {
+                    if (state != null) {
+                        Page(destination, state, wide, short, actions, Modifier.fillMaxSize())
+                    } else {
+                        LoadPlaceholder(failure, onRetry, Modifier.fillMaxSize())
+                    }
                 }
                 if (wide) {
                     Row(Modifier.fillMaxSize()) {
@@ -411,13 +526,13 @@ fun LauncherScaffold(
                                     selected = destination == d,
                                     onClick = { onDestination(d) },
                                     icon = { Icon(d.icon, contentDescription = null) },
-                                    label = { Text(d.label, maxLines = 1, softWrap = false) },
+                                    label = { NavLabel(d.label, short) },
                                 )
                             }
                             Spacer(Modifier.weight(1f))
                         }
                         Box(Modifier.weight(1f).windowInsetsPadding(WindowInsets.safeDrawing)) {
-                            Page(destination, state, wide = true, short, actions, Modifier.fillMaxSize())
+                            page()
                             if (!settingsOpen) Box(Modifier.align(Alignment.BottomCenter)) { snackbarHost() }
                         }
                     }
@@ -428,7 +543,7 @@ fun LauncherScaffold(
                                 WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
                             ),
                         ) {
-                            Page(destination, state, wide = false, short, actions, Modifier.fillMaxSize())
+                            page()
                             if (!settingsOpen) Box(Modifier.align(Alignment.BottomCenter)) { snackbarHost() }
                         }
                         NavigationBar {
@@ -437,21 +552,24 @@ fun LauncherScaffold(
                                     selected = destination == d,
                                     onClick = { onDestination(d) },
                                     icon = { Icon(d.icon, contentDescription = null) },
-                                    label = { Text(d.label, maxLines = 1, softWrap = false) },
+                                    label = { NavLabel(d.label, short) },
                                 )
                             }
                         }
                     }
                 }
                 // Settings covers everything, navigation included, and simply fades in and out.
-                AnimatedVisibility(settingsOpen, enter = fadeIn(), exit = fadeOut()) {
-                    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-                        Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-                            Column(Modifier.fillMaxSize().padding(horizontal = if (wide) 24.dp else 16.dp)) {
-                                Header(Destination.Settings, state, short, actions)
-                                Box(Modifier.weight(1f).fillMaxWidth()) { SettingsScreen(state, wide, actions) }
+                // It needs a snapshot, so it stays out of the loading/failed states.
+                if (state != null) {
+                    AnimatedVisibility(settingsOpen, enter = fadeIn(), exit = fadeOut()) {
+                        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                            Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+                                Column(Modifier.fillMaxSize().padding(horizontal = if (wide) 24.dp else 16.dp)) {
+                                    Header(Destination.Settings, state, short, actions)
+                                    Box(Modifier.weight(1f).fillMaxWidth()) { SettingsScreen(state, wide, actions) }
+                                }
+                                Box(Modifier.align(Alignment.BottomCenter)) { snackbarHost() }
                             }
-                            Box(Modifier.align(Alignment.BottomCenter)) { snackbarHost() }
                         }
                     }
                 }
@@ -528,7 +646,7 @@ private fun Page(
                     Destination.Play -> PlayScreen(state, wide, short, actions)
                     Destination.Skins -> SkinsScreen(state, wide, short, actions)
                     Destination.Mods, Destination.Packs, Destination.Shaders ->
-                        CatalogScreen(page, state, wide, actions)
+                        CatalogScreen(page, state, wide, short, actions)
                     Destination.Installed -> InstalledScreen(state, actions)
                     Destination.Screenshots -> ScreenshotGallery(state.config.profileName)
                     Destination.Settings -> {} // drawn as a layer by LauncherScaffold

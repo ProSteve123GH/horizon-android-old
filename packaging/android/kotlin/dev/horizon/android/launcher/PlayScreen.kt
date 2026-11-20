@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -68,7 +69,7 @@ fun PlayScreen(state: Snapshot, wide: Boolean, short: Boolean, actions: Launcher
         ) {
             Hero(state, short, actions, Modifier.weight(1f).fillMaxHeight(), scroll = true)
             Column(
-                Modifier.width(300.dp).fillMaxHeight(),
+                Modifier.widthIn(min = 240.dp, max = 360.dp).fillMaxHeight(),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 // The card scrolls on short landscape screens; Play stays pinned at the bottom.
