@@ -35,6 +35,7 @@ NODE24_SHAS = {
     "setup-java": "b6effb05e454b25005698d916606bdc6ffcbf961",
     "cache": "caa296126883cff596d87d8935842f9db880ef25",
     "setup-gradle": "0723195856401067f7a2779048b490ace7a47d7c",
+    "upload-artifact": "b7c566a772e6b6bfb58ed0dc250532a479d7789f",
 }
 # Deprecated Node-20 action SHAs that must never come back.
 NODE20_PREFIXES = ("11bd719", "cf277c6", "0057852", "ed40850")
@@ -94,6 +95,7 @@ class PipelineStepTests(unittest.TestCase):
             "python3 tools/check_public_tree.py",
             "python3 tools/android_build.py",
             "gh release upload dev-latest --clobber",
+            "horizon-dev-${{ github.run_number }}-${{ matrix.abi }}",
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, text)
