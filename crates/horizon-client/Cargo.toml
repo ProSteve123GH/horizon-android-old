@@ -30,6 +30,8 @@ horizon-perf-format = { path = "../horizon-perf-format" }
 horizon-hdr = { path = "../horizon-hdr" }
 horizon-world = { path = "../horizon-world" }
 horizon-protocol = { path = "../horizon-protocol" }
+# Built-in Simple Voice Chat client (ported from Starling PR #310).
+voicechat_engine = { path = "../voicechat-engine" }
 # server.properties, eula.txt and the user lists, shared with horizon-server.
 horizon-server-files = { path = "../horizon-server-files" }
 # The dedicated server's anticheat, off unless server.toml's [anticheat] turns it on (docs/anticheat.md).

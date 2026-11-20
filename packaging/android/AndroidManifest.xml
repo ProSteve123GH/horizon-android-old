@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Built-in Simple Voice Chat: microphone capture for proximity voice. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Normal permission, auto-granted: lets the launcher close Horizon's own game process (:game) so a freshly built native-mod library loads on the next start. -->
     <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />

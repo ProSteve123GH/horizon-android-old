@@ -2247,6 +2247,7 @@ impl Game<'_> {
     pub(super) fn native_tick(&mut self) {
         self.native_process_tasks();
         mod_api::dispatch_tick(self, mod_api::mods());
+        super::voicechat::tick(self);
     }
     /// Before an eligible targeted block's selection outline is built.
     /// Cancel skips only the default block highlight, after normal HUD and game-mode gates.
@@ -2518,6 +2519,7 @@ impl Game<'_> {
     /// says is taken.
     pub(super) fn native_hud(&mut self, batch: &mut HudBatch, corners: &mut Corners) {
         mod_api::dispatch_hud(self, mod_api::mods(), batch, corners);
+        super::voicechat::hud(self, batch, corners);
     }
     /// After the complete normal GUI batch, including screens, prompts, toasts,
     /// debug overlays, the pad cursor and IME. Fires even with F1 or a menu open;

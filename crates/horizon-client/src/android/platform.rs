@@ -771,3 +771,69 @@ pub fn display_rotation() -> i32 {
     })
     .unwrap_or(0)
 }
+
+// ---- Built-in Simple Voice Chat (ported from Starling PR #310) ----
+
+/// Returns true when RECORD_AUDIO is granted; otherwise asks for it and returns
+/// false. The engine retries on its next microphone open.
+pub fn ensure_microphone_permission() -> bool {
+    with_context(|env, activity| {
+        let name = env.new_string("android.permission.RECORD_AUDIO")?;
+        let perm = JObject::from(name);
+        let granted = env
+            .call_method(
+                activity,
+                "checkSelfPermission",
+                "(Ljava/lang/String;)I",
+                &[JValue::Object(&perm)],
+            )?
+            .i()?
+            == 0;
+        if granted {
+            return Ok(true);
+        }
+        let class = env.find_class("java/lang/String")?;
+        let array = env.new_object_array(1, class, perm)?;
+        env.call_method(
+            activity,
+            "requestPermissions",
+            "([Ljava/lang/String;I)V",
+            &[JValue::Object(&JObject::from(array)), JValue::Int(9001)],
+        )?;
+        Ok(false)
+    })
+    .unwrap_or(true)
+}
+
+fn set_voice_audio_mode(mode: i32) {
+    let _ = with_context(|env, activity| {
+        let name = env.new_string("audio")?;
+        let service = env
+            .call_method(
+                activity,
+                "getSystemService",
+                "(Ljava/lang/String;)Ljava/lang/Object;",
+                &[JValue::Object(&JObject::from(name))],
+            )?
+            .l()?;
+        if service.is_null() {
+            return Ok(());
+        }
+        env.call_method(service, "setMode", "(I)V", &[JValue::Int(mode)])?;
+        Ok(())
+    });
+}
+
+/// MODE_IN_COMMUNICATION: route voice through the call path so the mic and
+/// speaker work together on Android. MODE_NORMAL restores game audio.
+pub fn on_voice_mic_open() {
+    set_voice_audio_mode(3);
+}
+
+pub fn on_voice_mic_close() {
+    set_voice_audio_mode(0);
+}
+
+/// The full PR also re-routes audio effects; do nothing here so switching the
+/// mode cannot disturb game sound when voice chat is idle.
+pub fn sync_voice_audio_state() {}

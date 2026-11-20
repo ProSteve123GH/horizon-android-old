@@ -31,6 +31,7 @@
     "horizon-system": "engine",
     "horizon-threads": "engine",
     "horizon-world": "engine",
+    "voicechat_engine": "engine",
 
     "cargo-horizon-mod": "platform",
     "horizon-anticheat": "platform",
