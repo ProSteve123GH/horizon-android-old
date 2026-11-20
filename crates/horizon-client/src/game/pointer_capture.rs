@@ -121,6 +121,34 @@ impl Game<'_> {
             }
         }
     }
+    /// Android's winit backend always returns `NotSupported` from
+    /// `set_cursor_grab`, so a grab there has to go through the native View
+    /// bridge (`View.requestPointerCapture`), which is also what makes Android
+    /// deliver the relative mouse deltas the look code consumes. Only keyboard
+    /// and mouse mode asks for the pointer; release must still reach the bridge
+    /// when the mode changes while gameplay holds it.
+    fn native_capture_wanted() -> bool {
+        #[cfg(target_os = "android")]
+        {
+            crate::keyboard_mouse_input()
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            false
+        }
+    }
+    /// Ask the native View bridge to take/release the pointer. A no-op off Android.
+    fn native_capture(capture: bool) -> bool {
+        #[cfg(target_os = "android")]
+        {
+            crate::platform::capture_mouse(capture)
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = capture;
+            false
+        }
+    }
     /// `MouseHandler.grabMouse` / `releaseMouse`. Both put the pointer at
     /// the window's centre, so a screen opened from gameplay (inventory,
     /// chest, pause, chat, sign, book, death) starts with the cursor in the
@@ -210,6 +238,11 @@ impl Game<'_> {
                 Some(CursorGrabMode::Locked)
             } else if window.set_cursor_grab(CursorGrabMode::Confined).is_ok() {
                 Some(CursorGrabMode::Confined)
+            } else if native_capture_wanted() && native_capture(true) {
+                // Android: the native View bridge took the pointer. winit's own
+                // grab is unsupported there, so record the mode ourselves to
+                // keep `captured` and `capture_mode` in step.
+                Some(CursorGrabMode::Locked)
             } else {
                 None
             };
@@ -236,6 +269,9 @@ impl Game<'_> {
             } else {
                 let _ = window.set_cursor_grab(CursorGrabMode::None);
             }
+            // Release the native bridge even when the mode changed while we
+            // held the pointer, so no Android capture is left behind.
+            let _ = native_capture(false);
             self.captured = false;
             self.capture_mode = None;
         }
