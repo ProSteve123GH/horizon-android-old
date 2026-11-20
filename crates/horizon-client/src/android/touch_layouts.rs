@@ -14,9 +14,12 @@
 //! when a profile is applied, so no touch setting is lost or overwritten that
 //! the profiles are not about.
 //!
-//! Applying a profile keeps every custom key the touch file has: a button whose
-//! key matches a stored one takes the stored placement, a key added after the
-//! profile was saved keeps its own, and keys the player removed stay removed.
+//! Applying a profile treats the snapshot as authoritative only for what it
+//! actually lists: a custom key named by the profile takes its stored placement
+//! (and is restored if the current file lost it), while a key the player added
+//! later and the profile never mentions keeps its own. A short-form snapshot
+//! also leaves the current placements and hidden flags of the controls it does
+//! not list alone, so applying an older profile cannot reveal or move them.
 //! Keys are gameplay actions, the same reason the in-game editor's reset
 //! preserves them while resetting positions.
 use serde::{Deserialize, Serialize};
@@ -204,6 +207,32 @@ pub fn snapshot_mode(snapshot: &Json) -> Result<&str, String> {
         .and_then(|object| object.get("mode"))
         .and_then(Json::as_str)
         .ok_or_else(|| "A layout snapshot needs a mode".to_owned())
+}
+
+/// The layout fields read verbatim from an instance's **live** `horizon-touch.json`.
+///
+/// This never falls back to the engine's defaults and never runs the engine's
+/// sanitizer: a player's custom buttons and hidden controls are captured exactly
+/// as the game wrote them. If the file is missing or unreadable it fails, so
+/// "new from current" cannot silently snapshot a factory layout and wipe the
+/// current arrangement.
+pub fn live_snapshot(instance: &Path) -> Result<Json, String> {
+    let path = instance.join(TOUCH_FILE);
+    let bytes = fs::read(&path)
+        .map_err(|error| format!("Cannot read the current touch layout ({error})"))?;
+    let value: Json = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("The current touch layout is not valid JSON ({error})"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| "The current touch layout is not an object".to_owned())?;
+    let snapshot = serde_json::json!({
+        "mode": object.get("mode").cloned().unwrap_or(Json::Null),
+        "layouts": object.get("layouts").cloned().unwrap_or(Json::Null),
+        "button_visibility": object.get("button_visibility").cloned().unwrap_or(Json::Null),
+        "custom_buttons": object.get("custom_buttons").cloned().unwrap_or(Json::Null),
+    });
+    valid_snapshot(&snapshot)?;
+    Ok(snapshot)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -471,6 +500,156 @@ pub fn duplicate(instance: &Path, id: &str) -> Result<ProfileView, String> {
     Ok(view(&profile, None))
 }
 
+/// A parsed, validated controls import and the summary shown before it is saved.
+#[derive(Clone, Debug, Serialize)]
+pub struct ImportPreview {
+    /// The name the imported profile will get (collision-free after saving).
+    pub name: String,
+    /// Where the snapshot came from: `profile`, `snapshot` or `bedrock`.
+    pub shape: &'static str,
+    pub mode: String,
+    pub button_count: usize,
+    /// Human-readable button-visibility summary for the confirmation prompt.
+    pub visibility: String,
+    /// The validated snapshot, ready to store as a new profile.
+    pub snapshot: Json,
+}
+
+/// Marker kept in the error text so an unimplemented conversion is visible to
+/// whoever picks the file up next.
+const BEDROCK_TODO: &str = "TODO: convert Bedrock controls JSON (its buttons/controls arrays) into a Horizon snapshot (mode, layouts, button_visibility, custom_buttons).";
+
+fn clean_name(raw: &str) -> String {
+    let name: String = raw.chars().filter(|c| !c.is_control()).collect();
+    name.trim().chars().take(MAX_NAME).collect()
+}
+
+/// Detects and validates the three supported controls-file shapes without writing:
+/// a full profile export (`id`/`name`/`snapshot`), a raw `horizon-touch.json`
+/// snapshot, or a Bedrock controls file (reported as unsupported).
+///
+/// `fallback_name` names a raw snapshot; a profile export carries its own name.
+pub fn import_preview(bytes: &[u8], fallback_name: &str) -> Result<ImportPreview, String> {
+    let value: Json = serde_json::from_slice(bytes)
+        .map_err(|error| format!("That file is not valid JSON ({error})"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| "A controls file must be a JSON object".to_owned())?;
+
+    // (a) A profile export: {"id":..,"name":..,"snapshot":{...}}.
+    let exported = object
+        .get("snapshot")
+        .filter(|snapshot| snapshot.is_object())
+        .map(|snapshot| (snapshot, object.get("name").and_then(Json::as_str)));
+    // (b) A raw horizon-touch.json snapshot: it carries the layout fields itself.
+    let raw = (object.contains_key("mode") && object.contains_key("layouts"))
+        .then_some((&value, None::<&str>));
+    let (snapshot, stored_name, shape) = match (exported, raw) {
+        (Some((snapshot, name)), _) => (snapshot, name, "profile"),
+        (None, Some((snapshot, _))) => (snapshot, None, "snapshot"),
+        (None, None) => {
+            return Err(if bedrock_controls(object) {
+                format!(
+                    "Unsupported controls file: this is a Bedrock controls JSON, not a Horizon layout. Expected a Horizon profile export or a horizon-touch.json snapshot. {BEDROCK_TODO}"
+                )
+            } else {
+                "Unsupported controls file: expected a Horizon profile export (id/name/snapshot) or a raw horizon-touch.json snapshot (mode/layouts/button_visibility/custom_buttons).".to_owned()
+            });
+        }
+    };
+    valid_snapshot(snapshot)?;
+
+    let (mode, _, visibility, buttons) = snapshot_fields(snapshot)?;
+    let button_count = buttons.as_array().map(Vec::len).unwrap_or(0);
+    let values: Vec<i64> = visibility
+        .as_array()
+        .map(|values| values.iter().filter_map(Json::as_i64).collect())
+        .unwrap_or_default();
+    let hidden = values.iter().filter(|value| **value == 2).count();
+    let always = values.iter().filter(|value| **value == 1).count();
+    let visibility = if hidden == 0 {
+        format!("{} controls, none hidden", values.len())
+    } else {
+        format!(
+            "{} controls, {hidden} hidden, {always} always visible",
+            values.len()
+        )
+    };
+    let name = clean_name(stored_name.unwrap_or(fallback_name));
+    Ok(ImportPreview {
+        name: if name.is_empty() {
+            "Imported layout".to_owned()
+        } else {
+            name
+        },
+        shape,
+        mode,
+        button_count,
+        visibility,
+        snapshot: snapshot.clone(),
+    })
+}
+
+/// Bedrock maps store a `buttons`/`controls` array or a `format_version` tag,
+/// never the Horizon layout fields. Only used to give a precise error.
+fn bedrock_controls(object: &serde_json::Map<String, Json>) -> bool {
+    object.contains_key("format_version")
+        || object.contains_key("mobile")
+        || object.contains_key("controller")
+        || ["buttons", "controls"]
+            .iter()
+            .any(|key| object.get(*key).is_some_and(Json::is_array))
+}
+
+/// Saves an import as a brand-new profile. An existing name is never replaced:
+/// the copy gets a `name (2)` suffix. The profile is not auto-applied.
+pub fn import_profile(
+    instance: &Path,
+    bytes: &[u8],
+    fallback_name: &str,
+) -> Result<(ImportPreview, ProfileView), String> {
+    let preview = import_preview(bytes, fallback_name)?;
+    let (mut store, damaged) = load_store(instance);
+    if store.custom.len() >= MAX_PROFILES {
+        return Err(format!(
+            "This instance keeps at most {MAX_PROFILES} layout profiles. Delete one first."
+        ));
+    }
+    let name = unique_import_name(&store, &preview.name);
+    let profile = Profile {
+        id: next_id(&store),
+        name,
+        snapshot: preview.snapshot.clone(),
+    };
+    store.custom.push(profile.clone());
+    save_store(instance, &store, damaged.is_some())?;
+    Ok((preview, view(&profile, store.selected.as_deref())))
+}
+
+fn unique_import_name(store: &Store, base: &str) -> String {
+    let base = clean_name(base);
+    let base = if base.is_empty() {
+        "Imported layout".to_owned()
+    } else {
+        base
+    };
+    if !name_taken(store, &base) {
+        return base;
+    }
+    for n in 2..=999 {
+        let suffix = format!(" ({n})");
+        let stem: String = base
+            .chars()
+            .take(MAX_NAME - suffix.chars().count())
+            .collect();
+        let candidate = format!("{stem}{suffix}");
+        if !name_taken(store, &candidate) {
+            return candidate;
+        }
+    }
+    "Imported layout".to_owned()
+}
+
 fn unique_name(store: &Store, base: &str) -> String {
     if !name_taken(store, base) {
         return base.to_owned();
@@ -536,57 +715,121 @@ pub fn clear_selected(instance: &Path) -> Result<(), String> {
     save_store(instance, &store, damaged.is_some())
 }
 
-/// The `{mode, layouts, button_visibility, custom_buttons}` object to copy into
-/// the engine's touch settings when the profile snapshot is applied to a
-/// touch file's `current` settings.
-///
-/// Custom buttons merge by key: matching keys take the snapshot's placement,
-/// keys added since the profile was saved keep their own, and keys the player
-/// removed stay removed. Gameplay actions are never removed or replaced.
-pub fn apply_fields(current: &Json, snapshot: &Json) -> Result<Json, String> {
-    let (mode, layouts, visibility, buttons) = {
-        let (mode, layouts, visibility, saved) = snapshot_fields(snapshot)?;
-        (
-            mode.to_owned(),
-            layouts.clone(),
-            visibility.clone(),
-            saved.clone(),
-        )
+/// Overlays the profile's placement rows onto the current ones. A snapshot in
+/// the engine's legacy 10/12-control shape does not mention the later controls,
+/// so their current positions are kept instead of snapping back to defaults.
+fn merge_layouts(current: Option<&Json>, profile: &Json) -> Json {
+    let Some(current_rows) = current.and_then(Json::as_array) else {
+        return profile.clone();
     };
-    let stored: Vec<(String, Json)> = buttons
-        .as_array()
-        .expect("snapshot_fields validated the custom buttons")
-        .iter()
-        .filter_map(|button| {
-            Some((
-                button.get("key")?.as_str()?.to_owned(),
-                button.get("layouts")?.clone(),
-            ))
-        })
+    let profile_rows = profile.as_array().map(Vec::as_slice).unwrap_or_default();
+    let mut rows = Vec::with_capacity(3);
+    for mode in 0..3 {
+        let mut row: Vec<Json> = current_rows
+            .get(mode)
+            .and_then(Json::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if let Some(saved) = profile_rows.get(mode).and_then(Json::as_array) {
+            for (control, placement) in saved.iter().enumerate() {
+                if control < row.len() {
+                    row[control] = placement.clone();
+                } else {
+                    row.push(placement.clone());
+                }
+            }
+        }
+        rows.push(Json::Array(row));
+    }
+    Json::Array(rows)
+}
+
+/// Overlays the profile's visibility values onto the current ones. Values the
+/// profile omits (a 12-value legacy snapshot has no entry for Offhand/Shield)
+/// keep their current state, so a hidden control is not revealed by an apply.
+fn merge_visibility(current: Option<&Json>, profile: &Json) -> Json {
+    let saved = profile.as_array().map(Vec::as_slice).unwrap_or_default();
+    if saved.is_empty() {
+        return profile.clone();
+    }
+    let mut values: Vec<Json> = current
+        .and_then(Json::as_array)
+        .into_iter()
+        .flatten()
+        .take(CONTROLS)
+        .cloned()
         .collect();
-    let merged: Vec<Json> = current
-        .get("custom_buttons")
+    for (control, value) in saved.iter().enumerate() {
+        if control < values.len() {
+            values[control] = value.clone();
+        } else {
+            values.push(value.clone());
+        }
+    }
+    Json::Array(values)
+}
+
+/// Merges custom keys by key. The profile is authoritative for the keys it
+/// lists (their placements are restored even if the current file lost them);
+/// keys added since it was saved keep their own placement because the profile
+/// does not mention them. The result is capped at the engine's 32 buttons.
+fn merge_buttons(current: Option<&Json>, profile: &Json) -> Json {
+    let saved: Vec<&Json> = profile
+        .as_array()
+        .map(|array| array.iter().collect())
+        .unwrap_or_default();
+    fn key_of(button: &Json) -> Option<&str> {
+        button.get("key").and_then(Json::as_str)
+    }
+    let mut buttons: Vec<Json> = current
         .and_then(Json::as_array)
         .cloned()
         .unwrap_or_default()
         .into_iter()
         .take(32)
-        .map(|mut button| {
-            let key = button.get("key").and_then(Json::as_str);
-            if let Some((_, layouts)) =
-                key.and_then(|key| stored.iter().find(|(saved, _)| saved == key))
-                && let Some(object) = button.as_object_mut()
-            {
-                object.insert("layouts".into(), layouts.clone());
-            }
-            button
-        })
         .collect();
+    for button in &mut buttons {
+        let key: Option<String> = button.get("key").and_then(Json::as_str).map(str::to_owned);
+        if key.is_none() {
+            continue;
+        }
+        if let Some(saved) = saved.iter().find(|button| key_of(button) == key.as_deref())
+            && let (Some(object), Some(layouts)) = (button.as_object_mut(), saved.get("layouts"))
+        {
+            object.insert("layouts".into(), layouts.clone());
+        }
+    }
+    for saved in saved {
+        let key = key_of(saved);
+        if key.is_none()
+            || buttons
+                .iter()
+                .any(|button| button.get("key").and_then(Json::as_str) == key)
+        {
+            continue;
+        }
+        if buttons.len() >= 32 {
+            break;
+        }
+        buttons.push(saved.clone());
+    }
+    Json::Array(buttons)
+}
+
+/// The `{mode, layouts, button_visibility, custom_buttons}` object to copy into
+/// the engine's touch settings when the profile snapshot is applied to a
+/// touch file's `current` settings. See [`merge_buttons`], [`merge_layouts`] and
+/// [`merge_visibility`] for what is kept from `current`.
+pub fn apply_fields(current: &Json, snapshot: &Json) -> Result<Json, String> {
+    let (mode, layouts, visibility, buttons) = {
+        let (mode, layouts, visibility, saved) = snapshot_fields(snapshot)?;
+        (mode, layouts.clone(), visibility.clone(), saved.clone())
+    };
     Ok(serde_json::json!({
         "mode": mode,
-        "layouts": layouts,
-        "button_visibility": visibility,
-        "custom_buttons": merged,
+        "layouts": merge_layouts(current.get("layouts"), &layouts),
+        "button_visibility": merge_visibility(current.get("button_visibility"), &visibility),
+        "custom_buttons": merge_buttons(current.get("custom_buttons"), &buttons),
     }))
 }
 
@@ -1079,6 +1322,186 @@ mod tests {
         assert_eq!(mode_label("crosshair"), "Joystick & aim crosshair");
         assert_eq!(mode_label("dpad"), "D-Pad & tap to interact");
         assert_eq!(mode_label("other"), "Unknown mode");
+    }
+
+    #[test]
+    fn importing_a_raw_snapshot_creates_a_validated_profile_with_a_preview() {
+        let scratch = Scratch::new();
+        let raw = sample_snapshot("dpad", [0.3, 0.6], [0.8, 0.5]);
+        let bytes = serde_json::to_vec(&raw).unwrap();
+        let (preview, profile) = import_profile(scratch.path(), &bytes, "Backup").unwrap();
+        assert_eq!(preview.shape, "snapshot");
+        assert_eq!(preview.name, "Backup");
+        assert_eq!(preview.mode, "dpad");
+        assert_eq!(preview.button_count, 1);
+        assert!(preview.visibility.contains("none hidden"));
+        assert_eq!(profile.name, "Backup");
+        assert_eq!(
+            snapshot(scratch.path(), &profile.id).unwrap()["mode"],
+            "dpad"
+        );
+        assert_eq!(state(scratch.path()).unwrap().profiles.len(), 1);
+    }
+
+    #[test]
+    fn importing_a_profile_export_uses_the_name_carried_by_the_file() {
+        let scratch = Scratch::new();
+        let export = json!({
+            "id": "other-device-layout-3",
+            "name": "Tablet",
+            "snapshot": sample_snapshot("crosshair", [0.3, 0.7], [0.5, 0.5]),
+        });
+        let (preview, profile) = import_profile(
+            scratch.path(),
+            &serde_json::to_vec(&export).unwrap(),
+            "ignored",
+        )
+        .unwrap();
+        assert_eq!(preview.shape, "profile");
+        assert_eq!(profile.name, "Tablet");
+        assert_ne!(profile.id, export["id"]);
+    }
+
+    #[test]
+    fn importing_twice_renames_the_copy_instead_of_overwriting() {
+        let scratch = Scratch::new();
+        let bytes =
+            serde_json::to_vec(&sample_snapshot("crosshair", [0.3, 0.7], [0.5, 0.5])).unwrap();
+        let (_, first) = import_profile(scratch.path(), &bytes, "Backup").unwrap();
+        let (_, second) = import_profile(scratch.path(), &bytes, "Backup").unwrap();
+        assert_eq!(first.name, "Backup");
+        assert_eq!(second.name, "Backup (2)");
+        assert_ne!(first.id, second.id);
+        let profiles = state(scratch.path()).unwrap().profiles;
+        assert_eq!(profiles.len(), 2);
+        assert!(profiles.iter().any(|p| p.name == "Backup"));
+        assert!(profiles.iter().any(|p| p.name == "Backup (2)"));
+        // The first snapshot was not replaced by the second import.
+        assert_eq!(
+            snapshot(scratch.path(), &first.id).unwrap()["mode"],
+            snapshot(scratch.path(), &second.id).unwrap()["mode"]
+        );
+    }
+
+    #[test]
+    fn importing_an_invalid_snapshot_is_rejected_without_saving_a_profile() {
+        let scratch = Scratch::new();
+        let mut snapshot = sample_snapshot("crosshair", [0.3, 0.7], [0.5, 0.5]);
+        snapshot["layouts"][0][2]["size"] = json!(1.5);
+        let error = import_profile(
+            scratch.path(),
+            &serde_json::to_vec(&snapshot).unwrap(),
+            "Broken",
+        )
+        .unwrap_err();
+        assert!(error.contains("button"), "{error}");
+        assert!(state(scratch.path()).unwrap().profiles.is_empty());
+    }
+
+    #[test]
+    fn bedrock_controls_are_reported_as_unsupported_with_a_todo() {
+        let bedrock = json!({
+            "format_version": 1,
+            "buttons": [{"name": "jump", "coordinates": [0.1, 0.2]}],
+        });
+        let error = import_profile(
+            Scratch::new().path(),
+            &serde_json::to_vec(&bedrock).unwrap(),
+            "Bedrock",
+        )
+        .unwrap_err();
+        assert!(error.contains("Bedrock"), "{error}");
+        assert!(error.contains("TODO"), "{error}");
+    }
+
+    #[test]
+    fn live_snapshot_captures_the_current_file_instead_of_defaults() {
+        let scratch = Scratch::new();
+        let current = engine_current("tap", Some(json!([0.42, 0.58])));
+        fs::write(
+            scratch.path().join(TOUCH_FILE),
+            serde_json::to_vec_pretty(&current).unwrap(),
+        )
+        .unwrap();
+        let live = live_snapshot(scratch.path()).unwrap();
+        assert_eq!(live["mode"], "tap");
+        assert_eq!(
+            live["custom_buttons"][0]["layouts"][0]["center"],
+            json!([0.42, 0.58])
+        );
+        // A "new from current" profile keeps the live custom button.
+        let profile = create(scratch.path(), "From current", &live).unwrap();
+        assert_eq!(
+            snapshot(scratch.path(), &profile.id).unwrap()["custom_buttons"][0]["key"],
+            "key.keyboard.z"
+        );
+        // With no file, creating would otherwise fall back to a factory layout.
+        assert!(live_snapshot(Scratch::new().path()).is_err());
+    }
+
+    #[test]
+    fn applying_restores_profile_custom_keys_and_keeps_current_only_keys() {
+        let snapshot = sample_snapshot("dpad", [0.35, 0.65], [0.85, 0.45]);
+        // The current layout lost the profile's key but has one of its own.
+        let mut current = engine_current("tap", None);
+        current["custom_buttons"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "key": "key.keyboard.b",
+                "layouts": [
+                    {"center": [0.1, 0.9], "size": 0.105, "opacity": 0.65},
+                    {"center": [0.1, 0.9], "size": 0.105, "opacity": 0.65},
+                    {"center": [0.1, 0.9], "size": 0.105, "opacity": 0.65},
+                ],
+            }));
+        let fields = apply_fields(&current, &snapshot).unwrap();
+        let buttons = fields["custom_buttons"].as_array().unwrap();
+        assert_eq!(buttons.len(), 2);
+        let z = buttons
+            .iter()
+            .find(|b| b["key"] == "key.keyboard.z")
+            .expect("the profile's custom key must be restored");
+        assert_eq!(z["layouts"][0]["center"], json!([0.85, 0.45]));
+        let b = buttons
+            .iter()
+            .find(|b| b["key"] == "key.keyboard.b")
+            .expect("a key the profile does not mention must be kept");
+        assert_eq!(b["layouts"][0]["center"], json!([0.1, 0.9]));
+    }
+
+    #[test]
+    fn applying_a_short_profile_keeps_current_hidden_and_moved_controls() {
+        let mut snapshot = sample_snapshot("crosshair", [0.3, 0.7], [0.5, 0.5]);
+        // Legacy shape: ten placements per row and twelve visibility values.
+        snapshot["layouts"] = json!([
+            (0..10)
+                .map(|_| json!({"center": [0.2, 0.2], "size": 0.15, "opacity": 0.65}))
+                .collect::<Vec<_>>(),
+            (0..10)
+                .map(|_| json!({"center": [0.2, 0.3], "size": 0.15, "opacity": 0.65}))
+                .collect::<Vec<_>>(),
+            (0..10)
+                .map(|_| json!({"center": [0.2, 0.4], "size": 0.15, "opacity": 0.65}))
+                .collect::<Vec<_>>(),
+        ]);
+        snapshot["button_visibility"] = json!(vec![0u8; 12]);
+        valid_snapshot(&snapshot).unwrap();
+
+        let mut current = engine_current("tap", None);
+        current["layouts"][0][12]["center"] = json!([0.9, 0.9]);
+        let mut visibility = vec![0u8; CONTROLS];
+        visibility[12] = 2; // Offhand hidden
+        visibility[13] = 2; // Shield hidden
+        current["button_visibility"] = json!(visibility);
+        let fields = apply_fields(&current, &snapshot).unwrap();
+        // The short profile does not mention these two controls; keep them.
+        assert_eq!(fields["layouts"][0][12]["center"], json!([0.9, 0.9]));
+        assert_eq!(fields["button_visibility"][12], json!(2));
+        assert_eq!(fields["button_visibility"][13], json!(2));
+        // The controls it does mention still come from the profile.
+        assert_eq!(fields["button_visibility"][0], json!(0));
+        assert_eq!(fields["layouts"][0][2]["center"], json!([0.2, 0.2]));
     }
 
     #[test]

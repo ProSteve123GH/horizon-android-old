@@ -2075,26 +2075,47 @@ impl Game<'_> {
         self.ui.screenshot_messages.push(path.clone());
         Some(path)
     }
+    /// True for the physical key currently bound to `key.screenshot`.
+    /// Shared with the Android input filter so F2 is not dropped in
+    /// touch/controller mode before the global shortcut can see it.
+    pub(super) fn is_screenshot_key(&self, key: KeyCode) -> bool {
+        horizon_client::keybinds::key_name(key) == Some(self.settings.keys.get("key.screenshot"))
+    }
+    /// An Android helper for the early Touch/Controller key filter: global
+    /// shortcuts are allowed through even when gameplay keys are suppressed.
+    /// Keeping it here ties the exception to the action it protects.
+    #[cfg(target_os = "android")]
+    #[allow(dead_code)] // called from the Android window-event filter in `game/window_handler.rs`
+    pub(super) fn android_global_key(&self, key: KeyCode) -> bool {
+        self.is_screenshot_key(key) || key == KeyCode::Escape
+    }
     /// `Minecraft.handleGlobalKeyPress`'s screenshot branch: the
     /// `key.screenshot` mapping (F2 by default) takes the picture before a
     /// screen or a text box sees the key, and the debug modifier suppresses it.
     pub(super) fn screenshot_shortcut(&mut self, key: KeyCode, repeat: bool) -> bool {
-        if repeat
-            || horizon_client::keybinds::key_name(key)
-                != Some(self.settings.keys.get("key.screenshot"))
-        {
+        if repeat || !self.is_screenshot_key(key) {
             return false;
         }
         self.screenshot_action()
     }
-    /// key.screenshot from any device: not while F3 is down, where F3+F2 is a
-    /// debug key.
+    /// Take a picture from any device — keyboard shortcut, gamepad route or a
+    /// touch overlay button. F3+F2 stays a debug key.
     pub(super) fn screenshot_action(&mut self) -> bool {
         if self.debug_keys.modifier_down {
             return false;
         }
         self.take_screenshot();
         true
+    }
+    /// A touch custom button emits `action:key.screenshot`; route it to the
+    /// same action as the keyboard and gamepad. Returns true when handled, so
+    /// the caller can skip the ordinary key-mapping path.
+    #[allow(dead_code)] // called from the Android custom-touch event dispatcher
+    pub(super) fn screenshot_touch_action(&mut self, token: &str, down: bool) -> bool {
+        if down && token == "action:key.screenshot" {
+            return self.screenshot_action();
+        }
+        false
     }
     /// A screenshot written on its thread: F2's reports in chat. Any other was the world
     /// icon's (`tick_world_icon`): a failure tries again a second later, as

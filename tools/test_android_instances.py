@@ -17,6 +17,12 @@ edition = "2024"
 [dependencies]
 ''', encoding='utf-8')
     (root / 'src/lib.rs').write_text('''#![allow(dead_code)]
+mod backend {
+    pub fn game_home() -> std::path::PathBuf {
+        std::env::temp_dir().join("horizon-instance-harness")
+    }
+    pub fn installed() -> Vec<String> { Vec::new() }
+}
 #[path = "../../../../crates/horizon-client/src/android/instances.rs"]
 mod instances;
 ''', encoding='utf-8')

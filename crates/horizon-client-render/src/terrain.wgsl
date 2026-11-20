@@ -199,7 +199,6 @@ fn sprite_at(tiled: vec2<f32>, layer: u32, du: vec2<f32>, dv: vec2<f32>) -> vec4
     if TERRAIN_FILTERING == 1u || (TERRAIN_FILTERING == 3u && u32(globals.filtering.x) == 1u) {
         return sample_rgss(uv, layer, pixel, du, dv, texel_screen, tiled_face);
     }
-    }
     return sample_nearest(uv, layer, pixel, du, dv, texel_screen, tiled_face);
 }
 
@@ -687,16 +686,6 @@ var<private> hdr_normal: vec3<f32>;
 fn hdr_facing() -> f32 {
     return mix(0.45, 1.0, max(dot(hdr_normal, globals.sun.xyz), 0.0));
 }
-@vertex fn vs_terrain_flat_cutout(
-    @builtin(vertex_index) vertex: u32,
-    @location(0) position: vec3<f32>, @location(1) uv: vec2<u32>,
-    @location(2) layer: u32, @location(3) color: vec4<f32>, @location(4) light: vec2<u32>
-) -> TerrainOut {
-    let origin = slot_origins[block_slots[vertex >> 8u]];
-    if opaque_quad(layer, origin.w) { return left_out(); }
-    return terrain_vertex(position, terrain_uv(uv, origin.w), layer, color, light, origin.xyz,
-        origin.w);
-}
 fn terrain_vertex(position: vec3<f32>, uv: vec2<f32>, layer: u32, color: vec4<f32>,
     light: vec2<u32>, origin: vec3<f32>, w: f32) -> TerrainOut {
     // [world warp vertex]
@@ -790,7 +779,8 @@ fn hdr_mark(tier: u32, y: f32) -> f32 {
 }
 // Identical alpha cutout, HDR and fog for sections with fade_code == 0.
 // Selecting this entrypoint is a CPU-side proof, never a quality option.
-@fragment fn fs_cutout_static(in: TerrainOut) -> @location(0) vec4<f32> {
+@fragment fn fs_cutout_static(wire: TerrainWire) -> @location(0) vec4<f32> {
+    let in = from_wire(wire);
     let texel = sprite(in.uv, in.layer & 0x7fffu);
     var color = texel * in.color;
     if !TERRAIN_FULLY_VISIBLE {

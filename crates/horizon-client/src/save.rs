@@ -162,13 +162,34 @@ impl SessionLock {
             .truncate(false)
             .open(world.join("session.lock"))?;
         // Rust 1.94's standard library returns Unsupported on Android without
-        // issuing a syscall (rust-lang/rust#148325). Keep the same kernel flock
-        // semantics through rustix rather than dropping the world's lock.
+        // issuing a syscall (rust-lang/rust#148325). Try the kernel lock, but
+        // only a WOULDBLOCK failure means another instance holds the world.
+        // Every other error means the filesystem cannot provide one (Android's
+        // FUSE-backed /sdcard does not support flock), so the game proceeds
+        // without the advisory lock and says so, rather than refusing every
+        // world on shared storage.
         #[cfg(target_os = "android")]
         let locked = rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive);
         #[cfg(not(target_os = "android"))]
         let locked = file.try_lock();
-        locked.map_err(|_| format!("{} is already open in another instance", world.display()))?;
+        #[cfg(target_os = "android")]
+        let hard_fail = matches!(locked, Err(rustix::io::Errno::WOULDBLOCK));
+        #[cfg(not(target_os = "android"))]
+        let hard_fail = matches!(locked, Err(fs::TryLockError::WouldBlock));
+        #[cfg(target_os = "android")]
+        if let Err(error) = locked
+            && error != rustix::io::Errno::WOULDBLOCK
+        {
+            log::warn!(
+                "Horizon: no advisory lock for {} ({}); shared storage does not provide one; \
+                 the world opens anyway and two instances could clash",
+                world.display(),
+                error
+            );
+        }
+        if hard_fail {
+            return Err(format!("{} is already open in another instance", world.display()).into());
+        }
         file.set_len(0)?;
         file.write_all(&[0x26, 0x03])?;
         file.flush()?;
@@ -187,7 +208,9 @@ impl SessionLock {
         };
         // The standard library's try_lock returns Unsupported on Android
         // without a syscall (rust-lang/rust#148325), so probe with the same
-        // Bionic flock that `acquire` takes.
+        // Bionic flock that `acquire` takes. Any error but WOULDBLOCK means
+        // the filesystem cannot provide the lock (FUSE-backed /sdcard), not
+        // that another instance holds the world.
         #[cfg(target_os = "android")]
         {
             match rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {

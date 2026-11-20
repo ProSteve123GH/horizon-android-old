@@ -186,8 +186,9 @@ saying the build is installed. `aapt2 dump badging file.apk` shows the
 | Native mods never seem to activate after install | `versionCode` mismatch with the running APK (see above), `abi` not in `Build.SUPPORTED_ABIS`, a missing `native/active.json`, or a sha256 mismatch — all fail the Java check silently. Check logcat (`HorizonNativeMods` tag) for the rejection line. |
 | **Play without native mods** | Stops the native build: stock game on the next start. The native bundles, their mirrored content, the downloaded library and `build.json` are kept; Compile again and the same cached build can be reinstalled if the APK did not change. |
 
-**Play without native mods is always safe**: it only deletes
-`native/current.json`, `active.json`, `pending_crash` and `crash_streak`.
+**Play without native mods is always safe**: it clears the native loader and
+rollback state (`current.json`, `active.json`, `pending_crash`, `crash_streak`,
+`last_rejected`, `last_failed_mod`, `last_known_good.json` and `first-frame`).
 Native bundles are never touched, and neither is the content mirrored from a
 unified `.hmod` into `horizon-mods/` — that content stays installed.
 
@@ -208,13 +209,19 @@ content folder (`game_home`, default the same):
 | `native/builds/<job>/libhorizon_android.so.partial` | Interrupted download, resumed with `Range:` when possible. |
 | `native/build.json` | The in-flight build (job id, mods, hashes, APK identity, `stock`) so the launcher can resume after a restart. Deleted on success. |
 | `native/pending_crash` | Marker left on every start that uses a modded build; the game deletes it on its first frame. |
+| `native/first-frame` | Universal marker written atomically on the game's first `about_to_wait` (stock and modded starts alike). The launcher's launch overlay waits for this file, and Java removes any stale copy at process start. |
 | `native/crash_streak` | How many starts in a row died before the first frame (`0` on a clean start). |
 | `native/current.json.rejected` | A set-aside build, kept for the error message. |
 | `native/last_rejected` | Human-readable reason the build was set aside; the launcher shows it in a banner. |
+| `native/last_known_good.json` | A healthy `current.json` saved on the first frame; restored when no build is selected and the last one was not just rejected. |
+| `native/last_failed_mod` | Mod ids recorded when a build crashed early, included in the rejection reason. |
 
-This port does not write a `native/first-frame`, `last_known_good.json` or
-`last_failed_mod` file; the crash guard uses `pending_crash` and `crash_streak`
-alone, and start progress comes from the launcher's own snapshot/log signals.
+The crash guard itself uses `pending_crash` and `crash_streak`. The loader also
+writes `native/first-frame` (temp file + rename) and `last_known_good.json` on
+a healthy first frame — the launcher's splash overlay watches `first-frame`,
+and `last_known_good.json` is the rollback target — while Java records
+`last_failed_mod` when a build crashes early. None of these files carries mod
+code; they are only state for the loader and the launcher.
 
 ## The load chain
 
@@ -237,9 +244,11 @@ alone, and start progress comes from the launcher's own snapshot/log signals.
    modded one, with the same JNI setup as a stock start.
 3. On its first `about_to_wait`, the game clears the crash guard once: when
    `HORIZON_NATIVE_PENDING` names the `pending_crash` file it deletes that
-   marker and writes `crash_streak` back to `0`. A stock start has no pending
-   marker and leaves the guard alone. No `first-frame` or
-   `last_known_good.json` file is written.
+   marker and writes `crash_streak` back to `0`. It also writes
+   `native/first-frame` (temp file + rename) and saves a healthy
+   `current.json` to `last_known_good.json`; the launcher's splash overlay
+   disappears when `first-frame` appears. A stock start has no pending marker
+   and leaves the crash guard alone.
 
 ## The crash guard
 

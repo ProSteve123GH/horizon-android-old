@@ -458,7 +458,9 @@ impl Game<'_> {
             self.pad_cancel_inputs(event_loop);
         }
         self.pad.context = Some(context);
-        if !self.settings.controller.enabled {
+        // On Android touch is the pad: controllers being off must not stop
+        // its state from reaching gameplay (the same exemption pad_rumble has).
+        if !self.settings.controller.enabled && !cfg!(target_os = "android") {
             self.pad_output_off();
             self.pad_cancel_inputs(event_loop);
             // The radial menu closed with the pad: its overlay fades out, as for a cancel.

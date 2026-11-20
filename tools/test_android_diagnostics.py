@@ -26,6 +26,13 @@ zip = {{ version = "={version}", default-features = false, features = ["deflate"
 ''', encoding='utf-8')
     (harness / 'src/lib.rs').write_text('''#![allow(dead_code)]
 mod backend { pub const VERSION: &str = "diagnostics-test"; }
+// The real crate puts reports in the shared game folder when the player moved
+// it there; this standalone harness has no Android storage bridge.
+mod shared_storage {
+    pub fn reports_dir(home: &std::path::Path) -> std::path::PathBuf {
+        home.join("reports")
+    }
+}
 #[path = "../../../../crates/horizon-client/src/android/diagnostics.rs"] mod diagnostics;
 ''', encoding='utf-8')
     subprocess.run(['cargo', 'test', '--manifest-path', str(harness / 'Cargo.toml'),

@@ -6,6 +6,7 @@ import android.os.Build;
 import android.util.Log;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -13,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.util.Arrays;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
@@ -27,13 +29,31 @@ import org.json.JSONObject;
  * against the same library the game runs.
  *
  * <p>Crash guard: while a modded build is unproven, every start leaves an empty
- * `pending_crash` marker behind. If the game reaches its first frame it deletes the
- * marker and resets `crash_streak`. If the marker survives, the build crashed before
- * its first frame; two survivals in a row set the build aside (`current.json` moves
- * to `current.json.rejected`, `last_rejected` records why) and the stock game runs.
+ * `pending_crash` marker behind. The game deletes it on its first presented frame
+ * (the trampoline exports the path as `HORIZON_NATIVE_PENDING`) and writes a
+ * universal `files/native/first-frame` marker that the splash overlay polls. If
+ * the marker survives, the build crashed before its first frame; two survivals in
+ * a row set the build aside (`current.json` moves to `current.json.rejected`,
+ * `last_rejected` records why, `last_failed_mod` records the mod ids that were
+ * active) and a healthy build recorded in `last_known_good.json` is restored.
+ *
+ * <p>Compatibility: a build only loads under the APK install it was made under
+ * (the `apk` stamp beside its library, like Starling). `current.json` may also
+ * carry `api_level` and `min_apk_version`; when present a mismatch is refused
+ * with a reason the launcher shows. `abi`, `versionCode` and `sha256` are
+ * always checked.
  */
 final class NativeMods {
     private static final String TAG = "HorizonNativeMods";
+
+    // Like Starling, a build is only loaded by the APK install it was made
+    // under. lastUpdateTime changes on every install/update even when the
+    // version code does not, so the stamp is stored beside the library and
+    // checked here instead of comparing an engine-commit string that is not
+    // available to this process.
+    private static final String APK_STAMP = "apk";
+    /** The native mod ABI/API this APK's engine understands. */
+    private static final int NATIVE_API_LEVEL = 1;
 
     private NativeMods() {}
 
@@ -42,15 +62,15 @@ final class NativeMods {
         // noinspection ResultOfMethodCallIgnored
         nativeDir.mkdirs();
         String stock = context.getApplicationInfo().nativeLibraryDir + File.separator + "libhorizon_android.so";
-        String chosen = select(context, nativeDir);
-        writeActive(nativeDir, chosen == null ? stock : chosen, stock);
+        // A first-frame marker from a previous process must not hide this run's splash.
+        //noinspection ResultOfMethodCallIgnored
+        new File(nativeDir, "first-frame").delete();
+        String apkStamp = stamp(context);
+        String chosen = select(context, nativeDir, apkStamp);
+        writeActive(nativeDir, chosen == null ? stock : chosen, stock, apkStamp);
         if (chosen != null) {
-            // Truncate an existing marker: this start has not proven itself yet.
-            try (java.io.FileOutputStream out = new java.io.FileOutputStream(new File(nativeDir, "pending_crash"), false)) {
-                // create or truncate; the content is meaningless
-            } catch (java.io.IOException error) {
-                Log.w(TAG, "Cannot mark pending_crash: " + error);
-            }
+            // Replace an existing marker atomically: this start has not proven itself yet.
+            writeFileAtomic(new File(nativeDir, "pending_crash"), "");
         } else {
             // A stale marker from a crashed modded start must not count as a
             // crash against a future build.
@@ -63,8 +83,41 @@ final class NativeMods {
     }
 
     /** Returns the chosen library's absolute path, or {@code null} for the stock game. */
-    private static String select(Context context, File nativeDir) {
+    private static String select(Context context, File nativeDir, String apkStamp) {
+        // Older APKs had no build-time engine commit and rejected every build
+        // with "engine commit null/unknown". That gate is gone; clear the stale
+        // reason so the launcher stops showing a rejection that cannot be fixed.
+        File lastRejected = new File(nativeDir, "last_rejected");
+        try {
+            String oldReason = lastRejected.isFile()
+                    ? new String(Files.readAllBytes(lastRejected.toPath()), StandardCharsets.UTF_8).trim()
+                    : "";
+            if (oldReason.contains("engine commit")) {
+                //noinspection ResultOfMethodCallIgnored
+                lastRejected.delete();
+                //noinspection ResultOfMethodCallIgnored
+                new File(nativeDir, "current.json.rejected").delete();
+                Log.i(TAG, "Cleared stale engine-commit rejection from an older APK");
+            }
+        } catch (IOException ignored) {
+            // A stale notice is harmless; the next real rejection overwrites it.
+        }
         File current = new File(nativeDir, "current.json");
+        // A build that proved healthy once is the rollback target after a bad build
+        // is set aside. Restore it here, before any other check, but never restore
+        // the very build that was just rejected (that would loop forever).
+        if (!current.isFile()) {
+            File good = new File(nativeDir, "last_known_good.json");
+            File rejected = new File(nativeDir, "current.json.rejected");
+            if (good.isFile() && !sameLibrary(good, rejected)) {
+                try {
+                    copyAtomic(good, current);
+                    Log.i(TAG, "Restored last_known_good.json as current.json");
+                } catch (IOException error) {
+                    Log.w(TAG, "Cannot restore last_known_good.json: " + error);
+                }
+            }
+        }
         if (!current.isFile()) {
             return null;
         }
@@ -74,25 +127,34 @@ final class NativeMods {
         long versionCode;
         String abi;
         String sha256;
+        String apiLevel;
+        String minApkVersion;
+        JSONObject json;
         try {
-            JSONObject json = new JSONObject(new String(Files.readAllBytes(current.toPath()), StandardCharsets.UTF_8));
+            json = new JSONObject(new String(Files.readAllBytes(current.toPath()), StandardCharsets.UTF_8));
             id = json.getString("id");
             version = json.getString("version");
             lib = json.getString("lib");
             versionCode = json.getLong("versionCode");
             abi = json.getString("abi");
             sha256 = json.optString("sha256", "").trim();
+            // Both are optional: bundles built before the compat gate existed
+            // carry none of them and keep working.
+            apiLevel = json.optString("api_level", "").trim();
+            minApkVersion = json.optString("min_apk_version", "").trim();
         } catch (Exception error) {
-            return rejected("current.json is unreadable: " + error);
+            return rejectSoft(nativeDir, current, "current.json is unreadable: " + error);
         }
+        long apkVersionCode;
         try {
             PackageInfo info = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
-            if (info.getLongVersionCode() != versionCode) {
-                return rejected("modded build targets versionCode " + versionCode
-                        + " but this APK is " + info.getLongVersionCode());
+            apkVersionCode = info.getLongVersionCode();
+            if (apkVersionCode != versionCode) {
+                return rejectSoft(nativeDir, current, "modded build targets versionCode " + versionCode
+                        + " but this APK is " + apkVersionCode);
             }
         } catch (Exception error) {
-            return rejected("cannot read this APK's versionCode: " + error);
+            return rejectSoft(nativeDir, current, "cannot read this APK's versionCode: " + error);
         }
         boolean supported = false;
         for (String candidate : Build.SUPPORTED_ABIS) {
@@ -102,14 +164,45 @@ final class NativeMods {
             }
         }
         if (!supported) {
-            return rejected("modded build abi " + abi + " is not in " + Arrays.toString(Build.SUPPORTED_ABIS));
+            return rejectSoft(nativeDir, current, "modded build abi " + abi + " is not in " + Arrays.toString(Build.SUPPORTED_ABIS));
+        }
+        // A build only runs under the APK install that made it (Starling's
+        // model). The stamp is written by the installer beside the library.
+        String buildStamp = read(new File(new File(lib).getParentFile(), APK_STAMP));
+        if (apkStamp == null || buildStamp == null || !apkStamp.equals(buildStamp)) {
+            return rejectSoft(nativeDir, current,
+                    "Modded build was made for a different APK install (rebuild required)");
+        }
+        if (!apiLevel.isEmpty()) {
+            int level;
+            try {
+                level = Integer.parseInt(apiLevel);
+            } catch (NumberFormatException error) {
+                return rejectHard(nativeDir, current, "Mod declares an invalid api_level: " + apiLevel);
+            }
+            if (level != NATIVE_API_LEVEL) {
+                return rejectHard(nativeDir, current, "Mod requires native api_level " + level
+                        + " but this APK supports " + NATIVE_API_LEVEL + " (rebuild required)");
+            }
+        }
+        if (!minApkVersion.isEmpty()) {
+            long minimum;
+            try {
+                minimum = Long.parseLong(minApkVersion);
+            } catch (NumberFormatException error) {
+                return rejectHard(nativeDir, current, "Mod declares an invalid min_apk_version: " + minApkVersion);
+            }
+            if (apkVersionCode < minimum) {
+                return rejectHard(nativeDir, current, "Mod needs APK version " + minimum
+                        + " or newer but this APK is " + apkVersionCode + " (update Horizon first)");
+            }
         }
         File libFile = new File(lib);
         if (!libFile.isFile()) {
-            return rejected("modded build library is missing: " + lib);
+            return rejectSoft(nativeDir, current, "modded build library is missing: " + lib);
         }
         if (!sha256.isEmpty() && !sha256Matches(libFile, sha256)) {
-            return rejected("modded build library sha256 does not match current.json");
+            return rejectSoft(nativeDir, current, "modded build library sha256 does not match current.json");
         }
         // Crash guard: a marker from an earlier start means the game never reached
         // its first frame. Two markers in a row set the build aside.
@@ -117,30 +210,88 @@ final class NativeMods {
         if (pending.isFile()) {
             int streak = readStreak(new File(nativeDir, "crash_streak")) + 1;
             if (streak >= 2) {
-                String reason = "A modded build (" + id + " " + version
+                String ids = failedModIds(json, id);
+                writeFileAtomic(new File(nativeDir, "last_failed_mod"), ids);
+                String reason = "A modded build (" + id + " " + version + "; mods: " + ids
                         + ") was set aside after crashing before its first frame two starts in a row. The stock game is used.";
                 File rejectedFile = new File(nativeDir, "current.json.rejected");
                 try {
                     moveAtomic(current.toPath(), rejectedFile.toPath());
-                } catch (java.io.IOException error) {
+                } catch (IOException error) {
                     Log.w(TAG, "Cannot move current.json aside: " + error);
                 }
-                writeFile(new File(nativeDir, "last_rejected"), reason);
+                writeFileAtomic(new File(nativeDir, "last_rejected"), reason);
                 Log.w(TAG, reason);
-                // noinspection ResultOfMethodCallIgnored
+                //noinspection ResultOfMethodCallIgnored
                 pending.delete();
-                // noinspection ResultOfMethodCallIgnored
+                //noinspection ResultOfMethodCallIgnored
                 new File(nativeDir, "crash_streak").delete();
                 return null;
             }
-            writeFile(new File(nativeDir, "crash_streak"), Integer.toString(streak));
+            writeFileAtomic(new File(nativeDir, "crash_streak"), Integer.toString(streak));
         }
         return lib;
     }
 
-    /** Log one line and fall back to the stock game. Does not move current.json: a single bad start is not proof. */
-    private static String rejected(String reason) {
+    /** The mod ids that were active when a build failed, for crash attribution. */
+    private static String failedModIds(JSONObject current, String fallbackId) {
+        try {
+            JSONArray mods = current.optJSONArray("mods");
+            if (mods != null && mods.length() > 0) {
+                StringBuilder joined = new StringBuilder();
+                for (int i = 0; i < mods.length(); i++) {
+                    JSONObject entry = mods.optJSONObject(i);
+                    String id = entry == null ? null : entry.optString("id", "").trim();
+                    if (id == null || id.isEmpty()) {
+                        continue;
+                    }
+                    if (joined.length() > 0) {
+                        joined.append(',');
+                    }
+                    joined.append(id);
+                }
+                if (joined.length() > 0) {
+                    return joined.toString();
+                }
+            }
+        } catch (Exception ignored) {
+            // Fall back to the build id.
+        }
+        return fallbackId == null ? "" : fallbackId;
+    }
+
+    /** True when two manifests name the same library, so rollback cannot loop. */
+    private static boolean sameLibrary(File a, File b) {
+        if (!a.isFile() || !b.isFile()) {
+            return false;
+        }
+        try {
+            String left = new JSONObject(new String(Files.readAllBytes(a.toPath()), StandardCharsets.UTF_8))
+                    .optString("lib", "");
+            String right = new JSONObject(new String(Files.readAllBytes(b.toPath()), StandardCharsets.UTF_8))
+                    .optString("lib", "");
+            return !left.isEmpty() && left.equals(right);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    /** Log a reason the launcher can show and fall back without rejecting the build. */
+    private static String rejectSoft(File nativeDir, File current, String reason) {
         Log.w(TAG, reason + "; playing the stock game");
+        writeFileAtomic(new File(nativeDir, "last_rejected"), reason);
+        return null;
+    }
+
+    /** Log, record why, and set the build aside. One hard mismatch is enough. */
+    private static String rejectHard(File nativeDir, File current, String reason) {
+        Log.w(TAG, reason + "; playing the stock game");
+        try {
+            moveAtomic(current.toPath(), new File(nativeDir, "current.json.rejected").toPath());
+        } catch (IOException error) {
+            Log.w(TAG, "Cannot move current.json aside: " + error);
+        }
+        writeFileAtomic(new File(nativeDir, "last_rejected"), reason);
         return null;
     }
 
@@ -173,33 +324,69 @@ final class NativeMods {
         }
     }
 
-    private static void writeActive(File nativeDir, String lib, String stock) {
+    /** The APK install identity, like Starling: it changes on every install/update. */
+    private static String stamp(Context context) {
+        try {
+            PackageInfo info = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
+            return Long.toString(info.lastUpdateTime);
+        } catch (Exception error) {
+            Log.w(TAG, "Cannot read APK install stamp: " + error);
+            return null;
+        }
+    }
+
+    private static String read(File file) {
+        try {
+            return file.isFile()
+                    ? new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8).trim()
+                    : null;
+        } catch (IOException error) {
+            return null;
+        }
+    }
+
+    private static void writeActive(File nativeDir, String lib, String stock, String apkStamp) {
         final String json;
         try {
-            json = new JSONObject().put("lib", lib).put("stock", stock).toString();
+            JSONObject value = new JSONObject().put("lib", lib).put("stock", stock);
+            if (apkStamp != null) {
+                value.put("apkStamp", apkStamp);
+            }
+            json = value.toString();
         } catch (org.json.JSONException error) {
             Log.w(TAG, "Cannot encode active.json: " + error);
             return;
         }
-        File target = new File(nativeDir, "active.json");
-        File temp = new File(nativeDir, "active.json.tmp");
-        writeFile(temp, json);
-        try {
-            moveAtomic(temp.toPath(), target.toPath());
-        } catch (java.io.IOException error) {
-            Log.w(TAG, "Cannot publish active.json: " + error);
-        }
+        writeFileAtomic(new File(nativeDir, "active.json"), json);
     }
 
-    private static void writeFile(File file, String content) {
+    /** Write a file through a sibling temp file so readers never see a partial body. */
+    private static void writeFileAtomic(File file, String content) {
+        File temp = new File(file.getParentFile(), file.getName() + ".tmp");
         try {
-            Files.write(file.toPath(), content.getBytes(StandardCharsets.UTF_8));
-        } catch (java.io.IOException error) {
+            Files.write(temp.toPath(), content.getBytes(StandardCharsets.UTF_8));
+            moveAtomic(temp.toPath(), file.toPath());
+        } catch (IOException error) {
             Log.w(TAG, "Cannot write " + file + ": " + error);
+            //noinspection ResultOfMethodCallIgnored
+            temp.delete();
         }
     }
 
-    private static void moveAtomic(java.nio.file.Path from, java.nio.file.Path to) throws java.io.IOException {
+    /** Copy a file through a sibling temp file (used when restoring a known-good build). */
+    private static void copyAtomic(File from, File to) throws IOException {
+        File temp = new File(to.getParentFile(), to.getName() + ".tmp");
+        try {
+            Files.copy(from.toPath(), temp.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            moveAtomic(temp.toPath(), to.toPath());
+        } catch (IOException error) {
+            //noinspection ResultOfMethodCallIgnored
+            temp.delete();
+            throw error;
+        }
+    }
+
+    private static void moveAtomic(java.nio.file.Path from, java.nio.file.Path to) throws IOException {
         try {
             Files.move(from, to, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (AtomicMoveNotSupportedException unsupported) {

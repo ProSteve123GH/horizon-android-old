@@ -274,6 +274,18 @@ impl Settings {
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
         settings.sanitize();
+        // The camera button is a factory utility, not a saved layout choice.
+        // Add it to every install (including upgrades from files with an empty
+        // custom list) without touching any button the player added.
+        if !settings
+            .custom_buttons
+            .iter()
+            .any(|button| button.key == "action:key.screenshot")
+        {
+            let mut camera = super::CustomButton::new("action:key.screenshot".into(), 0);
+            camera.layouts = [Placement::new(0.80, 0.30, 0.075); 3];
+            settings.custom_buttons.push(camera);
+        }
         // Legacy migrations: the top row and the factory swap button moved.
         for row in &mut settings.layouts {
             for (control, old, new) in [
@@ -674,6 +686,34 @@ mod fork_tests {
                 .iter()
                 .any(|(token, _)| token == "key.keyboard.z")
         );
+    }
+
+    #[test]
+    fn loading_adds_one_camera_button_without_touching_custom_buttons() {
+        let mut settings = Settings::default();
+        settings
+            .custom_buttons
+            .push(super::super::CustomButton::new("action:key.jump".into(), 0));
+        let path = std::env::temp_dir().join(format!(
+            "horizon-touch-camera-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, serde_json::to_vec(&settings).unwrap()).unwrap();
+        let loaded = Settings::load_from(&path);
+        let camera = loaded
+            .custom_buttons
+            .iter()
+            .filter(|button| button.key == "action:key.screenshot")
+            .count();
+        assert_eq!(camera, 1);
+        assert!(loaded
+            .custom_buttons
+            .iter()
+            .any(|button| button.key == "action:key.jump"));
+        // Loading twice is idempotent: no duplicate button on every start.
+        let loaded_twice = Settings::load_from(&path);
+        assert_eq!(loaded_twice.custom_buttons.len(), loaded.custom_buttons.len());
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

@@ -418,6 +418,7 @@ impl ApplicationHandler for App {
         }
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        super::window_handler::clear_native_crash_guard_once();
         enum Step {
             Waiting,
             Ready(Box<split::Split<'static>>),

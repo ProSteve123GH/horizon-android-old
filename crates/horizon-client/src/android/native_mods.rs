@@ -448,10 +448,21 @@ pub(crate) fn remove(game_home: &Path, id: &str) -> Result<(), String> {
 }
 
 /// `native_disable`: forget any selected modded build. The next start loads
-/// the stock game. Bundles are kept.
+/// the stock game. Bundles are kept, but the rollback target and crash
+/// attribution go too: a disabled selection must not silently come back.
 pub(crate) fn disable(home: &Path) -> Result<(), String> {
     let dir = priv_native(home);
-    for name in ["current.json", "active.json", "pending_crash", "crash_streak"] {
+    for name in [
+        "current.json",
+        "current.json.rejected",
+        "active.json",
+        "pending_crash",
+        "crash_streak",
+        "last_rejected",
+        "last_failed_mod",
+        "last_known_good.json",
+        "first-frame",
+    ] {
         let _ = fs::remove_file(dir.join(name));
     }
     Ok(())
@@ -461,6 +472,30 @@ pub(crate) fn disable(home: &Path) -> Result<(), String> {
 
 fn enabled_file(game_home: &Path) -> PathBuf {
     bundle_dir(game_home).join("enabled.json")
+}
+
+// ---- safe mode / rollback ------------------------------------------------
+
+/// The rollback target: a copy of `current.json` from a start that reached its
+/// first frame. The Java loader restores it after a build is set aside.
+pub(crate) const LAST_KNOWN_GOOD: &str = "last_known_good.json";
+/// The mod ids that were active when a start failed before its first frame.
+pub(crate) const LAST_FAILED_MOD: &str = "last_failed_mod";
+
+/// Write a complete body through a sibling temp file and rename it into place.
+/// Readers in this folder (the game process and Java) never see a partial JSON.
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let mut temp_name = path.as_os_str().to_os_string();
+    temp_name.push(".tmp");
+    let temp = PathBuf::from(temp_name);
+    fs::write(&temp, bytes).map_err(|error| error.to_string())?;
+    fs::rename(&temp, path).map_err(|error| {
+        let _ = fs::remove_file(&temp);
+        error.to_string()
+    })
 }
 
 /// Read the enabled list. A missing file means every bundle is enabled
@@ -600,7 +635,13 @@ pub(crate) fn section(home: &Path, game_home: &Path) -> Value {
         Err(_) => fingerprint.extend(b"enabled.json"),
     }
     fingerprint.push(0);
-    for name in ["current.json", "current.json.rejected", "last_rejected"] {
+    for name in [
+        "current.json",
+        "current.json.rejected",
+        "last_rejected",
+        LAST_KNOWN_GOOD,
+        LAST_FAILED_MOD,
+    ] {
         match fs::metadata(priv_native(home).join(name)) {
             Ok(metadata) => {
                 let modified = metadata
@@ -711,22 +752,32 @@ fn section_uncached(home: &Path, game_home: &Path) -> Value {
 
 fn current(home: &Path) -> Value {
     let dir = priv_native(home);
-    if let Some(value) = read_json(&dir.join("current.json")) {
-        return current_value(&value, false, None);
-    }
-    if dir.join("current.json.rejected").is_file() {
-        let value = read_json(&dir.join("current.json.rejected")).unwrap_or(Value::Null);
-        let reason = fs::read_to_string(dir.join("last_rejected"))
+    let reason = || {
+        fs::read_to_string(dir.join("last_rejected"))
             .ok()
             .map(|text| text.trim().to_owned())
             .filter(|text| !text.is_empty())
-            .unwrap_or_else(|| {
-                "A modded build was set aside after crashing before its first frame. Playing the stock game."
-                    .to_owned()
-            });
-        return current_value(&value, true, Some(reason));
+    };
+    let mut value = if let Some(current) = read_json(&dir.join("current.json")) {
+        // A soft rejection leaves current.json in place; show its reason too.
+        current_value(&current, false, reason())
+    } else if dir.join("current.json.rejected").is_file() {
+        let rejected = read_json(&dir.join("current.json.rejected")).unwrap_or(Value::Null);
+        let why = reason().unwrap_or_else(|| {
+            "A modded build was set aside after crashing before its first frame. Playing the stock game."
+                .to_owned()
+        });
+        current_value(&rejected, true, Some(why))
+    } else {
+        return Value::Null;
+    };
+    if let Ok(failed) = fs::read_to_string(dir.join(LAST_FAILED_MOD))
+        && !failed.trim().is_empty()
+    {
+        value["lastFailedMod"] = json!(failed.trim());
     }
-    Value::Null
+    value["rollbackAvailable"] = json!(read_json(&dir.join(LAST_KNOWN_GOOD)).is_some());
+    value
 }
 
 fn read_json(path: &Path) -> Option<Value> {
@@ -740,6 +791,10 @@ fn current_value(value: &Value, rejected: bool, reason: Option<String>) -> Value
         "version": text("version"),
         "versionCode": value.get("versionCode").and_then(Value::as_i64).unwrap_or_default(),
         "abi": text("abi"),
+        // Optional compat gate fields; absent on older bundles.
+        "engineCommit": text("engine_commit"),
+        "apiLevel": text("api_level"),
+        "minApkVersion": text("min_apk_version"),
         "rejected": rejected,
     });
     if let Some(reason) = reason {
@@ -799,6 +854,11 @@ struct BuildState {
     version_code: u64,
     abi: String,
     stock: Option<String>,
+    /// Optional compatibility gate fields published into `current.json`; the
+    /// Java loader only refuses a build when one of them is present and wrong.
+    engine_commit: Option<String>,
+    api_level: Option<String>,
+    min_apk_version: Option<String>,
 }
 
 static BUILD: Mutex<BuildState> = Mutex::new(BuildState {
@@ -818,6 +878,9 @@ static BUILD: Mutex<BuildState> = Mutex::new(BuildState {
     version_code: 0,
     abi: String::new(),
     stock: None,
+    engine_commit: None,
+    api_level: None,
+    min_apk_version: None,
 });
 
 static RESUMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -869,6 +932,9 @@ pub(crate) fn build_state_json() -> Value {
         })).collect::<Vec<_>>(),
         "versionCode": state.version_code,
         "abi": state.abi,
+        "engineCommit": state.engine_commit,
+        "apiLevel": state.api_level,
+        "minApkVersion": state.min_apk_version,
     })
 }
 
@@ -977,6 +1043,9 @@ fn persist_locked(home: &Path, state: &BuildState) {
         "versionCode": state.version_code,
         "abi": state.abi,
         "stock": state.stock,
+        "engineCommit": state.engine_commit,
+        "apiLevel": state.api_level,
+        "minApkVersion": state.min_apk_version,
     });
     let dir = priv_native(home);
     if fs::create_dir_all(&dir).is_ok() {
@@ -1046,6 +1115,16 @@ pub(crate) fn resume_build(home: &Path) {
     let size = saved["size"].as_u64();
     let error = saved["error"].as_str().map(str::to_owned);
     let install_failed = saved["installFailed"].as_bool().unwrap_or(false);
+    let text_field = |key: &str| {
+        saved[key]
+            .as_str()
+            .map(str::trim)
+            .filter(|text| !text.is_empty() && text.len() <= 128)
+            .map(str::to_owned)
+    };
+    let engine_commit = text_field("engineCommit");
+    let api_level = text_field("apiLevel");
+    let min_apk_version = text_field("minApkVersion");
     {
         let mut state = build_lock();
         if state.phase != BuildPhase::Idle {
@@ -1059,6 +1138,9 @@ pub(crate) fn resume_build(home: &Path) {
         state.version_code = version_code;
         state.abi = abi;
         state.stock = stock;
+        state.engine_commit = engine_commit;
+        state.api_level = api_level;
+        state.min_apk_version = min_apk_version;
         state.error = error;
         state.install_failed = install_failed;
         state.phase = match phase.as_str() {
@@ -1291,6 +1373,19 @@ pub(crate) fn compile(
         .and_then(Value::as_str)
         .filter(|stock| !stock.is_empty() && Path::new(stock).is_absolute())
         .map(str::to_owned);
+    // Optional compatibility fields. The launcher may know the APK's engine
+    // commit and native API level; when present they travel into current.json
+    // and the Java loader refuses a mismatched build before loading it.
+    let compat_text = |key: &str| {
+        args.get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty() && text.len() <= 128)
+            .map(str::to_owned)
+    };
+    let engine_commit = compat_text("engineCommit").or_else(|| compat_text("engine_commit"));
+    let api_level = compat_text("apiLevel").or_else(|| compat_text("api_level"));
+    let min_apk_version = compat_text("minApkVersion").or_else(|| compat_text("min_apk_version"));
     // The bundles on disk are the input the service sees; enabled ids must exist.
     let mut bundles: Vec<ModBundle> = Vec::with_capacity(ids.len());
     let mut total: u64 = 0;
@@ -1353,6 +1448,9 @@ pub(crate) fn compile(
             version_code,
             abi,
             stock,
+            engine_commit,
+            api_level,
+            min_apk_version,
         };
         persist_locked(home, &state);
     }
@@ -1558,7 +1656,7 @@ fn download_library(home: &Path, job: &str, expected_sha: &str) -> Result<(PathB
 /// Install the finished build: download, verify, then publish `current.json`
 /// in exactly the shape the Java loader reads.
 pub(crate) fn install_from_state(home: &Path) {
-    let (job, expected_sha, size, mods, version_code, abi) = {
+    let (job, expected_sha, size, mods, version_code, abi, api_level, min_apk_version) = {
         let state = build_lock();
         (
             state.job.clone(),
@@ -1567,6 +1665,8 @@ pub(crate) fn install_from_state(home: &Path) {
             state.mods.clone(),
             state.version_code,
             state.abi.clone(),
+            state.api_level.clone(),
+            state.min_apk_version.clone(),
         )
     };
     let (Some(job), Some(expected_sha)) = (job, expected_sha) else {
@@ -1618,20 +1718,39 @@ pub(crate) fn install_from_state(home: &Path) {
                 "abi": abi,
                 "versionCode": version_code,
                 "sha256": sha256,
+                // Kept for old readers; the loader now matches the APK install
+                // stamp instead, so this is never a "null" string gate.
+                "engine_commit": "",
+                "api_level": api_level,
+                "min_apk_version": min_apk_version,
                 "mods": mods.iter().map(|m| json!({
                     "id": m.id,
                     "version": m.version,
                     "sha256": m.sha256,
                 })).collect::<Vec<_>>(),
             });
-            let dir = priv_native(home);
-            let temp = dir.join("current.json.tmp");
-            let target = dir.join("current.json");
-            let written = fs::write(&temp, current.to_string())
-                .and_then(|_| fs::rename(&temp, &target))
-                .map_err(|error| format!("cannot publish current.json: {error}"));
+            let target = priv_native(home).join("current.json");
+            let written = serde_json::to_vec(&current)
+                .map_err(|error| format!("cannot encode current.json: {error}"))
+                .and_then(|bytes| atomic_write(&target, &bytes));
             match written {
                 Ok(()) => {
+                    // Stamp the build with the APK install it was made under,
+                    // as Starling does. Java wrote this into active.json at the
+                    // last start; the game process has no PackageManager.
+                    if let Some(stamp) =
+                        read_json(&priv_native(home).join("active.json")).and_then(|value| {
+                            value
+                                .get("apkStamp")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned)
+                        })
+                    {
+                        let stamped = lib.with_file_name("apk");
+                        if let Err(error) = atomic_write(&stamped, stamp.as_bytes()) {
+                            log::warn!("cannot stamp modded build {}: {error}", stamped.display());
+                        }
+                    }
                     forget_build(home);
                     let mut state = build_lock();
                     state.phase = BuildPhase::Ready;
@@ -1682,6 +1801,19 @@ pub(crate) fn install(home: &Path, arg: &str) -> Result<Value, String> {
         if let Some(abi) = args.get("abi").and_then(Value::as_str).filter(|a| !a.is_empty()) {
             state.abi = abi.to_owned();
         }
+        let set_compat = |key: &str, slot: &mut Option<String>| {
+            if let Some(text) = args
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty() && text.len() <= 128)
+            {
+                *slot = Some(text.to_owned());
+            }
+        };
+        set_compat("engineCommit", &mut state.engine_commit);
+        set_compat("apiLevel", &mut state.api_level);
+        set_compat("minApkVersion", &mut state.min_apk_version);
     }
     std::thread::Builder::new()
         .name("Native mod install".into())
@@ -1827,5 +1959,42 @@ mod tests {
             Some(bundle_file(&dir, "beta", "hnmod"))
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The launcher surfaces the compat contract and safe-mode state that the
+    /// game and Java write into `native/`: fields, rejection reason, the mod
+    /// blamed for a failed start and whether a rollback target exists.
+    #[test]
+    fn compat_and_safe_mode_state_is_visible_to_the_launcher() {
+        let home = std::env::temp_dir().join(format!(
+            "horizon-native-safe-mode-{}",
+            std::process::id()
+        ));
+        let dir = priv_native(&home);
+        fs::create_dir_all(&dir).unwrap();
+        let body = json!({
+            "id": "good-mod",
+            "version": "1.0",
+            "lib": "/builds/good/libhorizon_android.so",
+            "abi": "arm64-v8a",
+            "versionCode": 42,
+            "engine_commit": "abc123",
+            "api_level": "1",
+            "min_apk_version": "40",
+        })
+        .to_string();
+        atomic_write(&dir.join("current.json"), body.as_bytes()).unwrap();
+        atomic_write(&dir.join(LAST_KNOWN_GOOD), body.as_bytes()).unwrap();
+        atomic_write(&dir.join(LAST_FAILED_MOD), b"bad-mod").unwrap();
+        atomic_write(&dir.join("last_rejected"), b"engine commit mismatch").unwrap();
+
+        let shown = current(&home);
+        assert_eq!(shown["engineCommit"], "abc123");
+        assert_eq!(shown["apiLevel"], "1");
+        assert_eq!(shown["minApkVersion"], "40");
+        assert_eq!(shown["reject_reason"], "engine commit mismatch");
+        assert_eq!(shown["lastFailedMod"], "bad-mod");
+        assert_eq!(shown["rollbackAvailable"], true);
+        let _ = fs::remove_dir_all(&home);
     }
 }

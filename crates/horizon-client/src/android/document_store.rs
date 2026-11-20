@@ -111,7 +111,10 @@ fn world_locked(world: &Path) -> bool {
         .write(true)
         .open(world.join("session.lock"))
     {
-        Ok(file) => lock_probe(&file) != Some(false),
+        // Only a real contention report means locked. On FUSE-backed shared
+        // storage flock returns other errors, which must not refuse world
+        // access (the same rule as save::SessionLock::is_locked).
+        Ok(file) => lock_probe(&file) == Some(true),
         Err(e) => e.kind() == ErrorKind::PermissionDenied,
     }
 }

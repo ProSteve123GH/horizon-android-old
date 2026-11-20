@@ -1,22 +1,23 @@
 //! Where the user's game files live, and how they move between the two places.
 //!
-//! Horizon has two storage modes for the player-facing files (worlds, mods,
-//! resource packs, shader packs, options and the shareable reports):
+//! Player-facing files (worlds, mods, resource packs, shader packs, options
+//! and the shareable reports) live on shared storage in a normal folder
+//! (`/storage/emulated/0/Horizon-Android`), so any file manager can open them.
+//! All-files access is mandatory; the launcher's permission gate asks for it
+//! and blocks Play until it is granted.
 //!
-//! - **Internal storage** (the default, recommended): the files sit in a
-//!   normal folder on shared storage (`/storage/emulated/0/Horizon-Android`),
-//!   so any file manager can open them. The move there happens only after the
-//!   user grants the all-files access Android shows and asks for it (Settings
-//!   → Storage → *Game files location*, or the one-time first-run prompt).
-//! - **App storage**: the files sit in the app-private home (`getFilesDir()`).
-//!   Other apps can only reach them through the SAF documents provider. This
-//!   mode keeps working fully when the user does not grant access.
+//! Legacy installs that were using the app-private home (`getFilesDir()`) are
+//! migrated once with [`migrate`], which records the destination in
+//! `shared-storage.json` in the private home. The migration is **one way**:
+//! there is no "move back" mode. [`resolve`] returns the recorded shared
+//! folder unconditionally once the marker exists; a missing or unreadable
+//! folder is a permission/storage problem for the launcher to surface, never
+//! a reason to silently write game files into a second location.
 //!
-//! The choice is recorded in `shared-storage.json` in the app-private home.
-//! Every reader goes through [`resolve`]/[`profile_dir`] so both modes behave
-//! the same; no call site may join the private home with a game file name.
-//! The marker is also the only thing the SAF provider and the game process
-//! need to agree on, so they can be running at the same time.
+//! Every reader goes through [`resolve`]/[`profile_dir`] so there is one root;
+//! no call site may join the private home with a game file name. The marker is
+//! also the only thing the SAF provider and the game process need to agree on,
+//! so they can be running at the same time.
 //!
 //! Migrations journal every file they create in `.storage-migration.json`
 //! (private) so a killed or crashed move can roll itself back (copy phase) or
@@ -131,12 +132,15 @@ pub fn mark_prompt_done(home: &Path) -> std::io::Result<()> {
     fs::rename(&partial, home.join(PROMPT_MARKER))
 }
 
-/// The active root for the player's game files: the shared folder when the
-/// marker records it and the folder is there, else the private home. When
-/// the shared folder disappears this falls back cleanly for readers; the
-/// launcher blocks Play and the Storage row says so instead.
+/// The active root for the player's game files: once the all-files permission
+/// has been granted and the migration wrote `shared-storage.json`, the shared
+/// folder recorded there is used unconditionally — even if a transient mount
+/// or a revoked permission makes a probe fail. There is no silent fallback to
+/// app storage: the permission gate in the launcher blocks Play and the
+/// Storage row explains how to restore access. Before any migration the marker
+/// is absent and the private home remains the root (legacy installs).
 pub fn resolve(home: &Path) -> PathBuf {
-    marker_dir(home).unwrap_or_else(|| home.to_path_buf())
+    recorded_dir(home).unwrap_or_else(|| home.to_path_buf())
 }
 
 /// The game folder for instance `id` (`0` is the default instance).
@@ -207,7 +211,13 @@ fn game_in_use(base: &Path) -> bool {
     #[cfg(unix)]
     {
         use rustix::fs::{FlockOperation, flock};
-        flock(&file, FlockOperation::NonBlockingLockExclusive).is_err()
+        // Only a genuine contention report means a game is running. On
+        // FUSE-backed /sdcard flock reports other errors, which must not be
+        // mistaken for a live game and block file moves.
+        matches!(
+            flock(&file, FlockOperation::NonBlockingLockExclusive),
+            Err(rustix::io::Errno::WOULDBLOCK)
+        )
     }
     #[cfg(not(unix))]
     {
@@ -764,15 +774,19 @@ fn adopt_inner(home: &Path, shared: &Path) -> Result<String, String> {
     Ok("Horizon is using the game files in Horizon-Android".into())
 }
 
-/// Moves the player's game files between the private home and `shared`.
+/// Moves the player's game files from the private home to `shared` — one way.
 ///
-/// With `to_shared`, `shared` must be empty (or absent); the caller is
-/// expected to have created it or let this function create it. Otherwise
-/// `home` is the target and `shared` must hold what previously moved.
-/// Nothing is deleted from the source until every file is copied and size-
-/// checked; on failure the destination is rolled back and the source is
-/// untouched.
+/// `shared` must be empty (or absent); the caller is expected to have created
+/// it or let this function create it. Nothing is deleted from the source until
+/// every file is copied and size-checked; on failure the destination is rolled
+/// back and the source is untouched. Moving *back* to app storage is no longer
+/// offered: once all-files access is granted the launcher uses shared storage
+/// unconditionally. The flag stays in the signature so older callers get a
+/// clear error instead of a link failure; it must be `true`.
 pub fn migrate(home: &Path, shared: &Path, to_shared: bool) -> Result<String, String> {
+    if !to_shared {
+        return Err("Moving game files back to app storage is no longer supported".into());
+    }
     if MOVING.swap(true, Ordering::AcqRel) {
         return Err("Game files are already being moved".into());
     }
@@ -1066,23 +1080,15 @@ mod tests {
         assert_eq!(profile_dir(&home, 0), shared);
         assert_eq!(profile_dir(&home, 2), shared.join("profiles/profile-2"));
         assert_eq!(reports_dir(&home), shared.join("performance"));
-        // Move back.
-        let back = migrate(&home, &shared, false).unwrap();
-        assert!(back.contains("Moved"), "{back}");
+        // The migration is one way: a "move back" request is refused and the
+        // shared root stays authoritative.
+        assert!(migrate(&home, &shared, false).is_err());
+        assert_eq!(state(&home), State::Shared);
+        assert_eq!(resolve(&home), shared);
         assert_eq!(
-            fs::read(home.join("saves/World One/level.dat")).unwrap(),
+            fs::read(shared.join("saves/World One/level.dat")).unwrap(),
             b"level"
         );
-        assert_eq!(
-            fs::read(home.join("horizon-mods/test.hmod")).unwrap(),
-            b"mod"
-        );
-        assert_eq!(
-            fs::read(home.join("performance/horizon-performance-1.jsonl")).unwrap(),
-            b"{}"
-        );
-        assert_eq!(state(&home), State::Private);
-        assert_eq!(resolve(&home), home);
         fs::remove_dir_all(&home).unwrap();
         let _ = fs::remove_dir_all(&shared);
     }
@@ -1101,16 +1107,19 @@ mod tests {
     }
 
     #[test]
-    fn missing_shared_folder_falls_back_for_readers() {
+    fn missing_shared_folder_keeps_the_recorded_root() {
         let home = scratch();
+        let recorded = home.join("gone");
         fs::write(
             home.join(MARKER),
-            json!({"version": 1, "dir": home.join("gone").to_string_lossy()}).to_string(),
+            json!({"version": 1, "dir": recorded.to_string_lossy()}).to_string(),
         )
         .unwrap();
         assert_eq!(state(&home), State::Missing);
-        assert_eq!(resolve(&home), home);
-        assert_eq!(profile_dir(&home, 0), home);
+        // A transient mount or revoked permission must not split the save data
+        // across two roots; the launcher handles the failure instead.
+        assert_eq!(resolve(&home), recorded);
+        assert_eq!(profile_dir(&home, 0), recorded);
         fs::remove_dir_all(&home).unwrap();
     }
 
@@ -1369,7 +1378,7 @@ mod tests {
     }
 
     #[test]
-    fn restore_refuses_when_the_destination_holds_data() {
+    fn restore_to_app_storage_is_refused_even_with_new_private_data() {
         let home = scratch();
         seed(&home);
         let shared = home.with_file_name(format!(
@@ -1380,7 +1389,7 @@ mod tests {
         // App storage gets a new file at a path the shared folder holds.
         fs::write(home.join("options.txt"), b"new user data").unwrap();
         let result = migrate(&home, &shared, false);
-        assert!(result.is_err(), "restore must refuse over existing data");
+        assert!(result.is_err(), "the one-way migration refuses to move back");
         assert_eq!(fs::read(home.join("options.txt")).unwrap(), b"new user data");
         assert_eq!(
             fs::read(shared.join("options.txt")).unwrap(),
@@ -1408,7 +1417,7 @@ mod tests {
     }
 
     #[test]
-    fn restore_with_a_missing_folder_errors_honestly() {
+    fn restore_to_app_storage_is_refused_with_a_clear_reason() {
         let home = scratch();
         seed(&home);
         let gone = home.join("gone");
@@ -1421,7 +1430,7 @@ mod tests {
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
-            .contains("shared game files folder was not found"));
+            .contains("Moving game files back to app storage is no longer supported"));
         assert_eq!(state(&home), State::Missing);
         fs::remove_dir_all(&home).unwrap();
     }

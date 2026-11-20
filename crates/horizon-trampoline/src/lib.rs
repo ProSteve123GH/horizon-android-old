@@ -50,6 +50,7 @@ unsafe fn dispatch(
     // are present. The layout of the process is unchanged from a stock start.
     unsafe {
         std::env::set_var("HORIZON_GAME_LIB", &lib);
+        std::env::set_var("HORIZON_NATIVE_DIR", root.join("native"));
         std::env::set_var(
             "HORIZON_NATIVE_PENDING",
             root.join("native").join("pending_crash"),
@@ -93,6 +94,19 @@ unsafe fn files_dir(activity: *mut ANativeActivity) -> Result<PathBuf, String> {
     Ok(PathBuf::from(OsString::from_vec(bytes)))
 }
 
+/// The universal first-frame marker lives beside `pending_crash`. Deriving it
+/// from the pending path keeps the game free of any new plumbing: the
+/// trampoline already exports the pending path as `HORIZON_NATIVE_PENDING`.
+/// The game derives the same path at runtime; this helper pins the contract in
+/// a test.
+#[cfg(test)]
+fn first_frame_marker(pending: &std::path::Path) -> Option<std::path::PathBuf> {
+    if !pending.is_absolute() || pending.file_name()? != "pending_crash" {
+        return None;
+    }
+    Some(pending.parent()?.join("first-frame"))
+}
+
 /// `active.json` — Java (`HorizonActivity`) always writes `lib`; `stock` as
 /// fallback when both are known. Missing `stock` means the game is loaded
 /// once, no fallback (the same APK's library is both).
@@ -114,7 +128,23 @@ fn parse_active(text: &str) -> Result<(String, String), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_active;
+    use super::{first_frame_marker, parse_active};
+
+    #[test]
+    fn first_frame_marker_is_derived_from_the_pending_path() {
+        let pending = std::path::Path::new("/data/user/0/dev.horizon/files/native/pending_crash");
+        assert_eq!(
+            first_frame_marker(pending),
+            Some(std::path::PathBuf::from(
+                "/data/user/0/dev.horizon/files/native/first-frame"
+            ))
+        );
+        assert_eq!(first_frame_marker(std::path::Path::new("pending_crash")), None);
+        assert_eq!(
+            first_frame_marker(std::path::Path::new("/files/native/other")),
+            None
+        );
+    }
 
     #[test]
     fn parses_lib_and_stock() {

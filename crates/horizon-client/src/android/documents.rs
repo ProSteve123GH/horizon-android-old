@@ -125,9 +125,11 @@ pub fn poll() -> Option<Notice> {
         .take()
 }
 /// Called by the approved Activity result bridge, never from a game tick.
-/// Keep a conventional JNI export as well as explicit registration: Android
-/// may restore a picker result before the IME bridge has been initialized.
-#[unsafe(export_name = "Java_dev_horizon_android_HorizonActivity_nativeDocumentResult")]
+/// The JNI export itself lives in `android_main.rs` (the cdylib only): this
+/// source is also compiled into the gameplay library, and two exports of the
+/// same symbol would fail the mod-build service's linker. Keep a conventional
+/// export as well as explicit registration: Android may restore a picker
+/// result before the IME bridge has been initialized.
 pub extern "system" fn document_result(
     mut env: JNIEnv<'_>,
     activity: JObject<'_>,

@@ -140,6 +140,7 @@ impl Game<'_> {
             )
             && matches!(&event, WindowEvent::KeyboardInput { event, .. }
                 if event.state == ElementState::Pressed
+                    && !matches!(event.physical_key, PhysicalKey::Code(code) if self.android_global_key(code))
                     && !matches!(event.logical_key, winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape | winit::keyboard::NamedKey::BrowserBack)))
         {
             return;
@@ -816,4 +817,102 @@ mod tests {
             assert!(!locks_out(InputOrigin::User, true, &event));
         }
     }
+}
+
+#[cfg(any(target_os = "android", test))]
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Publishes the universal first-frame marker beside the pending-crash file.
+/// Temp + rename means the launcher never polls a half-written marker.
+#[cfg(any(target_os = "android", test))]
+fn write_first_frame_marker(pending: &Path) -> std::io::Result<()> {
+    let parent = pending.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "pending marker has no parent")
+    })?;
+    let temp = parent.join("first-frame.tmp");
+    let marker = parent.join("first-frame");
+    std::fs::write(&temp, b"1")?;
+    match std::fs::rename(&temp, &marker) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = std::fs::remove_file(&temp);
+            Err(error)
+        }
+    }
+}
+
+/// A modded selection that reached its first frame is healthy: copy it into
+/// the rollback file and forget any crash attribution. Kept here (rather than
+/// in the launcher module) so the game library needs no launcher dependency.
+#[cfg(any(target_os = "android", test))]
+fn record_healthy_start(home: &Path) {
+    let dir = home.join("native");
+    let Some(bytes) = std::fs::read(dir.join("current.json")).ok() else {
+        return; // a stock start has no modded selection
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return;
+    };
+    if value["rejected"].as_bool().unwrap_or(false)
+        || value["id"].as_str().unwrap_or("").is_empty()
+    {
+        return;
+    }
+    let write = |name: &str, body: &[u8]| -> std::io::Result<()> {
+        let temp = dir.join(format!("{name}.tmp"));
+        std::fs::write(&temp, body)?;
+        match std::fs::rename(&temp, dir.join(name)) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let _ = std::fs::remove_file(&temp);
+                Err(error)
+            }
+        }
+    };
+    if let Ok(pretty) = serde_json::to_vec_pretty(&value)
+        && let Err(error) = write("last_known_good.json", &pretty)
+    {
+        log::warn!("Cannot record last_known_good.json: {error}");
+    }
+    let _ = std::fs::remove_file(dir.join("last_failed_mod"));
+}
+
+/// First `about_to_wait` on Android clears the native-mod crash guard.
+/// Missing environment means a stock run outside the trampoline; the guard
+/// never breaks the game. Safe to call on every `about_to_wait`: it runs once.
+#[cfg(target_os = "android")]
+pub(crate) fn clear_native_crash_guard_once() {
+    static CLEARED: AtomicBool = AtomicBool::new(false);
+    if CLEARED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let Some(pending) = std::env::var_os("HORIZON_NATIVE_PENDING") else {
+        return;
+    };
+    let pending = std::path::PathBuf::from(pending);
+    if !pending.file_name().is_some_and(|name| name == "pending_crash") {
+        return;
+    }
+    if let Err(error) = write_first_frame_marker(&pending) {
+        log::warn!("Cannot write the first-frame marker: {error}");
+        return;
+    }
+    // `pending` is `<filesDir>/native/pending_crash`; its grandparent is the
+    // app-private files home the launcher's native-mods state lives under.
+    if let Some(home) = pending.parent().and_then(Path::parent) {
+        record_healthy_start(home);
+    }
+    if let Err(error) = std::fs::remove_file(&pending)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!("Cannot clear the native-mod crash guard ({}): {error}", pending.display());
+    }
+}
+
+/// Desktop keeps the same call site without reading Android-only state.
+#[cfg(not(target_os = "android"))]
+pub(crate) fn clear_native_crash_guard_once() {
+    static CLEARED: AtomicBool = AtomicBool::new(false);
+    CLEARED.swap(true, Ordering::Relaxed);
 }

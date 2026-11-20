@@ -28,6 +28,7 @@ getrandom = "0.3"
 ureq = { version = "2", features = ["json"] }
 url = "2"
 image = { version = "0.25", default-features = false, features = ["png"] }
+chacha20poly1305 = "=0.10.1"
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
@@ -52,6 +53,10 @@ mod proxy {
 mod java_launch {
     #[derive(Debug)]
     pub struct Player { pub name: String, pub uuid: String, pub token: String, pub xuid: String }
+}
+mod i18n {
+    pub fn tr(en: &str) -> &str { en }
+    pub fn trf(en: &str, _: &[(&str, &str)]) -> String { en.to_owned() }
 }
 '''
     for name in ('account', 'skins'):

@@ -155,6 +155,9 @@ impl Game<'_> {
     pub(super) fn android_custom_events(&mut self) {
         for (name, down) in self.pad.touch.key_events() {
             if let Some(mapping) = name.strip_prefix("action:") {
+                if self.screenshot_touch_action(&name, down) {
+                    continue;
+                }
                 let default = horizon_client::keybinds::KeyBinds::default_of(mapping);
                 let result = if let Some(key) = horizon_client::keybinds::key_code(default) {
                     self.mapped_key(key, down, false, key, Source::Keyboard)

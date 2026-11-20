@@ -20,6 +20,12 @@ serde_json = "1"
 rustix = { version = "1", features = ["fs"] }
 ''', encoding='utf-8')
     (harness / 'src/lib.rs').write_text('''#![allow(dead_code)]
+mod backend {
+    pub fn game_home() -> std::path::PathBuf {
+        std::env::temp_dir().join("horizon-screenshot-harness")
+    }
+    pub fn installed() -> Vec<String> { Vec::new() }
+}
 #[path = "../../../../crates/horizon-client/src/android/instances.rs"]
 mod instances;
 #[path = "../../../../crates/horizon-client/src/android/shared_storage.rs"]
@@ -28,7 +34,8 @@ mod shared_storage;
 mod screenshots;
 ''', encoding='utf-8')
     subprocess.run(
-        ['cargo', 'test', '--manifest-path', str(harness / 'Cargo.toml')],
+        ['cargo', 'test', '--manifest-path', str(harness / 'Cargo.toml'),
+         '--', '--test-threads=1'],
         cwd=ROOT,
         check=True,
     )

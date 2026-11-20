@@ -571,17 +571,35 @@ fn build_lists_mods(built: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// The launcher's record of the mods in the running game. On Android there is no
+/// `[BUILD_INFO]` beside `current_exe()`: the record is app-private, and the
+/// trampoline exports its folder (Starling reads the same build record).
+fn build_info() -> String {
+    #[cfg(target_os = "android")]
+    {
+        let dir = std::env::var_os("HORIZON_NATIVE_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default();
+        std::fs::read_to_string(dir.join("current.json")).unwrap_or_default()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| std::fs::read_to_string(exe.with_file_name(BUILD_INFO)).ok())
+            .unwrap_or_default()
+    }
+}
+
 /// Whether the game playing was built with native mods: horizon-mixins applied bundles to its
 /// source (`HORIZON_MIXIN_MODS`, set by the build script from the record it leaves, as with a mod
 /// author's own build that has no [`BUILD_INFO`]), trait mods are installed, or the launcher wrote
-/// their ids into [`BUILD_INFO`] beside the executable. A release or Nightly has none of them.
+/// their ids into the build record ([`BUILD_INFO`] beside the executable, `native/current.json`
+/// on Android). A release or Nightly has none of them.
 pub(super) fn built_with_native_mods() -> bool {
     option_env!("HORIZON_MIXIN_MODS").is_some_and(|mods| !mods.is_empty())
         || !crate::mod_api::mods().is_empty()
-        || std::env::current_exe()
-            .ok()
-            .and_then(|exe| std::fs::read_to_string(exe.with_file_name(BUILD_INFO)).ok())
-            .is_some_and(|built| build_lists_mods(&built))
+        || build_lists_mods(&build_info())
 }
 
 /// The native mods the launcher built this game with, `id version, id version`, for the crash
@@ -669,11 +687,17 @@ fn live_switch_of(
     }
 }
 
-/// A row for each native mod the launcher installed in `dir` (a legacy `<id>.hnmod`, or a
-/// combined `<id>.hmod` holding native code) that this game wasn't built with (`built`: its
-/// [`BUILD_INFO`], empty for a release or Nightly) and that has no row yet. The page said "No
-/// mods" before, and players copied the files into `horizon-mods` (#4770). Its toggle is the
-/// `mod.<id>` line the launcher's next build follows.
+/// A row for each installed native mod that has no row yet: mods in the active
+/// build get a plain row (the ones with native hooks register their own), mods
+/// left out of the build get [`mod_list::NOT_BUILT`]. Without this a mod that
+/// only shipped mixins disappears from the Mods page once it is compiled in.
+/// Installed means a legacy `<id>.hnmod` or a combined `<id>.hmod` that really
+/// holds native code; a content-only `.hmod` here is left alone. The page said
+/// "No mods" before, and players copied files into `horizon-mods` (#4770). Its
+/// toggle is the `mod.<id>` line the launcher's next build follows.
+///
+/// `built` is the game's build record ([`BUILD_INFO`] beside the executable,
+/// `native/current.json` on Android; empty for a release or Nightly).
 fn not_built(dir: &std::path::Path, built: &str, rows: &[Installed]) -> Vec<Installed> {
     let info: serde_json::Value = serde_json::from_str(built).unwrap_or_default();
     let in_build = |id: &str| {
@@ -700,12 +724,13 @@ fn not_built(dir: &std::path::Path, built: &str, rows: &[Installed]) -> Vec<Inst
         };
         let m = bundle.manifest;
         let listed = rows.iter().chain(&out).any(|row| row.id == m.id);
-        if !listed && !in_build(&m.id) {
+        if !listed {
+            let in_build = in_build(&m.id);
             out.push(Installed {
                 title: format!("{} {}", m.id, m.version),
                 id: m.id,
                 description: String::new(),
-                problem: Some(mod_list::NOT_BUILT.to_owned()),
+                problem: (!in_build).then(|| mod_list::NOT_BUILT.to_owned()),
                 dev: false,
                 has_settings: false,
                 native: None,
@@ -782,10 +807,7 @@ impl Game<'_> {
         // A mod with a native version built in says so instead, and isn't news.
         self.list_native_mods();
         self.sync_native_switches();
-        let built = std::env::current_exe()
-            .ok()
-            .and_then(|exe| std::fs::read_to_string(exe.with_file_name(BUILD_INFO)).ok())
-            .unwrap_or_default();
+        let built = build_info();
         let built_mods = native_mods_detail(&built);
         let built_with_mods = built_mods.is_some();
         if let Some(list) = built_mods {
@@ -2444,9 +2466,15 @@ mod tests {
             ..rows[0].clone()
         };
         let rows = not_built(&dir, built, &[listed]);
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 3);
+        // The mod in the active build still gets a row, without the warning;
+        // the native `.hmod` gets the same treatment as a legacy `.hnmod`.
         assert_eq!(rows[0].id, "veinminer");
-        assert_eq!(rows[1].id, "zoomplus");
+        assert_eq!(rows[0].problem.as_deref(), Some(mod_list::NOT_BUILT));
+        assert_eq!(rows[1].id, "zoom");
+        assert_eq!(rows[1].problem, None);
+        assert_eq!(rows[2].id, "zoomplus");
+        assert_eq!(rows[2].problem.as_deref(), Some(mod_list::NOT_BUILT));
         // No folder: no rows.
         assert!(not_built(&dir.join("missing"), "", &[]).is_empty());
         std::fs::remove_dir_all(&dir).unwrap();

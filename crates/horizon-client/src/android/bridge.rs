@@ -1429,7 +1429,9 @@ impl Controller {
             "touch_layouts" => return self.touch_state(),
             "touch_layout_create" => {
                 let instance = self.catalog.config.game_home(&home);
-                let snapshot = touch_snapshot(&touch_settings(&instance));
+                // Snapshot the live horizon-touch.json verbatim, never the
+                // engine defaults: importing/creating must not wipe custom keys.
+                let snapshot = crate::touch_layouts::live_snapshot(&instance)?;
                 let profile = crate::touch_layouts::create(&instance, arg, &snapshot)?;
                 self.catalog.status = format!(
                     "Saved layout profile {} from the current layout.",
@@ -1455,7 +1457,7 @@ impl Controller {
             }
             "touch_layout_save" => {
                 let instance = self.catalog.config.game_home(&home);
-                let snapshot = touch_snapshot(&touch_settings(&instance));
+                let snapshot = crate::touch_layouts::live_snapshot(&instance)?;
                 let profile = crate::touch_layouts::save_current(&instance, arg, &snapshot)?;
                 self.catalog.status = format!(
                     "Updated {} with the layout currently in touch settings.",
@@ -1964,6 +1966,9 @@ fn touch_write_fields(instance: &std::path::Path, fields: &Value) -> Result<(), 
             format!("This layout snapshot is not compatible with this build: {error}")
         })?;
     merged.sanitize();
+    // `Settings::save_to` writes to a `horizon-touch.json.tmp` sibling and
+    // renames it over the live file, so a crash mid-write cannot leave a
+    // half-written touch layout. The store file uses the same temp+rename.
     merged
         .save_to(&path)
         .map_err(|error| format!("Could not save the touch layout: {error}"))
@@ -2109,6 +2114,13 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_importDocument(
 ) {
     let kind = string(&mut env, &kind);
     let uri = (!uri.is_null()).then(|| string(&mut env, &uri));
+    // Touch controls are per-instance profiles, not a content-files folder.
+    // Handle them here before the mods/packs/shaders dispatch, which only knows
+    // `content_files::Kind` and would drop the picker result.
+    if kind == "touch" {
+        import_touch(&mut env, &activity, uri);
+        return;
+    }
     let Some(kind) = parse_kind(&kind) else {
         return;
     };
@@ -2120,6 +2132,76 @@ pub extern "system" fn Java_dev_horizon_android_NativeBridge_importDocument(
         return;
     };
     crate::documents::import_external(&mut env, &activity, kind, home, uri);
+}
+
+/// `NativeBridge.importDocument(activity, "touch", uri)`: a picked controls file.
+///
+/// The SAF document is read on a worker and validated by `touch_layouts`, which
+/// saves it as a brand-new profile. `Controller::poll` picks the notice up from
+/// `documents::poll` and shows the preview/status in the launcher.
+fn import_touch(env: &mut JNIEnv<'_>, activity: &JObject<'_>, uri: Option<String>) {
+    const MAX_BYTES: u64 = 1 << 20;
+    let Some(uri) = uri.filter(|uri| uri.starts_with("content://") && uri.len() <= 8192) else {
+        crate::documents::note("Unsupported document URI", false);
+        return;
+    };
+    let Some(instance) = CONTROLLER.with(|c| {
+        c.borrow()
+            .as_ref()
+            .map(|c| c.catalog.config.game_home(&c.home))
+    }) else {
+        crate::documents::note("Launcher is not initialized", false);
+        return;
+    };
+    let setup = (|| -> jni::errors::Result<_> {
+        let activity = env.new_global_ref(activity)?;
+        Ok((env.get_java_vm()?, activity))
+    })();
+    let Ok((vm, activity)) = setup else {
+        let _ = env.exception_clear();
+        crate::documents::note("Could not read the selected document", false);
+        return;
+    };
+    let spawned = std::thread::Builder::new()
+        .name("Touch import".into())
+        .spawn(move || {
+            use std::io::Read;
+            let result = (|| -> Result<String, String> {
+                let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+                let (mut file, name) = crate::document_bridge::open(
+                    &mut env,
+                    activity.as_obj(),
+                    &uri,
+                    "horizon-touch.json",
+                )
+                .map_err(|e| e.to_string())?;
+                let mut bytes = Vec::new();
+                file.take(MAX_BYTES)
+                    .read_to_end(&mut bytes)
+                    .map_err(|e| format!("Could not read the touch file: {e}"))?;
+                let fallback = name.strip_suffix(".json").unwrap_or(&name).to_owned();
+                let (preview, profile) =
+                    crate::touch_layouts::import_profile(&instance, &bytes, &fallback)?;
+                Ok(format!(
+                    "Imported a {} touch profile \"{}\" ({} mode, {} custom button(s), {}). Apply it from Touch controls.",
+                    preview.shape,
+                    profile.name,
+                    preview.mode,
+                    preview.button_count,
+                    preview.visibility
+                ))
+            })();
+            match result {
+                Ok(status) => crate::documents::note(status, true),
+                Err(error) => crate::documents::note(
+                    format!("Touch controls import failed: {error}"),
+                    false,
+                ),
+            }
+        });
+    if let Err(error) = spawned {
+        crate::documents::note(format!("Touch controls import failed: {error}"), false);
+    }
 }
 
 /// `NativeBridge.importNativeDocument(Activity, String uri)`: a picked .hnmod bundle.

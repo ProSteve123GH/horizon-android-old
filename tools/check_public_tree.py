@@ -12,10 +12,12 @@ PRIVATE_EXTENSIONS = {".jar", ".class", ".jfr", ".hprof", ".java", ".apk", ".aab
 ORIGINAL_JDK_TOOLS = {"tools/JfrSummary.java", "tests/java/JfrFixture.java"}
 # Owner-approved, original NativeActivity result callback; not recovered game code.
 ANDROID_RESULT_BRIDGE = "packaging/android/java/dev/horizon/android/HorizonActivity.java"
-ANDROID_DOCUMENTS_BRIDGE = "packaging/android/java/dev/horizon/android/HorizonDocumentsProvider.java"
 ANDROID_SCREENSHOT_BRIDGE = "packaging/android/java/dev/horizon/android/ScreenshotProvider.java"
 # Original native-mod library chooser; written for this fork, not recovered game code.
 ANDROID_NATIVE_MODS = "packaging/android/java/dev/horizon/android/NativeMods.java"
+# Original SAF documents provider; written for this fork and deliberately removed,
+# so its old path must stay allowlisted when CI scans history.
+ANDROID_DOCUMENTS_PROVIDER = "packaging/android/java/dev/horizon/android/HorizonDocumentsProvider.java"
 # The prepared folder's files in one file (crates/horizon-core/src/prepared_files.rs): Mojang's data.
 PRIVATE_NAMES = {"horizon-data.bin"}
 # Vanilla's 1.13 data fixer tables, copied from its code until 2026-11; horizon-prepare now exports them from the
@@ -40,9 +42,9 @@ def prohibited(path):
     # Original JDK-only tools are an exact allowlist; recovered game Java stays private.
     if path in ORIGINAL_JDK_TOOLS or path in {
         ANDROID_RESULT_BRIDGE,
-        ANDROID_DOCUMENTS_BRIDGE,
         ANDROID_SCREENSHOT_BRIDGE,
         ANDROID_NATIVE_MODS,
+        ANDROID_DOCUMENTS_PROVIDER,
     }:
         return False
     # Original Horizon mod sources may also be tracked.
