@@ -256,8 +256,8 @@ fn registry_trust(url: &str, path: &Path) -> Option<Result<&'static str, String>
     let (project, version) = matched?;
     Some(
         horizon_mods::index::check_file(&index, project, version, path).map(|trust| match trust {
-            horizon_mods::index::Trust::Verified => "signed and hash-checked against the registry",
-            horizon_mods::index::Trust::Unsigned => "hash-checked against the registry (unsigned)",
+            horizon_mods::index::Trust::Verified => "signed and hash-verified",
+            horizon_mods::index::Trust::Unsigned => "hash-verified but unsigned",
         }),
     )
 }
