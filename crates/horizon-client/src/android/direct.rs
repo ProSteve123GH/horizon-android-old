@@ -36,6 +36,31 @@ pub(super) struct DirectGame {
     prepared_session: Option<PathBuf>,
 }
 
+/// First `about_to_wait` clears the native-mod crash guard. The trampoline
+/// exports `HORIZON_GAME_LIB` and `HORIZON_NATIVE_PENDING` before entering the
+/// game, so a start that reaches the event loop has not died before its first
+/// frame. Missing environment means a stock run; the guard never breaks the game.
+fn clear_native_crash_guard_once() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static CLEARED: AtomicBool = AtomicBool::new(false);
+    if CLEARED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let (Some(_lib), Some(pending)) = (
+        std::env::var_os("HORIZON_GAME_LIB"),
+        std::env::var_os("HORIZON_NATIVE_PENDING"),
+    ) else {
+        return;
+    };
+    let pending = PathBuf::from(pending);
+    if pending.file_name().is_some_and(|name| name == "pending_crash")
+        && std::fs::remove_file(&pending).is_ok()
+    {
+        let _ = std::fs::write(pending.with_file_name("crash_streak"), "0");
+        log::info!("Cleared the native-mod crash guard ({})", pending.display());
+    }
+}
+
 impl DirectGame {
     pub(super) fn new(home: PathBuf, world: Option<String>) -> Self {
         // Upgrade existing installations that retained the old download cache.
@@ -355,6 +380,7 @@ impl ApplicationHandler for DirectGame {
     }
 
     fn about_to_wait(&mut self, events: &ActiveEventLoop) {
+        clear_native_crash_guard_once();
         if let Some(game) = &mut self.game {
             game.about_to_wait(events);
             self.check_return(events);
