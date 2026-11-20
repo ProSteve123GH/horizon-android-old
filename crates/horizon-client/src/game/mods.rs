@@ -368,7 +368,15 @@ fn content_root_at(
     }
     let overlay = {
         let _step = horizon_client::spans::startup::step("mods.overlay");
-        mod_content::resource_root(root, &mods, &here.join(".horizon-cache"))
+        // On Android the game's working directory is the game-files folder,
+        // which can live on shared storage where creating a cache directory
+        // (and the overlay's links) is denied. Build the overlay in the
+        // app-private home instead; the symlinks still point at the base.
+        #[cfg(target_os = "android")]
+        let cache_home = crate::backend::try_data_dir().unwrap_or_else(|| here.to_owned());
+        #[cfg(not(target_os = "android"))]
+        let cache_home = here.to_owned();
+        mod_content::resource_root(root, &mods, &cache_home.join(".horizon-cache"))
     };
     match overlay {
         Ok(out) => {
