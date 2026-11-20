@@ -234,7 +234,10 @@ mod routing_tests {{
 }}
 ''', encoding='utf-8')
     subprocess.run(
-        ['cargo', 'test', '--offline', '--manifest-path', str(root / 'Cargo.toml')],
+        # The real horizon-mods crate needs minisign-verify for its index
+        # feature, which is not in every runner's offline registry cache.
+        # Allow Cargo to resolve it here so the assertions exercise real code.
+        ['cargo', 'test', '--manifest-path', str(root / 'Cargo.toml')],
         cwd=ROOT,
         check=True,
     )
