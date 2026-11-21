@@ -19,7 +19,7 @@ pub(super) fn clientbound(
             packet_ids::login::clientbound::LOGIN_FINISHED => {
                 crate::packets::login::GameProfile::read(&mut r)?;
             }
-            packet_ids::login::clientbound::HELLO => {
+            packet_ids::login::clientbound::KEY => {
                 r.string(20)?;
                 r.byte_array(r.remaining())?;
                 r.byte_array(r.remaining())?;
@@ -30,7 +30,7 @@ pub(super) fn clientbound(
         let mut w = Writer::new();
         w.bytes(payload);
         // Encryption requests always authenticated; profile success had no strict-error switch.
-        w.bool(id == packet_ids::login::clientbound::HELLO);
+        w.bool(id == packet_ids::login::clientbound::KEY);
         return Ok(Some(w.data));
     }
     if state != State::Play {
@@ -816,7 +816,7 @@ mod tests {
             ),
             (
                 State::Login,
-                login::HELLO,
+                login::KEY,
                 "00020102020304",
                 "0002010202030401",
             ),
