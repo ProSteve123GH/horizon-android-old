@@ -143,7 +143,7 @@ def main():
         print(f'prepare diagnostic: {len(logs)} exporter logs', flush=True)
         for log in logs:
             print(f'--- {log.relative_to(ROOT)} ---', flush=True)
-            print('\n'.join(log.read_text(errors='replace').splitlines()[-80:]), flush=True)
+            print('\n'.join(log.read_text(errors='replace').splitlines()[-600:]), flush=True)
         raise
     package_resources(args.version, private)
 
