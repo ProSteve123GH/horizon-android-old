@@ -60,6 +60,7 @@ pub fn load(root: &Path, properties: &MovementProperties<'_>) -> Result<BlockLan
             "SlimeBlock" => FallDefinition::Slime,
             "PowderSnowBlock" => FallDefinition::PowderSnow,
             "PointedDripstoneBlock" => FallDefinition::PointedDripstone,
+            "IcicleBlock" => FallDefinition::Icicle,
             "FarmlandBlock" => FallDefinition::Farmland {
                 base_block: d["base"].as_str().ok_or("missing farmland base")?.into(),
             },

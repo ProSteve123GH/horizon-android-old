@@ -15,6 +15,8 @@ pub enum FallDefinition {
     Slime,
     PowderSnow,
     PointedDripstone,
+    /// 26.4 `IcicleBlock.fallOn` delegates to the same `SpeleothemBlock.fallOnDamage`.
+    Icicle,
     Farmland { base_block: String },
     TurtleEgg,
 }
@@ -194,7 +196,7 @@ impl BlockLandingRegistry {
                 },
                 FallDefinition::Slime => Rule::Slime,
                 FallDefinition::PowderSnow => Rule::PowderSnow,
-                FallDefinition::PointedDripstone => {
+                FallDefinition::PointedDripstone | FallDefinition::Icicle => {
                     let direction = state
                         .properties
                         .get("vertical_direction")
