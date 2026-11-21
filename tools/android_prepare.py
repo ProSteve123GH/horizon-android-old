@@ -137,7 +137,8 @@ def main():
     except subprocess.CalledProcessError:
         # The prepare step keeps javac's output in per-exporter logs. Surface the tails here so a
         # failing vanilla exporter is diagnosable from the CI log without keeping build artifacts.
-        logs = sorted((ROOT / '.local/horizon-client' / lab.pinned_version()).rglob('*export.log'))
+        logs = sorted((ROOT / '.local').rglob('*export.log'))
+        print(f'prepare diagnostic: {len(logs)} exporter logs', flush=True)
         for log in logs:
             print(f'--- {log.relative_to(ROOT)} ---', flush=True)
             print('\n'.join(log.read_text(errors='replace').splitlines()[-80:]), flush=True)
