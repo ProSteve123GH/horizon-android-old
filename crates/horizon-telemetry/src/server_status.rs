@@ -25,9 +25,11 @@ pub const OFFICIAL_STATUS_ADDRESS: &str = horizon_addresses::OFFICIAL_SERVER_STA
 /// The port a server address without one means.
 pub const DEFAULT_PORT: u16 = 25565;
 
-/// The protocol version the handshake names, from the generated pinned constant. A server
-/// answers the status of any version.
-const PROTOCOL: i32 = horizon_core::version::PROTOCOL_VERSION;
+/// The protocol version the handshake names: `horizon_core::version::PROTOCOL_VERSION`
+/// for the pinned 26.4-snapshot-10 (protocol 1073742172). This crate deliberately does
+/// not depend on horizon-core, so the value is repeated here. A server answers the
+/// status of any version.
+const PROTOCOL: i32 = 1_073_742_172;
 
 /// The longest status answer read: room for a 64x64 icon in base64 and a long description.
 const MAX_ANSWER: usize = 256 * 1024;
