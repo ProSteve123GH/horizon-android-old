@@ -41,7 +41,7 @@ public final class VanillaVehicleContainerOracle {
         int next = 1;
 
         Lvl() {
-            super(null, null, null, null, null, null, false, 0L, List.of(), false);
+            super(null, null, null, null, null, null, null, false);
         }
 
         @Override

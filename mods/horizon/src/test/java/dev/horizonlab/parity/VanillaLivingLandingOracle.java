@@ -30,13 +30,13 @@ public final class VanillaLivingLandingOracle {
     static final class State extends BlockState {Block block;Data d;@Override public boolean isAir(){d.query("air");return d.input.get("air").getAsBoolean();}State(){super(null,null,null);}@Override public Block getBlock(){return block;}}
     static final class Level extends net.minecraft.server.level.ServerLevel {
         Data d;BlockState queried;
-        private Level(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+        private Level(){super(null,null,null,null,null,null,null,false);}
         @Override public <T extends net.minecraft.core.particles.ParticleOptions> int sendParticles(T particle,double x,double y,double z,int count,double dx,double dy,double dz,double speed){if(!(particle instanceof net.minecraft.core.particles.BlockParticleOption b)||b.getState()!=d.inputState||b.getType()!=net.minecraft.core.particles.ParticleTypes.BLOCK||dx!=0||dy!=0||dz!=0)throw new AssertionError(particle);d.query(String.format("particles %016x %016x %016x %d %016x",Double.doubleToLongBits(x),Double.doubleToLongBits(y),Double.doubleToLongBits(z),count,Double.doubleToLongBits(speed)));if(d.input.get("particle_mutate").getAsBoolean()){d.actor.fallDistance=number(d.input.get("after_fall"));d.water=!d.water;}return -1;}
         @Override public BlockState getBlockState(BlockPos p){d.query("state "+p.getX()+" "+p.getY()+" "+p.getZ());return queried;}
         @Override public void gameEvent(Holder<GameEvent> event,Vec3 p,GameEvent.Context context){if(event!=GameEvent.HIT_GROUND)throw new AssertionError(event);d.query(String.format("hit-ground %016x %016x %016x %s",Double.doubleToLongBits(p.x),Double.doubleToLongBits(p.y),Double.doubleToLongBits(p.z),context.affectedState()==queried?"queried":"input"));}
     }
     static final class ClientLevel extends net.minecraft.world.level.Level {
-        Data d;BlockState queried;ClientLevel(){super(null,null,null,null,false,false,0L,0);}
+        Data d;BlockState queried;ClientLevel(){super(null,null,null,null,false,0);}
         @Override public BlockState getBlockState(BlockPos p){d.query("state "+p.getX()+" "+p.getY()+" "+p.getZ());return queried;}
         @Override public void gameEvent(Holder<GameEvent> event,Vec3 p,GameEvent.Context context){if(event!=GameEvent.HIT_GROUND)throw new AssertionError(event);d.query(String.format("hit-ground %016x %016x %016x %s",Double.doubleToLongBits(p.x),Double.doubleToLongBits(p.y),Double.doubleToLongBits(p.z),context.affectedState()==queried?"queried":"input"));}
 @Override public net.minecraft.world.clock.ClockManager clockManager(){throw new UnsupportedOperationException();}
@@ -55,7 +55,7 @@ public final class VanillaLivingLandingOracle {
 @Override public net.minecraft.world.level.storage.LevelData.RespawnData getRespawnData(){throw new UnsupportedOperationException();}
 @Override public net.minecraft.world.scores.Scoreboard getScoreboard(){throw new UnsupportedOperationException();}
 @Override public int getSeaLevel(){throw new UnsupportedOperationException();}
-@Override public net.minecraft.core.Holder getUncachedNoiseBiome(int p0,int p1,int p2){throw new UnsupportedOperationException();}
+@Override public net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome> getUncachedBiome(int p0,int p1,int p2){throw new UnsupportedOperationException();}
 @Override public net.minecraft.world.level.border.WorldBorder getWorldBorder(){throw new UnsupportedOperationException();}
 @Override public void levelEvent(net.minecraft.world.entity.Entity p0,int p1,net.minecraft.core.BlockPos p2,int p3){throw new UnsupportedOperationException();}
 @Override public void playSeededSound(net.minecraft.world.entity.Entity p0,net.minecraft.world.entity.Entity p1,net.minecraft.core.Holder p2,net.minecraft.sounds.SoundSource p3,float p4,float p5,long p6){throw new UnsupportedOperationException();}

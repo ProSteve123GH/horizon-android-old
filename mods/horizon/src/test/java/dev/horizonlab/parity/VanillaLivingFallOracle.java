@@ -20,7 +20,7 @@ public final class VanillaLivingFallOracle {
     static Vec3 vector(JsonElement v){if(v.isJsonNull())return null;var a=v.getAsJsonArray();return new Vec3(number(a.get(0)),number(a.get(1)),number(a.get(2)));}
     static Field grace,impact;
     static final class Data {JsonObject f;PrintWriter out;int calls,immuneCalls,hurt;void query(String s){out.println(s);if(calls++==f.get("fail").getAsInt())throw new Stop();}}
-    static final class Level extends net.minecraft.server.level.ServerLevel {private Level(){super(null,null,null,null,null,null,false,0L,List.of(),false);}}
+    static final class Level extends net.minecraft.server.level.ServerLevel {private Level(){super(null,null,null,null,null,null,null,false);}}
     static final class Actor extends ArmorStand {
         Data d;Actor(){super(null,null);}void configure(Level level){setLevel(level);}
         @Override public boolean is(TagKey<EntityType<?>> tag){if(tag!=EntityTypeTags.FALL_DAMAGE_IMMUNE)throw new AssertionError(tag);d.query("immune");var values=d.f.getAsJsonArray("immune");return values.get(Math.min(d.immuneCalls++,values.size()-1)).getAsBoolean();}

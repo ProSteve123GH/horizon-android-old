@@ -14,7 +14,7 @@ public final class VanillaDamageImmunityOracle {
         @Override public boolean is(ResourceKey<DamageType> k){if(k!=DamageTypes.ENDER_PEARL)throw new AssertionError();d.event("pearl");return d.flag("pearl");}
         @Override public boolean isCreativePlayer(){d.event("creative");return d.flag("creative");}}
     static final class Rules extends GameRules {Data d;Rules(){super(FeatureFlagSet.of());}@SuppressWarnings("unchecked") @Override public <T>T get(GameRule<T> rule){String n=rule==GameRules.DROWNING_DAMAGE?"drowning":rule==GameRules.FALL_DAMAGE?"fall":rule==GameRules.FIRE_DAMAGE?"fire":rule==GameRules.FREEZE_DAMAGE?"freeze":null;if(n==null)throw new AssertionError();d.event("rule "+n);return (T)Boolean.valueOf(d.flag("rule_"+n));}}
-    static final class Server extends ServerLevel {Data d;Server(){super(null,null,null,null,null,null,false,0L,List.of(),false);}@Override public GameRules getGameRules(){d.event("rules");return d.rules;}}
+    static final class Server extends ServerLevel {Data d;Server(){super(null,null,null,null,null,null,null,false);}@Override public GameRules getGameRules(){d.event("rules");return d.rules;}}
     static final class Connection extends ServerGamePacketListenerImpl {Data d;Connection(){super(null,null,null,null);}@Override public boolean hasClientLoaded(){d.event("loaded");return d.flag("loaded");}}
     static final class Human extends ServerPlayer {Data d;Human(){super(null,null,null,null);}
         @Override public boolean isPermanentlyInvulnerable(){d.event("permanent");return d.flag("permanent");}

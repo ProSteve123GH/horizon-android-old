@@ -38,7 +38,7 @@ public final class VanillaBlockEntityStorageOracle {
     public static void main(String[] args)throws Exception {
         net.minecraft.SharedConstants.tryDetectVersion();net.minecraft.server.Bootstrap.bootStrap();
         Holder<Biome> biome=Holder.Reference.createStandAlone(new HolderOwner<Biome>(){},Biomes.PLAINS);var ids=new IdMapper<Holder<Biome>>();ids.add(biome);
-        factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,Strategy.createForBiomes(ids),biome,null);
+        factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,biome,null,null,Strategy.createForBiomes(ids),null);
         var registries=RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
         var loot=ResourceKey.create(Registries.LOOT_TABLE,Identifier.parse("horizon:storage_probe"));
         ProtoChunk chunk=null;

@@ -31,7 +31,7 @@ public final class VanillaHelmetDamageOracle {
     static final class Level extends ServerLevel {
         RandomSource random;
         VanillaBlockUpdateOracle.Server server;
-        Level() { super(null, null, null, null, null, null, false, 0L, List.of(), false); }
+        Level() { super(null, null, null, null, null, null, null, false); }
         @Override public void broadcastEntityEvent(Entity entity, byte event) {}
         @Override public RandomSource getRandom() { return random; }
         @Override public VanillaBlockUpdateOracle.Server getServer() { return server; }

@@ -39,7 +39,7 @@ public final class VanillaRegistryCollisionScanOracle {
     static final class StepLevel extends net.minecraft.server.level.ServerLevel {
         Trace trace;StepBorder border;List<VoxelShape> entities;CollisionGetter world;CollisionContext context;LevelReader liquidWorld;Collection<Chunk> chunks;
         boolean filterEntities;
-        private StepLevel(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+        private StepLevel(){super(null,null,null,null,null,null,null,false);}
         @Override public boolean containsAnyLiquid(AABB bounds){for(var c:chunks)c.liquidTrace=true;try{return liquidWorld.containsAnyLiquid(bounds);}finally{for(var c:chunks)c.liquidTrace=false;}}
         @Override public net.minecraft.world.level.border.WorldBorder getWorldBorder(){trace.query("border");return border;}
         @Override public List<VoxelShape> getEntityCollisions(net.minecraft.world.entity.Entity entity,AABB bounds){trace.query(boxText("entities",bounds));return filterEntities ? entities.stream().filter(s -> s.bounds().intersects(bounds.inflate(1.0e-7))).toList() : entities;}
@@ -69,7 +69,7 @@ public final class VanillaRegistryCollisionScanOracle {
         net.minecraft.SharedConstants.tryDetectVersion();net.minecraft.server.Bootstrap.bootStrap();Path dir=Path.of(args[1]);
         VanillaHeightmapOracle.bindTags(JsonParser.parseString(Files.readString(dir.resolve("tags.json"))).getAsJsonObject());
         Holder<Biome> biome=Holder.Reference.createStandAlone(new HolderOwner<Biome>(){},Biomes.PLAINS);var ids=new IdMapper<Holder<Biome>>();ids.add(biome);
-        factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,Strategy.createForBiomes(ids),biome,null);
+        factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,biome,null,null,Strategy.createForBiomes(ids),null);
         var allocator=Class.forName("sun.misc.Unsafe");var access=allocator.getDeclaredField("theUnsafe");access.setAccessible(true);var unsafe=access.get(null);var allocate=allocator.getMethod("allocateInstance",Class.class);
         var animation=ShulkerBoxBlockEntity.class.getDeclaredField("animationStatus");animation.setAccessible(true);
         var progress=ShulkerBoxBlockEntity.class.getDeclaredField("progress");progress.setAccessible(true);var previous=ShulkerBoxBlockEntity.class.getDeclaredField("progressOld");previous.setAccessible(true);

@@ -31,7 +31,7 @@ public final class VanillaLivingHealthOracle {
             entityData.set(d.actor,d.stores[0]);dead.setBoolean(d.actor,d.world().get("dead").getAsBoolean());absorption.setFloat(d.actor,single(f.get("absorption")));
             for(var ov:f.getAsJsonArray("ops")){var op=ov.getAsJsonObject();float v=single(op.get("value"));try{switch(op.get("mode").getAsString()){
                 case "heal":d.actor.heal(v);break;case "set":d.actor.setHealth(v);break;case "base":d.actor.base(v);break;case "absorption":d.actor.setAbsorptionAmount(v);break;
-                case "hurt":out.println("bool "+d.actor.isHurt());break;case "dead":out.println("bool "+d.actor.isDeadOrDying());break;
+                case "hurt":out.println("bool "+d.actor.wasHurtRecently());break;case "dead":out.println("bool "+d.actor.isDeadOrDying());break;
                 case "sync":d.stores[d.active].set(healthKey,v,op.get("force").getAsBoolean());break;
                 case "pack":{var packed=d.stores[d.active].packDirty();out.println("packed "+(packed==null?"none":bits((Float)packed.getFirst().value())));break;}
                 default:throw new AssertionError();}out.println("result ok");}catch(Stop e){out.println("result error");}

@@ -42,7 +42,7 @@ public final class VanillaSourceSilenceOracle {
         List<Integer> events;
         GameRules rules;
         List<Orb> orbs;
-        World() { super(null, null, null, null, null, null, false, 0L, List.of(), false); }
+        World() { super(null, null, null, null, null, null, null, false); }
         @Override public GameRules getGameRules() { return rules; }
         @Override public void gameEvent(Entity source, Holder<GameEvent> event, Vec3 at) {}
         @Override public void levelEvent(Entity source, int event, BlockPos at, int data) { events.add(event); }

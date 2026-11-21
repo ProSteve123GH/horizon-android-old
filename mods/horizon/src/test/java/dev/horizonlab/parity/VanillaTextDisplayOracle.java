@@ -16,7 +16,7 @@ import org.joml.*;
 /** Actual accessors/defaults and wire bytes, not a second implementation of their layout. */
 public final class VanillaTextDisplayOracle {
     static final class Level extends net.minecraft.server.level.ServerLevel {
-        Level() { super(null, null, null, null, null, null, false, 0L, List.of(), false); }
+        Level() { super(null, null, null, null, null, null, null, false); }
         @Override public int getNextEntityId() { return 7; }
         @Override public net.minecraft.core.RegistryAccess registryAccess() { return ParityData.access; }
     }

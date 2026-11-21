@@ -95,7 +95,7 @@ public final class VanillaCameraOracle {
         State air;
 
         Level() {
-            super(null, null, null, null, null, null, false, 0L, List.of(), false);
+            super(null, null, null, null, null, null, null, false);
         }
 
         @Override public BlockState getBlockState(BlockPos p) { return cells.getOrDefault(p, air); }

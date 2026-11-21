@@ -66,7 +66,7 @@ public final class VanillaFeatureRegionOracle {
     }
     private static void queryState(WorldGenLevel world, BlockPos p, List<String> tags, PrintWriter out) {
         out.println("query "+p.getX()+" "+p.getY()+" "+p.getZ());
-        try { var fluid=world.getFluidState(p); boolean falling=fluid.hasProperty(FlowingFluid.FALLING)&&fluid.getValue(FlowingFluid.FALLING); out.println("fluid "+BuiltInRegistries.FLUID.getKey(fluid.getType())+" "+fluid.getAmount()+" "+falling+" "+fluid.isFull()+" "+fluid.isSource()); }
+        try { var fluid=world.getFluidState(p); boolean falling=fluid.getType() instanceof FlowingFluid fluid_falling && fluid_falling.isFalling(fluid); out.println("fluid "+BuiltInRegistries.FLUID.getKey(fluid.getType())+" "+fluid.getAmount()+" "+falling+" "+fluid.isFull()+" "+fluid.isSource()); }
         catch(RuntimeException error){out.println("fluid error");}
         try {out.println("water "+world.isWaterAt(p));}catch(RuntimeException error){out.println("water error");}
         var bits=new StringBuilder();
@@ -111,14 +111,14 @@ public final class VanillaFeatureRegionOracle {
         Path dir=Path.of(args[1]);
         Holder<Biome> biome=Holder.Reference.createStandAlone(new HolderOwner<Biome>(){},Biomes.PLAINS);
         var ids=new IdMapper<Holder<Biome>>();ids.add(biome);
-        var factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,Strategy.createForBiomes(ids),biome,null);
+        var factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,biome,null,null,Strategy.createForBiomes(ids),null);
         VanillaHeightmapOracle.bindTags(JsonParser.parseString(Files.readString(dir.resolve("tags.json"))).getAsJsonObject());
         bindFluidTags(JsonParser.parseString(Files.readString(dir.resolve("fluid-tags.json"))).getAsJsonObject());
         var queryTags=new ArrayList<>(new TreeSet<>(JsonParser.parseString(Files.readString(dir.resolve("tags.json"))).getAsJsonObject().keySet()));queryTags.add("horizon:absent");
         var contextMethod=VanillaPlacementOracle.class.getDeclaredMethod("context",JsonObject.class);contextMethod.setAccessible(true);
         var bounds=new JsonObject();bounds.add("context",JsonParser.parseString("[-64,64,0]"));
         var generator=((PlacementContext)contextMethod.invoke(null,bounds)).generator();
-        var ops=RegistryOps.create(JsonOps.INSTANCE,new RegistryOps.RegistryInfoLookup(){public <T> Optional<HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){
+        var ops=RegistryOps.create(JsonOps.INSTANCE,new HolderGetter.Provider(){public <T> Optional<? extends HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){
             if(key.equals(Registries.BLOCK))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(BuiltInRegistries.BLOCK);
             if(key.equals(Registries.FLUID))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(BuiltInRegistries.FLUID);
             return Optional.empty();

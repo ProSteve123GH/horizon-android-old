@@ -19,7 +19,7 @@ public final class VanillaEdgeBackoffOracle {
     }
     static final class Level extends net.minecraft.server.level.ServerLevel {
         Data d;
-        private Level(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+        private Level(){super(null,null,null,null,null,null,null,false);}
         @Override public boolean noCollision(Entity entity,AABB b){d.query(String.format("clear %016x %016x %016x %016x %016x %016x",Double.doubleToLongBits(b.minX),Double.doubleToLongBits(b.minY),Double.doubleToLongBits(b.minZ),Double.doubleToLongBits(b.maxX),Double.doubleToLongBits(b.maxY),Double.doubleToLongBits(b.maxZ)));var values=d.input.getAsJsonArray("clear");int index=d.probes++;return index<values.size()?values.get(index).getAsBoolean():false;}
     }
     static final class Actor extends Player {

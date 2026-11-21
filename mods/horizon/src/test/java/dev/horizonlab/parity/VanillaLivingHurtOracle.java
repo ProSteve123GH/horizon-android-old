@@ -16,7 +16,7 @@ public final class VanillaLivingHurtOracle {
         @Override public boolean is(TagKey<DamageType> tag){String n=tag==DamageTypeTags.IS_FIRE?"fire":tag==DamageTypeTags.IS_FREEZING?"freezing":tag==DamageTypeTags.DAMAGES_HELMET?"damages_helmet":tag==DamageTypeTags.BYPASSES_COOLDOWN?"bypasses_cooldown":tag==DamageTypeTags.NO_IMPACT?"no_impact":tag==DamageTypeTags.NO_KNOCKBACK?"no_knockback":tag==DamageTypeTags.BYPASSES_INVULNERABILITY?"bypasses_invulnerability":null;if(n==null)throw new AssertionError();d.event("tag "+n);return d.flag(n);}
         @Override public boolean is(ResourceKey<DamageType> k){if(k!=DamageTypes.THORNS)throw new AssertionError();d.event("thorns");return false;}
         @Override public Entity getEntity(){d.event("attacker");return null;}}
-    static final class Server extends ServerLevel {Data d;Server(){super(null,null,null,null,null,null,false,0L,List.of(),false);}@Override public void broadcastDamageEvent(Entity a,DamageSource s){d.event("broadcast");}@Override public long getGameTime(){d.event("game-time");return d.op.get("game_time").getAsLong();}}
+    static final class Server extends ServerLevel {Data d;Server(){super(null,null,null,null,null,null,null,false);}@Override public void broadcastDamageEvent(Entity a,DamageSource s){d.event("broadcast");}@Override public long getGameTime(){d.event("game-time");return d.op.get("game_time").getAsLong();}}
     static final class Effect extends MobEffectInstance {Data d;int id;Effect(){super(MobEffects.RESISTANCE);}@Override public void onMobHurt(ServerLevel l,LivingEntity a,DamageSource s,float v){d.event("effect "+id+" "+bits(v));}}
     static final class Actor extends net.minecraft.world.entity.decoration.ArmorStand {Actor(){super(null,null);}
 

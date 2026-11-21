@@ -120,7 +120,7 @@ public final class VanillaLiveAttributeUpdatesOracle {
         void removed(List<MobEffectInstance> es) { super.onEffectsRemoved(es); }
     }
     static final class EffectLevel extends ServerLevel {
-        Data d; EffectLevel() { super(null,null,null,null,null,null,false,0L,List.of(),false); }
+        Data d; EffectLevel() { super(null,null,null,null,null,null,null,false); }
         @Override public boolean isClientSide() { d.event("client"); return d.client; }
         @Override public ServerWaypointManager getWaypointManager() { d.event("manager"); return d.managers[d.manager]; }
     }

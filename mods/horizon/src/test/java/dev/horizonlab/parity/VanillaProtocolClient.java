@@ -1063,8 +1063,7 @@ public final class VanillaProtocolClient {
 
     /** The command tree, one line per top-level command with its subtree. */
     private void commandTree(net.minecraft.network.protocol.game.ClientboundCommandsPacket p) {
-        var context = net.minecraft.commands.CommandBuildContext.simple(ParityData.access, net.minecraft.world.flag.FeatureFlags.VANILLA_SET);
-        var root = p.getRoot(context, new net.minecraft.network.protocol.game.ClientboundCommandsPacket.NodeBuilder<Object>() {
+        var root = p.getRoot(new net.minecraft.network.protocol.game.ClientboundCommandsPacket.NodeBuilder<Object>() {
             @Override
             public com.mojang.brigadier.builder.ArgumentBuilder<Object, ?> createLiteral(String id) {
                 return com.mojang.brigadier.builder.LiteralArgumentBuilder.literal(id);
@@ -1072,7 +1071,8 @@ public final class VanillaProtocolClient {
 
             @Override
             public com.mojang.brigadier.builder.ArgumentBuilder<Object, ?> createArgument(String id, com.mojang.brigadier.arguments.ArgumentType<?> type,
-                net.minecraft.resources.Identifier suggestionId) {
+                net.minecraft.commands.suggestions.CustomSuggestion suggestion) {
+                var suggestionId = suggestion == null ? null : net.minecraft.core.registries.BuiltInRegistries.COMMAND_SUGGESTION_TYPE.getKey(suggestion.serializable().type());
                 return com.mojang.brigadier.builder.RequiredArgumentBuilder.argument(id + ":" + type.getClass().getSimpleName() + ":" + suggestionId, type);
             }
 

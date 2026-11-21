@@ -33,7 +33,7 @@ import net.minecraft.world.phys.Vec3;
 public final class VanillaBoatAuthorityOracle {
     static final class Lvl extends ServerLevel {
         int next;
-        Lvl() { super(null, null, null, null, null, null, false, 0L, List.of(), false); }
+        Lvl() { super(null, null, null, null, null, null, null, false); }
         @Override public boolean isClientSide() { return true; }
         @Override public int getNextEntityId() { return next++; }
         @Override public void gameEvent(net.minecraft.core.Holder<net.minecraft.world.level.gameevent.GameEvent> event, Vec3 position, net.minecraft.world.level.gameevent.GameEvent.Context context) {}

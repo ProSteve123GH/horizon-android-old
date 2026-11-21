@@ -21,7 +21,7 @@ public final class VanillaBlockEventReadinessOracle {
         boolean ticketed;
         boolean ticking;
         int dispatched;
-        World() { super(null, null, null, null, null, null, false, 0L, List.of(), false); }
+        World() { super(null, null, null, null, null, null, null, false); }
         @Override public boolean shouldTickBlocksAt(long chunk) { return ticketed; }
         @Override public boolean isPositionTickingWithEntitiesLoaded(long chunk) { return ticking; }
         @Override public BlockState getBlockState(BlockPos pos) {

@@ -22,8 +22,8 @@ public final class VanillaWorldgenOracle {
         var noises=new net.minecraft.core.MappedRegistry<NormalNoise>(net.minecraft.core.registries.Registries.NOISE,com.mojang.serialization.Lifecycle.stable());
         var densities=new net.minecraft.core.MappedRegistry<net.minecraft.world.level.levelgen.densityfunction.DensityFunction>(net.minecraft.core.registries.Registries.DENSITY_FUNCTION,com.mojang.serialization.Lifecycle.stable());
         var noiseLookup=noises.createRegistrationLookup();var densityLookup=densities.createRegistrationLookup();
-        var ops=net.minecraft.resources.RegistryOps.create(JsonOps.INSTANCE,new net.minecraft.resources.RegistryOps.RegistryInfoLookup() {
-            public <T> java.util.Optional<net.minecraft.core.HolderGetter<T>> lookup(net.minecraft.resources.ResourceKey<? extends net.minecraft.core.Registry<? extends T>> key) {
+        var ops=net.minecraft.resources.RegistryOps.create(JsonOps.INSTANCE,new net.minecraft.core.HolderGetter.Provider() {
+            public <T> java.util.Optional<? extends net.minecraft.core.HolderGetter<T>> lookup(net.minecraft.resources.ResourceKey<? extends net.minecraft.core.Registry<? extends T>> key) {
                 if(key.equals(net.minecraft.core.registries.Registries.NOISE))return (java.util.Optional<net.minecraft.core.HolderGetter<T>>)(java.util.Optional<?>)java.util.Optional.of(noiseLookup);
                 if(key.equals(net.minecraft.core.registries.Registries.DENSITY_FUNCTION))return (java.util.Optional<net.minecraft.core.HolderGetter<T>>)(java.util.Optional<?>)java.util.Optional.of(densityLookup);
                 return java.util.Optional.empty();

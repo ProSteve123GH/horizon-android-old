@@ -72,7 +72,7 @@ public final class VanillaDecorationOracle {
                 try {sorted=FeatureSorter.buildFeaturesPerStep(new ArrayList<>(possible),b->settingsGetter.apply(b).features(),true);}
                 catch(IllegalStateException error){out.println("plan error");continue;}
                 stepsField.set(generator,(Supplier<List<FeatureSorter.StepFeatureData>>)(()->sorted));out.println("plan ok");
-                var factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,Strategy.createForBiomes(ids),holders.get(biomeCount),null);
+                var factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,holders.get(biomeCount),null,null,Strategy.createForBiomes(ids),null);
                 var cp=new ChunkPos(f.get("cx").getAsInt(),f.get("cz").getAsInt());var chunks=new HashMap<ChunkPos,ProtoChunk>();
                 var palettes=f.getAsJsonArray("palettes");int ordinal=0;
                 for(int dz=-1;dz<=1;dz++)for(int dx=-1;dx<=1;dx++) {

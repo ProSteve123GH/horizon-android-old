@@ -54,7 +54,7 @@ public final class VanillaAutoJumpOracle {
 
     static final class AutoLevel extends net.minecraft.server.level.ServerLevel {
         AutoLevel() {
-            super(null, null, null, null, null, null, false, 0L, List.of(), false);
+            super(null, null, null, null, null, null, null, false);
         }
 
         @Override public BlockState getBlockState(BlockPos p) { return chunks.get(key(p.getX() >> 4, p.getZ() >> 4)).getBlockState(p); }

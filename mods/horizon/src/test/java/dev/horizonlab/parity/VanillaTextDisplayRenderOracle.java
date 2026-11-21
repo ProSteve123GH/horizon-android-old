@@ -48,7 +48,7 @@ import org.joml.Matrix4f;
  */
 public final class VanillaTextDisplayRenderOracle {
     static final class Level extends net.minecraft.server.level.ServerLevel {
-        Level() { super(null, null, null, null, null, null, false, 0L, List.of(), false); }
+        Level() { super(null, null, null, null, null, null, null, false); }
         @Override public int getNextEntityId() { return 7; }
         @Override public net.minecraft.core.RegistryAccess registryAccess() { return ParityData.access; }
     }

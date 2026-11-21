@@ -63,7 +63,7 @@ public final class VanillaClientArrowOracle {
         var allocator=Class.forName("sun.misc.Unsafe");var unsafe=field(allocator,"theUnsafe").get(null);var allocate=allocator.getMethod("allocateInstance",Class.class);
         var biome=ParityData.access.lookupOrThrow(Registries.BIOME).getOrThrow(Biomes.PLAINS);
         var ids=new IdMapper<Holder<net.minecraft.world.level.biome.Biome>>();ids.add(biome);
-        factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,Strategy.createForBiomes(ids),biome,null);
+        factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,biome,null,null,Strategy.createForBiomes(ids),null);
         var trace=new Trace();trace.out=new PrintWriter(java.io.OutputStream.nullOutputStream());trace.fail=-1;
         try(var out=new PrintWriter(Files.newBufferedWriter(Path.of(args[1]),StandardCharsets.UTF_8))) {
             for(var line:Files.readAllLines(Path.of(args[0]))) {

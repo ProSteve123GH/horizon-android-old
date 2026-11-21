@@ -14,7 +14,7 @@ public final class VanillaPlayerTravelOracle {
         void query(String s){out.println(s);int n=calls++;if(n==f.get("fail").getAsInt())throw new Stop();if(n==f.get("mutate_at").getAsInt()){velocity=vec(f.get("after_velocity"));try{position.set(actor,vec(f.get("after_position")));}catch(ReflectiveOperationException e){throw new AssertionError(e);}ability.flying=flag("after_flying");}}
         boolean flag(String k){return f.get(k).getAsBoolean();}}
     static final class Ability extends Abilities {Data d;@Override public float getFlyingSpeed(){d.query("ability-speed");return single(d.f.get("speed"));}}
-    static final class Level extends net.minecraft.server.level.ServerLevel {Data d;Level(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+    static final class Level extends net.minecraft.server.level.ServerLevel {Data d;Level(){super(null,null,null,null,null,null,null,false);}
         @Override public FluidState getFluidState(BlockPos p){d.query("fluid "+p.getX()+" "+p.getY()+" "+p.getZ());return (d.flag("empty")?Fluids.EMPTY:Fluids.WATER).defaultFluidState();}}
     static final class Actor extends Player {
         Data d;Actor(){super(null,null);}void configure(Level l){setLevel(l);}

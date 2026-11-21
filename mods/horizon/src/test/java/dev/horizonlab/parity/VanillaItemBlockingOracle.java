@@ -18,7 +18,7 @@ public final class VanillaItemBlockingOracle {
         @Override public Vec3 getSourcePosition(){d.event("source-position");return vec(d.state().get("source"));}
         @Override public boolean is(TagKey<DamageType> tag){if(tag!=DamageTypeTags.IS_PROJECTILE)throw new AssertionError();d.event("projectile");return d.state().get("projectile").getAsBoolean();}}
     static final class Arrow extends net.minecraft.world.entity.projectile.arrow.Arrow {Data d;Arrow(){super(null,null);}@Override public byte getPierceLevel(){d.event("pierce");return d.state().get("pierce").getAsByte();}}
-    static final class Server extends ServerLevel {Data d;int id;Server(){super(null,null,null,null,null,null,false,0L,List.of(),false);}@Override public boolean isClientSide(){d.event("client "+id);return d.state().get("client").getAsBoolean();}}
+    static final class Server extends ServerLevel {Data d;int id;Server(){super(null,null,null,null,null,null,null,false);}@Override public boolean isClientSide(){d.event("client "+id);return d.state().get("client").getAsBoolean();}}
     static final class Actor extends net.minecraft.world.entity.decoration.ArmorStand {Actor(){super(null,null);}
 Data d;
         @Override public ItemStack getItemBlockingWith(){d.event("blocking-item");int id=d.state().get("item").getAsInt();return id<0?null:d.items[id];}

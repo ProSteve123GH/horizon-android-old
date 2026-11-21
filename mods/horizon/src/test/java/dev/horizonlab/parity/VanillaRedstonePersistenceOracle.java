@@ -29,7 +29,7 @@ public final class VanillaRedstonePersistenceOracle {
     static final class World extends net.minecraft.server.level.ServerLevel {
         long time;
         BarrelBlockEntity barrel;
-        World() { super(null, null, null, null, null, null, false, 0L, List.of(), false); }
+        World() { super(null, null, null, null, null, null, null, false); }
         @Override public boolean isClientSide() { return false; }
         @Override public long getGameTime() { return time; }
         @Override public BlockState getBlockState(BlockPos p) {

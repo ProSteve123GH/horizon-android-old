@@ -39,11 +39,11 @@ public final class VanillaMaterialStageOracle {
         biomes=(MappedRegistry<Biome>)field("biomes");ops=(RegistryOps<JsonElement>)field("ops");
         VanillaHeightmapOracle.bindTags(JsonParser.parseString(Files.readString(dir.resolve("block_tags.json"))).getAsJsonObject());
         var ids=new IdMapper<Holder<Biome>>();for(var id:biomes.keySet())ids.add(biome(id.toString()));
-        factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,Strategy.createForBiomes(ids),biome("minecraft:plains"),null);
+        factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,biome("minecraft:plains"),null,null,Strategy.createForBiomes(ids),null);
         var carvers=new MappedRegistry<net.minecraft.world.level.levelgen.carver.WorldCarver>(Registries.CARVER,Lifecycle.stable());
         var carverJson=JsonParser.parseString(Files.readString(dir.resolve("carvers.json"))).getAsJsonObject();
         for(var e:carverJson.entrySet())carvers.register(ResourceKey.create(Registries.CARVER,Identifier.parse(e.getKey())),net.minecraft.world.level.levelgen.carver.WorldCarver.DIRECT_CODEC.parse(JsonOps.INSTANCE,JsonParser.parseString(e.getValue().getAsString())).getOrThrow(),RegistrationInfo.BUILT_IN);carvers.freeze();
-        var carverOps=RegistryOps.create(JsonOps.INSTANCE,new RegistryOps.RegistryInfoLookup(){public <T> Optional<HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){if(key.equals(Registries.CARVER))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(carvers);return Optional.empty();}});
+        var carverOps=RegistryOps.create(JsonOps.INSTANCE,new HolderGetter.Provider(){public <T> Optional<? extends HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){if(key.equals(Registries.CARVER))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(carvers);return Optional.empty();}});
         var generationField=Biome.class.getDeclaredField("generationSettings");generationField.setAccessible(true);var biomeJson=JsonParser.parseString(Files.readString(dir.resolve("biomes.json"))).getAsJsonObject();
         for(var e:biomeJson.entrySet()) {
             var config=new JsonObject();config.add("carvers",JsonParser.parseString(e.getValue().getAsString()).getAsJsonObject().get("carvers"));config.add("features",new JsonArray());
@@ -54,7 +54,7 @@ public final class VanillaMaterialStageOracle {
     private static RegistryOps<JsonElement> biomeOps() {
         var presets=new MappedRegistry<MultiNoiseBiomeSourceParameterList>(Registries.MULTI_NOISE_BIOME_SOURCE_PARAMETER_LIST,Lifecycle.stable());
         for(var preset:List.of(MultiNoiseBiomeSourceParameterList.Preset.OVERWORLD,MultiNoiseBiomeSourceParameterList.Preset.NETHER))presets.register(ResourceKey.create(Registries.MULTI_NOISE_BIOME_SOURCE_PARAMETER_LIST,preset.id()),new MultiNoiseBiomeSourceParameterList(preset,biomes),RegistrationInfo.BUILT_IN);presets.freeze();
-        return RegistryOps.create(JsonOps.INSTANCE,new RegistryOps.RegistryInfoLookup(){public <T> Optional<HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){
+        return RegistryOps.create(JsonOps.INSTANCE,new HolderGetter.Provider(){public <T> Optional<? extends HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){
             if(key.equals(Registries.BIOME))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(biomes);
             if(key.equals(Registries.MULTI_NOISE_BIOME_SOURCE_PARAMETER_LIST))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(presets);return Optional.empty();}});
     }

@@ -133,7 +133,7 @@ public final class VanillaBlockUpdateOracle {
         Server server;
         boolean raining, thundering;
         World() {
-            super(null, null, null, null, null, null, false, 0L, List.of(), false);
+            super(null, null, null, null, null, null, null, false);
         }
         java.util.LinkedHashSet<String> blockEvents;
         void emit(String line) {

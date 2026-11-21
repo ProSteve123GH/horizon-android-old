@@ -34,7 +34,7 @@ public final class VanillaMovementEmissionOracle {
         @Override public boolean is(Block block){if(block!=Blocks.POWDER_SNOW)throw new AssertionError(block);d.query("powder "+id);return flag("powder");}
     }
     static final class Level extends net.minecraft.server.level.ServerLevel {
-        Data d;Level(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+        Data d;Level(){super(null,null,null,null,null,null,null,false);}
         @Override public BlockState getBlockState(BlockPos p){d.query("state "+pos(p));return d.states[1];}
         @Override public void gameEvent(Holder<GameEvent> e,Vec3 p,GameEvent.Context c){if(e!=GameEvent.STEP||c.sourceEntity()!=d.actor)throw new AssertionError();d.query(String.format("step %d %016x %016x %016x",((State)c.affectedState()).id,Double.doubleToLongBits(p.x),Double.doubleToLongBits(p.y),Double.doubleToLongBits(p.z)));d.mutate();}
     }

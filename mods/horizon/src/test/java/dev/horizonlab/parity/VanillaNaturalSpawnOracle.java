@@ -138,7 +138,7 @@ public final class VanillaNaturalSpawnOracle {
     }
 
     static final class Lvl extends ServerLevel {
-        Lvl() { super(null, null, null, null, null, null, false, 0L, List.of(), false); }
+        Lvl() { super(null, null, null, null, null, null, null, false); }
         RegistryAccess registries;
         net.minecraft.server.MinecraftServer fake;
         @Override public net.minecraft.server.MinecraftServer getServer() { return fake; }

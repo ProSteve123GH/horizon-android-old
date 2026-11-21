@@ -57,7 +57,7 @@ public final class VanillaDispenserOracle {
             case 1009 -> data == 0 ? "minecraft:block.fire.extinguish" : data == 1 ? "minecraft:block.generic.extinguish_fire" : null;
             case 2001 -> {
                 BlockState state = Block.stateById(data);
-                yield state.isAir() ? null : state.getSoundType().getBreakSound().location().toString();
+                yield state.isAir() ? null : VanillaBlockBehaviourExporter.soundSet(state).breakSound().map(h -> h.value().location().toString()).orElse(null);
             }
             default -> null;
         };

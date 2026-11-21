@@ -52,7 +52,7 @@ public final class VanillaStructurePlacementOracle {
      */
     private static final class NoEntityLevel extends net.minecraft.server.level.ServerLevel {
         private NoEntityLevel() {
-            super(null, null, null, null, null, null, false, 0L, null, false);
+            super(null, null, null, null, null, null, null, false);
         }
         static long seed;
         @Override
@@ -190,7 +190,7 @@ public final class VanillaStructurePlacementOracle {
                         case "environmentAttributes":return attributes[0];
                         case "getBiome":return zoom[0].getBiome((BlockPos)values[0]);
                         case "getNoiseBiome":{int qx=(Integer)values[0],qy=(Integer)values[1],qz=(Integer)values[2];return chunkAt.apply(qx>>2,qz>>2).getNoiseBiome(qx,qy,qz);}
-                        case "getUncachedNoiseBiome":return uncached.createResolver(climate).getNoiseBiome((Integer)values[0],(Integer)values[1],(Integer)values[2]);
+                        case "getUncachedNoiseBiome","getUncachedBiome":return uncached.createResolver(climate).getNoiseBiome((Integer)values[0],(Integer)values[1],(Integer)values[2]);
                         case "setCurrentlyGenerating","scheduleTick","blockUpdated","updateNeighborsAt","gameEvent","playSound","levelEvent","addParticle":return null;
                         case "addFreshEntity":return true;
                         case "addFreshEntityWithPassengers":return null;

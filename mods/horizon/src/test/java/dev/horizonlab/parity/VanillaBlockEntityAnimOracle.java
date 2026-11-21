@@ -100,7 +100,7 @@ public final class VanillaBlockEntityAnimOracle {
 
     /** The stand-in client level. */
     static final class World extends Level {
-        World() { super(null, null, null, null, false, false, 0L, 0); }
+        World() { super(null, null, null, null, false, 0); }
         long time;
         boolean server;
         int minY, height;
@@ -166,7 +166,7 @@ public final class VanillaBlockEntityAnimOracle {
 @Override public net.minecraft.world.level.storage.LevelData.RespawnData getRespawnData(){throw new UnsupportedOperationException();}
 @Override public net.minecraft.world.scores.Scoreboard getScoreboard(){throw new UnsupportedOperationException();}
 @Override public int getSeaLevel(){throw new UnsupportedOperationException();}
-@Override public net.minecraft.core.Holder getUncachedNoiseBiome(int p0,int p1,int p2){throw new UnsupportedOperationException();}
+@Override public net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome> getUncachedBiome(int p0,int p1,int p2){throw new UnsupportedOperationException();}
 @Override public net.minecraft.world.level.border.WorldBorder getWorldBorder(){throw new UnsupportedOperationException();}
 @Override public void levelEvent(net.minecraft.world.entity.Entity p0,int p1,net.minecraft.core.BlockPos p2,int p3){throw new UnsupportedOperationException();}
 @Override public void playSeededSound(net.minecraft.world.entity.Entity p0,net.minecraft.world.entity.Entity p1,net.minecraft.core.Holder p2,net.minecraft.sounds.SoundSource p3,float p4,float p5,long p6){throw new UnsupportedOperationException();}

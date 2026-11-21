@@ -26,7 +26,7 @@ public final class VanillaBiomeGenerationOracle {
         var bundle=JsonParser.parseString(Files.readString(dir.resolve("registries.json"))).getAsJsonObject();
         var noises=new MappedRegistry<NormalNoise>(Registries.NOISE,Lifecycle.stable());var densities=new MappedRegistry<DensityFunction>(Registries.DENSITY_FUNCTION,Lifecycle.stable());
         var noiseLookup=noises.createRegistrationLookup();var densityLookup=densities.createRegistrationLookup();
-        var ops=RegistryOps.create(JsonOps.INSTANCE,new RegistryOps.RegistryInfoLookup(){public <T> Optional<HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){
+        var ops=RegistryOps.create(JsonOps.INSTANCE,new HolderGetter.Provider(){public <T> Optional<? extends HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){
             if(key.equals(Registries.NOISE))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(noiseLookup);
             if(key.equals(Registries.DENSITY_FUNCTION))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(densityLookup);return Optional.empty();}});
         for(var e:bundle.getAsJsonObject("noises").entrySet())noises.register(ResourceKey.create(Registries.NOISE,Identifier.parse(e.getKey())),NormalNoise.DIRECT_CODEC.parse(ops,JsonParser.parseString(e.getValue().getAsString())).getOrThrow(),RegistrationInfo.BUILT_IN);noises.freeze();
@@ -35,7 +35,7 @@ public final class VanillaBiomeGenerationOracle {
         var ids=new IdMapper<Holder<Biome>>();var holders=new TreeMap<String,Holder<Biome>>();
         var keys=new TreeSet<String>();keys.add("minecraft:plains");keys.addAll(List.of("horizon:old_0","horizon:old_1","horizon:old_2"));keys.addAll(List.of("minecraft:the_end","minecraft:end_highlands","minecraft:end_midlands","minecraft:small_end_islands","minecraft:end_barrens"));for(var list:presets.values())for(var entry:list.values())keys.add(entry.getSecond().identifier().toString());
         for(var key:keys){var holder=Holder.Reference.<Biome>createStandAlone(new HolderOwner<Biome>(){},ResourceKey.create(Registries.BIOME,Identifier.parse(key)));holders.put(key,holder);ids.add(holder);}
-        var factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,Strategy.createForBiomes(ids),holders.get("minecraft:plains"),null);
+        var factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,holders.get("minecraft:plains"),null,null,Strategy.createForBiomes(ids),null);
         var fill=ChunkGenerator.class.getDeclaredMethod("doCreateBiomes",Blender.class,RandomState.class,ChunkAccess.class);fill.setAccessible(true);
         try(var out=new PrintWriter(Files.newBufferedWriter(dir.resolve(args[0]+".txt"),StandardCharsets.UTF_8))) {
             for(var line:Files.readAllLines(dir.resolve("inputs.txt"))) {

@@ -12,7 +12,7 @@ public final class VanillaSwimmingOracle {
         boolean swimming(){query("swimming");return swimming;}boolean water(){query("water");return water;}boolean sprint(){query("sprint");return sprint;}boolean passenger(){query("passenger");return passenger;}
         void set(boolean v){query("set "+v);swimming=v;}
     }
-    static final class World extends net.minecraft.server.level.ServerLevel {Data d;FluidState fluid;World(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+    static final class World extends net.minecraft.server.level.ServerLevel {Data d;FluidState fluid;World(){super(null,null,null,null,null,null,null,false);}
         @Override public FluidState getFluidState(BlockPos p){d.query("fluid "+pos(p));return fluid;}
     }
     static final class Actor extends Marker {Data d;Actor(){super(null,null);}

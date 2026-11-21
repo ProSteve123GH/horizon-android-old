@@ -40,7 +40,7 @@ public final class VanillaFireStarterSoundOracle {
     static final class World extends ServerLevel {
         BlockState state = Blocks.AIR.defaultBlockState();
         World() {
-            super(null, null, null, null, null, null, false, 0L, List.of(), false);
+            super(null, null, null, null, null, null, null, false);
         }
         @Override public BlockState getBlockState(BlockPos p) {
             return p.equals(POS) ? state : Blocks.AIR.defaultBlockState();

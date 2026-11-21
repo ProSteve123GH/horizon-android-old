@@ -67,7 +67,7 @@ public final class VanillaEntityDeathLootOracle {
     }
 
     static final class Lvl extends ServerLevel {
-        Lvl() { super(null, null, null, null, null, null, false, 0L, List.of(), false); }
+        Lvl() { super(null, null, null, null, null, null, null, false); }
         MinecraftServer fake;
         RegistryAccess registries;
         GameRules rules;

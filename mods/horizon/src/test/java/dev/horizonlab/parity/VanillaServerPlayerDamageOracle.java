@@ -17,7 +17,7 @@ public final class VanillaServerPlayerDamageOracle {
         @Override public boolean is(TagKey<DamageType> tag){String n=tag==DamageTypeTags.BYPASSES_ARMOR?"armor":tag==DamageTypeTags.BYPASSES_EFFECTS?"effects":tag==DamageTypeTags.BYPASSES_RESISTANCE?"resistance":tag==DamageTypeTags.BYPASSES_ENCHANTMENTS?"enchantments":null;if(n==null)throw new AssertionError();d.event("bypass "+n);return d.op.get("bypass_"+n).getAsBoolean();}
         @Override public ItemStack getWeaponItem(){d.event("weapon");return d.op.get("weapon").getAsBoolean()?ItemStack.EMPTY:null;}
         @Override public float getFoodExhaustion(){d.event("food-exhaustion");return single(d.op.get("food_exhaustion"));}}
-    static final class Server extends ServerLevel {Data d;Server(){super(null,null,null,null,null,null,false,0L,List.of(),false);}@Override public boolean isClientSide(){d.event("client");return d.op.get("client").getAsBoolean();}}
+    static final class Server extends ServerLevel {Data d;Server(){super(null,null,null,null,null,null,null,false);}@Override public boolean isClientSide(){d.event("client");return d.op.get("client").getAsBoolean();}}
     static final class Tracker extends CombatTracker {Data d;Tracker(){super(null);}@Override public void recordDamage(DamageSource s,float v){d.event("record "+bits(v));d.recorded=v;}}
     static final class Actor extends ServerPlayer {Data d;Actor(){super(null,null,null,null);}
         @Override public boolean isInvulnerableTo(ServerLevel l,DamageSource s){d.event("invulnerable");return d.op.get("invulnerable").getAsBoolean();}

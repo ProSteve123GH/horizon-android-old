@@ -32,7 +32,7 @@ public final class VanillaCrackFeedbackOracle {
     static final class Level extends ServerLevel {
         State state;
         List<Integer> stages;
-        Level() { super(null, null, null, null, null, null, false, 0L, List.of(), false); }
+        Level() { super(null, null, null, null, null, null, null, false); }
         @Override public BlockState getBlockState(BlockPos pos) { return state; }
         @Override public void destroyBlockProgress(int id, BlockPos pos, int stage) {
             stages.add(stage < 0 ? 255 : stage);

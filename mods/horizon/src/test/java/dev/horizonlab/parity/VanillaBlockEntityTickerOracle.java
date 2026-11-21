@@ -67,7 +67,7 @@ public final class VanillaBlockEntityTickerOracle {
         TickRateManager rate;
         LevelDebugSynchronizers debug;
         World() {
-            super(null, null, null, null, null, null, false, 0L, List.of(), false);
+            super(null, null, null, null, null, null, null, false);
         }
         @Override public boolean isClientSide() { return false; }
         @Override public TickRateManager tickRateManager() { return rate; }

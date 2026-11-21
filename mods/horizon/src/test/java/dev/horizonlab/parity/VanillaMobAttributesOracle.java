@@ -15,7 +15,7 @@ import net.minecraft.server.level.ServerLevel;
  */
 public final class VanillaMobAttributesOracle {
     static final class Level extends ServerLevel {
-        Level() { super(null, null, null, null, null, null, false, 0L, java.util.List.of(), false); }
+        Level() { super(null, null, null, null, null, null, null, false); }
         net.minecraft.server.MinecraftServer fake;
         @Override public net.minecraft.server.MinecraftServer getServer() { return fake; }
         net.minecraft.core.RegistryAccess registries;

@@ -69,7 +69,7 @@ public final class VanillaBlockPlacementOracle {
         RandomSource random;
         boolean obstructed;
         World() {
-            super(null, null, null, null, null, null, false, 0L, List.of(), false);
+            super(null, null, null, null, null, null, null, false);
         }
         @Override public BlockState getBlockState(BlockPos p) { return cells.getOrDefault(p, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()); }
         @Override public FluidState getFluidState(BlockPos p) { return getBlockState(p).getFluidState(); }

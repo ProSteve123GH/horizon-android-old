@@ -45,7 +45,7 @@ public final class VanillaSceneCollisionOracle {
         if(radius<1||radius>16)throw new AssertionError("invalid scene radius");
         Holder<Biome> biome=Holder.Reference.createStandAlone(new HolderOwner<Biome>(){},Biomes.PLAINS);
         var ids=new IdMapper<Holder<Biome>>();ids.add(biome);
-        factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,Strategy.createForBiomes(ids),biome,null);
+        factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,biome,null,null,Strategy.createForBiomes(ids),null);
         var chunks=new HashMap<Long,Chunk>();
         String[] names={"bedrock","dirt","stone","sand","oak_planks","bricks"};
         BlockState[] materials=Arrays.stream(names).map(VanillaSceneCollisionOracle::state).toArray(BlockState[]::new);

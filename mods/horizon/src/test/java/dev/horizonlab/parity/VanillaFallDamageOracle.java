@@ -29,7 +29,7 @@ public final class VanillaFallDamageOracle {
     static final class State extends BlockState {Block block;State(){super(null,null,null);}@Override public Block getBlock(){return block;}}
     static final class Level extends net.minecraft.server.level.ServerLevel {
         Data d;BlockState queried;
-        private Level(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+        private Level(){super(null,null,null,null,null,null,null,false);}
         @Override public BlockState getBlockState(BlockPos p){d.query("state "+p.getX()+" "+p.getY()+" "+p.getZ());return queried;}
         @Override public void gameEvent(Holder<GameEvent> event,Vec3 p,GameEvent.Context context){if(event!=GameEvent.HIT_GROUND)throw new AssertionError(event);d.query(String.format("hit-ground %016x %016x %016x %s",Double.doubleToLongBits(p.x),Double.doubleToLongBits(p.y),Double.doubleToLongBits(p.z),context.affectedState()==queried?"queried":"input"));}
     }

@@ -25,7 +25,7 @@ public final class VanillaExplosionItemsOracle {
         int next;
         GameRules rules;
         List<ItemEntity> items;
-        Lvl() { super(null, null, null, null, null, null, false, 0L, List.of(), false); }
+        Lvl() { super(null, null, null, null, null, null, null, false); }
         @Override public int getNextEntityId() { return next++; }
         @Override public RegistryAccess registryAccess() { return ParityData.access; }
         @Override public GameRules getGameRules() { return rules; }

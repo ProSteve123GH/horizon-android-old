@@ -58,7 +58,7 @@ public final class VanillaSpawnRulesOracle {
     }
 
     static final class Lvl extends ServerLevel {
-        Lvl() { super(null, null, null, null, null, null, false, 0L, List.of(), false); }
+        Lvl() { super(null, null, null, null, null, null, null, false); }
         RegistryAccess registries;
         Map<Integer, BlockState> column = new HashMap<>();
         int x0, z0, sky, block, darken, sea, surface;

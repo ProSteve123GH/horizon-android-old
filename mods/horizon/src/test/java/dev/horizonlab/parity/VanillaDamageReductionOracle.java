@@ -16,7 +16,7 @@ public final class VanillaDamageReductionOracle {
         @Override public boolean is(TagKey<DamageType> tag){String n=tag==DamageTypeTags.BYPASSES_ARMOR?"armor":tag==DamageTypeTags.BYPASSES_EFFECTS?"effects":tag==DamageTypeTags.BYPASSES_RESISTANCE?"resistance":tag==DamageTypeTags.BYPASSES_ENCHANTMENTS?"enchantments":null;if(n==null)throw new AssertionError();d.query("bypass "+n);return d.state().get("bypass_"+n).getAsBoolean();}
         @Override public ItemStack getWeaponItem(){d.query("weapon");return d.state().get("weapon").getAsBoolean()?ItemStack.EMPTY:null;}
         @Override public Entity getEntity(){d.query("attacker");return switch(d.f.get("attacker").getAsInt()){case 0->null;case 1->d.other;case 2->d.attacker;default->throw new AssertionError();};}}
-    static final class Server extends ServerLevel {Server(){super(null,null,null,null,null,null,false,0L,List.of(),false);}}
+    static final class Server extends ServerLevel {Server(){super(null,null,null,null,null,null,null,false);}}
     static final class Actor extends net.minecraft.world.entity.decoration.ArmorStand {Actor(){super(null,null);}
 
         Data d;

@@ -12,7 +12,7 @@ import net.minecraft.world.phys.Vec3;
 /** Real trident construction and ServerEntity pairing/updates; only the level ID allocator and packet delivery are fixture boundaries. */
 public final class VanillaLateEntityPairOracle {
     static class World extends ServerLevel {
-        World() { super(null,null,null,null,null,null,false,0L,List.of(),false); }
+        World() { super(null,null,null,null,null,null,null,false); }
         @Override public int getNextEntityId() { return 37; }
     }
     static List<Packet<? super ClientGamePacketListener>> packets = new ArrayList<>();

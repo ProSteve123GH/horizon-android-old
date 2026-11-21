@@ -75,7 +75,7 @@ public final class VanillaChunkGenerationOracle {
 
     private static final class OracleLevel extends ServerLevel {
         private OracleLevel() {
-            super(null, null, null, null, null, null, false, 0L, null, false);
+            super(null, null, null, null, null, null, null, false);
         }
         static long seed;
         static int nextEntityId;

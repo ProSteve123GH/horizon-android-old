@@ -26,7 +26,7 @@ public final class VanillaBiomeSourceCodecOracle {
         var field=VanillaMaterialConditionOracle.class.getDeclaredField("biomes");field.setAccessible(true);var biomes=(MappedRegistry<Biome>)field.get(null);
         var presets=new MappedRegistry<MultiNoiseBiomeSourceParameterList>(Registries.MULTI_NOISE_BIOME_SOURCE_PARAMETER_LIST,Lifecycle.stable());
         for(var preset:List.of(MultiNoiseBiomeSourceParameterList.Preset.OVERWORLD,MultiNoiseBiomeSourceParameterList.Preset.NETHER))presets.register(ResourceKey.create(Registries.MULTI_NOISE_BIOME_SOURCE_PARAMETER_LIST,preset.id()),new MultiNoiseBiomeSourceParameterList(preset,biomes),RegistrationInfo.BUILT_IN);presets.freeze();
-        var ops=RegistryOps.create(JsonOps.INSTANCE,new RegistryOps.RegistryInfoLookup(){public <T> Optional<HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){
+        var ops=RegistryOps.create(JsonOps.INSTANCE,new HolderGetter.Provider(){public <T> Optional<? extends HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){
             if(key.equals(Registries.BIOME))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(biomes);
             if(key.equals(Registries.MULTI_NOISE_BIOME_SOURCE_PARAMETER_LIST))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(presets);return Optional.empty();}});
         var positions=JsonParser.parseString(Files.readString(dir.resolve("positions.json"))).getAsJsonArray();

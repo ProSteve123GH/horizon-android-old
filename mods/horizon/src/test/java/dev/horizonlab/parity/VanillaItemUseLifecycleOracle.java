@@ -13,7 +13,7 @@ public final class VanillaItemUseLifecycleOracle {
         void event(String name){out.println(name);int n=calls++;if(n==f.get("fail").getAsInt())throw new Stop();if(n==f.get("mutate_at").getAsInt()){changed=true;reset();}}
         int id(ItemStack s){for(int i=0;i<items.length;i++)if(items[i]==s)return i;throw new AssertionError();}
         String snapshot(){try{return id((ItemStack)useItem.get(actor))+" "+remaining.getInt(actor)+" "+(kinetic.get(actor)!=null)+" "+using+" "+id(hands[0])+" "+id(hands[1])+" "+calls+" "+changed;}catch(Exception e){throw new AssertionError(e);}}}
-    static final class Server extends ServerLevel {Data d;int id;Server(){super(null,null,null,null,null,null,false,0L,List.of(),false);}@Override public boolean isClientSide(){d.event("client "+id);return d.state().getAsJsonArray("clients").get(id).getAsBoolean();}}
+    static final class Server extends ServerLevel {Data d;int id;Server(){super(null,null,null,null,null,null,null,false);}@Override public boolean isClientSide(){d.event("client "+id);return d.state().getAsJsonArray("clients").get(id).getAsBoolean();}}
     static final class CustomItem extends Item {Data d;int id;CustomItem(){super(null);}
         @Override public void onUseTick(Level l,LivingEntity a,ItemStack s,int remaining){d.event("tick "+id+" "+d.id(s)+" "+((Server)l).id+" "+remaining);}
         @Override public boolean useOnRelease(ItemStack s){d.event("release-query "+id+" "+d.id(s));return d.state().getAsJsonArray("releases").get(id).getAsBoolean();}

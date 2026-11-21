@@ -15,7 +15,7 @@ public final class VanillaGroundStateOracle {
     static Optional<BlockPos> position(JsonElement v){if(v.isJsonNull())return Optional.empty();var a=v.getAsJsonArray();return Optional.of(new BlockPos(a.get(0).getAsInt(),a.get(1).getAsInt(),a.get(2).getAsInt()));}
     static final class Level extends net.minecraft.server.level.ServerLevel {
         JsonObject op;PrintWriter out;int calls;
-        private Level(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+        private Level(){super(null,null,null,null,null,null,null,false);}
         @Override public Optional<BlockPos> findSupportingBlock(Entity entity,AABB b){out.printf("find %016x %016x %016x %016x %016x %016x%n",Double.doubleToLongBits(b.minX),Double.doubleToLongBits(b.minY),Double.doubleToLongBits(b.minZ),Double.doubleToLongBits(b.maxX),Double.doubleToLongBits(b.maxY),Double.doubleToLongBits(b.maxZ));int call=calls++;if(call==op.get("fail").getAsInt())throw new Stop();return position(op.getAsJsonArray("results").get(call));}
     }
     static final class Actor extends Marker {Actor(){super(null,null);}void configure(Level level){setLevel(level);}}

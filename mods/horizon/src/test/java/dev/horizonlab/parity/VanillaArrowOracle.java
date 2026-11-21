@@ -72,7 +72,7 @@ public final class VanillaArrowOracle {
     static final class Level extends net.minecraft.server.level.ServerLevel {
         Map<Long,Chunk> chunks;WorldBorder border;net.minecraft.util.RandomSource rng;List<String> events;net.minecraft.server.MinecraftServer server;
         static final net.minecraft.world.attribute.EnvironmentAttributeSystem ATTRIBUTES=net.minecraft.world.attribute.EnvironmentAttributeSystem.builder().build();
-        Level(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+        Level(){super(null,null,null,null,null,null,null,false);}
         @Override public net.minecraft.world.attribute.EnvironmentAttributeSystem environmentAttributes(){return ATTRIBUTES;}
         @Override public boolean isClientSide(){return false;}
         @Override public int getNextEntityId(){return 1;}

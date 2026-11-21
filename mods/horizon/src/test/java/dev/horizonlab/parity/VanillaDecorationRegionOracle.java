@@ -46,7 +46,7 @@ public final class VanillaDecorationRegionOracle {
                     }
                     public Optional<HolderSet.Named<Biome>> get(net.minecraft.tags.TagKey<Biome> key) {return Optional.empty();}
                 };
-                var ops=RegistryOps.create(JsonOps.INSTANCE,new RegistryOps.RegistryInfoLookup(){public <T> Optional<HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){
+                var ops=RegistryOps.create(JsonOps.INSTANCE,new HolderGetter.Provider(){public <T> Optional<? extends HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){
                     return key.equals(Registries.BIOME)?(Optional<HolderGetter<T>>)(Optional<?>)Optional.of(biomeLookup):Optional.empty();
                 }});
                 var bounds=new JsonObject();bounds.add("context",JsonParser.parseString("[-64,384,63]"));
@@ -76,7 +76,7 @@ public final class VanillaDecorationRegionOracle {
                 try {sorted=FeatureSorter.buildFeaturesPerStep(new ArrayList<>(possible),b->settingsGetter.apply(b).features(),true);}
                 catch(IllegalStateException error){out.println("plan error");continue;}
                 stepsField.set(generator,(Supplier<List<FeatureSorter.StepFeatureData>>)(()->sorted));out.println("plan ok");
-                var factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,Strategy.createForBiomes(ids),holders.get(biomeCount),null);
+                var factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,holders.get(biomeCount),null,null,Strategy.createForBiomes(ids),null);
                 var cp=new ChunkPos(f.get("cx").getAsInt(),f.get("cz").getAsInt());var chunks=new TreeMap<ChunkPos,ProtoChunk>(Comparator.<ChunkPos>comparingInt(p->p.x()).thenComparingInt(p->p.z()));
                 var palettes=f.getAsJsonArray("palettes");int ordinal=0;
                 for(int dz=-1;dz<=1;dz++)for(int dx=-1;dx<=1;dx++) {

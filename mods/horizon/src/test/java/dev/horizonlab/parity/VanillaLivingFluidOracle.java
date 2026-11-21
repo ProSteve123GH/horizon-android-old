@@ -17,7 +17,7 @@ public final class VanillaLivingFluidOracle {
         boolean sequence(String k,int n){var a=f.getAsJsonArray(k);return a.get(Math.min(n,a.size()-1)).getAsBoolean();}}
     static final class FrictionBlock extends Block {Data d;FrictionBlock(){super(BlockBehaviour.Properties.of());}@Override public float getFriction(){d.query("friction");return single(d.f.get("friction"));}}
     static final class State extends BlockState {Block block;State(){super(null,null,null);}@Override public Block getBlock(){return block;}}
-    static final class Level extends net.minecraft.server.level.ServerLevel {Data d;BlockState state;Level(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+    static final class Level extends net.minecraft.server.level.ServerLevel {Data d;BlockState state;Level(){super(null,null,null,null,null,null,null,false);}
         @Override public BlockState getBlockState(BlockPos p){d.query("state "+p.getX()+" "+p.getY()+" "+p.getZ());return state;}
         @Override public boolean isClientSide(){d.query("client");return d.flag("client");}
         @Override public boolean hasChunkAt(BlockPos p){d.query("chunk "+p.getX()+" "+p.getY()+" "+p.getZ());return d.flag("chunk");}

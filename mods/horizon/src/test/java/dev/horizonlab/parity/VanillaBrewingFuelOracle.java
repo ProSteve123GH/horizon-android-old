@@ -21,7 +21,7 @@ import net.minecraft.world.level.storage.loot.LootContext;
 public final class VanillaBrewingFuelOracle {
     static LootContext context;
     static final class World extends ServerLevel {
-        World() { super(null, null, null, null, null, null, false, 0L, List.of(), false); }
+        World() { super(null, null, null, null, null, null, null, false); }
         @Override public void blockEntityChanged(BlockPos pos) {}
         @Override public void updateNeighbourForOutputSignal(BlockPos pos, Block block) {}
     }

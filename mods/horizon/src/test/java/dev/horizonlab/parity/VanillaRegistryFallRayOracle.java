@@ -37,7 +37,7 @@ public final class VanillaRegistryFallRayOracle {
         @SuppressWarnings("unchecked") @Override public <T>T get(GameRule<T> rule){if(rule!=GameRules.PLAYERS_NETHER_PORTAL_DEFAULT_DELAY)throw new AssertionError();d.query("portal-delay");return (T)Integer.valueOf(d.f.get("delay").getAsInt());}
     }
     static final class ServerWorld extends net.minecraft.server.level.ServerLevel {
-        Data d;ServerWorld(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+        Data d;ServerWorld(){super(null,null,null,null,null,null,null,false);}
         @Override public BlockState getBlockState(BlockPos p){return d.block(p);}
         @Override public FluidState getFluidState(BlockPos p){return d.fluid(p);}
         @Override public GameRules getGameRules(){d.query("rules");return d.rules;}

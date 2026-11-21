@@ -47,11 +47,11 @@ public final class VanillaActiveEffectTickOracle {
   @Override public Level level(){d.event("level");return d.levels[n(d.config(),"level")];}
   @Override public MobEffectInstance getEffect(Holder<MobEffect> e){d.event("get "+d.key(e));return super.getEffect(e);}
  }
- static final class EffectLevel extends ServerLevel{Data d;int id;EffectLevel(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+ static final class EffectLevel extends ServerLevel{Data d;int id;EffectLevel(){super(null,null,null,null,null,null,null,false);}
  @Override public void addParticle(ParticleOptions p,double x,double y,double z,double dx,double dy,double dz){if(dx!=1||dy!=1||dz!=1)throw new AssertionError();d.event("particle "+id+" "+particles.indexOf(p)+" "+Long.toUnsignedString(Double.doubleToLongBits(x))+" "+Long.toUnsignedString(Double.doubleToLongBits(y))+" "+Long.toUnsignedString(Double.doubleToLongBits(z)));}
  @Override public void playSound(Entity excluded,BlockPos p,SoundEvent sound,SoundSource category,float volume,float pitch){if(excluded!=null||volume!=1||pitch!=1)throw new AssertionError();int s=sound==SoundEvents.GENERIC_EAT.value()?0:sound==SoundEvents.PLAYER_BURP?1:-1;if(s<0)throw new AssertionError();d.event("sound "+id+" "+p.getX()+" "+p.getY()+" "+p.getZ()+" "+s+" "+category.ordinal());}
  @Override public boolean isClientSide(){d.event("client "+id);return d.config().get("client").getAsBoolean();}}
- static final class ClientEffectLevel extends Level {Data d;int id;ClientEffectLevel(){super(null,null,null,null,false,false,0L,0);}
+ static final class ClientEffectLevel extends Level {Data d;int id;ClientEffectLevel(){super(null,null,null,null,false,0);}
  @Override public void addParticle(ParticleOptions p,double x,double y,double z,double dx,double dy,double dz){if(dx!=1||dy!=1||dz!=1)throw new AssertionError();d.event("particle "+id+" "+particles.indexOf(p)+" "+Long.toUnsignedString(Double.doubleToLongBits(x))+" "+Long.toUnsignedString(Double.doubleToLongBits(y))+" "+Long.toUnsignedString(Double.doubleToLongBits(z)));}
  @Override public void playSound(Entity excluded,BlockPos p,SoundEvent sound,SoundSource category,float volume,float pitch){if(excluded!=null||volume!=1||pitch!=1)throw new AssertionError();int s=sound==SoundEvents.GENERIC_EAT.value()?0:sound==SoundEvents.PLAYER_BURP?1:-1;if(s<0)throw new AssertionError();d.event("sound "+id+" "+p.getX()+" "+p.getY()+" "+p.getZ()+" "+s+" "+category.ordinal());}
  @Override public boolean isClientSide(){d.event("client "+id);return d.config().get("client").getAsBoolean();}
@@ -72,7 +72,7 @@ public final class VanillaActiveEffectTickOracle {
 @Override public net.minecraft.world.level.storage.LevelData.RespawnData getRespawnData(){throw new UnsupportedOperationException();}
 @Override public net.minecraft.world.scores.Scoreboard getScoreboard(){throw new UnsupportedOperationException();}
 @Override public int getSeaLevel(){throw new UnsupportedOperationException();}
-@Override public net.minecraft.core.Holder getUncachedNoiseBiome(int p0,int p1,int p2){throw new UnsupportedOperationException();}
+@Override public net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome> getUncachedBiome(int p0,int p1,int p2){throw new UnsupportedOperationException();}
 @Override public net.minecraft.world.level.border.WorldBorder getWorldBorder(){throw new UnsupportedOperationException();}
 @Override public void levelEvent(net.minecraft.world.entity.Entity p0,int p1,net.minecraft.core.BlockPos p2,int p3){throw new UnsupportedOperationException();}
 @Override public void playSeededSound(net.minecraft.world.entity.Entity p0,net.minecraft.world.entity.Entity p1,net.minecraft.core.Holder p2,net.minecraft.sounds.SoundSource p3,float p4,float p5,long p6){throw new UnsupportedOperationException();}

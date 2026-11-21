@@ -40,7 +40,7 @@ public final class VanillaCollisionContextOracle {
         @Override public boolean isDescending(){return descending;}
         @Override public ItemStack getMainHandItem(){return held;}
         @Override public boolean canStandOnFluid(FluidState state){
-            if(trace!=null)trace.query("stand 1 "+fluidIndex(state)+" "+state.getAmount()+" "+state.getValueOrElse(FlowingFluid.FALLING,false));
+            if(trace!=null)trace.query("stand 1 "+fluidIndex(state)+" "+state.getAmount()+" "+(state.getType() instanceof FlowingFluid state_falling && state_falling.isFalling(state)));
             calls++;lastFluid=-1;for(int i=0;i<FLUIDS.length;i++)if(state.getType()==FLUIDS[i])lastFluid=i;
             if(fail)throw new Stop();return stand;
         }

@@ -227,7 +227,7 @@ public final class VanillaBlockEntityRenderOracle {
         Map<BlockPos, BlockState> blocks;
         int minY, height, sky, block;
         long gameTime;
-        CaseLevel() { super(null, null, null, null, false, false, 0L, 0); }
+        CaseLevel() { super(null, null, null, null, false, 0); }
         @Override public BlockState getBlockState(BlockPos p) { return blocks.getOrDefault(p, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()); }
         @Override public int getMinY() { return minY; }
         @Override public int getHeight() { return height; }
@@ -250,7 +250,7 @@ public final class VanillaBlockEntityRenderOracle {
         @Override public net.minecraft.world.level.storage.LevelData.RespawnData getRespawnData() { throw new UnsupportedOperationException(); }
         @Override public net.minecraft.world.scores.Scoreboard getScoreboard() { throw new UnsupportedOperationException(); }
         @Override public int getSeaLevel() { throw new UnsupportedOperationException(); }
-        @Override public net.minecraft.core.Holder getUncachedNoiseBiome(int p0, int p1, int p2) { throw new UnsupportedOperationException(); }
+        @Override public net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome> getUncachedBiome(int p0, int p1, int p2) { throw new UnsupportedOperationException(); }
         @Override public net.minecraft.world.level.border.WorldBorder getWorldBorder() { throw new UnsupportedOperationException(); }
         @Override public void levelEvent(net.minecraft.world.entity.Entity p0, int p1, BlockPos p2, int p3) { throw new UnsupportedOperationException(); }
         @Override public void playSeededSound(net.minecraft.world.entity.Entity p0, net.minecraft.world.entity.Entity p1, net.minecraft.core.Holder p2, net.minecraft.sounds.SoundSource p3, float p4, float p5, long p6) { throw new UnsupportedOperationException(); }

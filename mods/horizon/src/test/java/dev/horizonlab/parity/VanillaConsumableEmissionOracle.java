@@ -29,7 +29,7 @@ public final class VanillaConsumableEmissionOracle {
   @Override public Level level(){d.event("level");return d.levels[n(d.config(),"level")];}
  }
  static final class OverrideActor extends Actor implements Consumable.OverrideConsumeSound {public SoundEvent getConsumeSound(ItemStack s){if(s!=d.stack)throw new AssertionError();d.event("override");return n(d.config(),"sound")==0?SoundEvents.GENERIC_EAT.value():SoundEvents.PLAYER_BURP;}}
- static final class ParticleLevel extends ServerLevel{Data d;int id;ParticleLevel(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+ static final class ParticleLevel extends ServerLevel{Data d;int id;ParticleLevel(){super(null,null,null,null,null,null,null,false);}
   @Override public void addParticle(ParticleOptions options,double x,double y,double z,double vx,double vy,double vz){var p=(ItemParticleOption)options;if(p.getType()!=ParticleTypes.ITEM)throw new AssertionError();boolean same=d.first==null||d.first==p;if(d.first==null)d.first=p;var t=p.getItem();d.event("particle "+id+" "+kind(t.item().value())+" "+t.count()+" "+opt(t.get(DataComponents.DAMAGE))+" "+same+" "+bits(x)+" "+bits(y)+" "+bits(z)+" "+bits(vx)+" "+bits(vy)+" "+bits(vz));}
  }
  public static void main(String[] args)throws Exception{net.minecraft.SharedConstants.tryDetectVersion();net.minecraft.server.Bootstrap.bootStrap();for(var item:new Item[]{Items.AIR,Items.STONE,Items.BREAD})item.builtInRegistryHolder().bindComponents(net.minecraft.core.component.DataComponentMap.EMPTY);var u=Class.forName("sun.misc.Unsafe");unsafe=field(u,"theUnsafe").get(null);allocate=u.getMethod("allocateInstance",Class.class);position=field(Entity.class,"position");randomField=field(Entity.class,"random");Path dir=Path.of(args[1]);

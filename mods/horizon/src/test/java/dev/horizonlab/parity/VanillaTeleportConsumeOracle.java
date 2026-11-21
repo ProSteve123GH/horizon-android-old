@@ -40,7 +40,7 @@ public final class VanillaTeleportConsumeOracle {
   @Override public void resetFallDistance(){d.event("fall");super.resetFallDistance();}
   @Override public void resetCurrentImpulseContext(){d.event("impulse");super.resetCurrentImpulseContext();}
 }
- static final class TeleportLevel extends ServerLevel {Data d;int id;TeleportLevel(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+ static final class TeleportLevel extends ServerLevel {Data d;int id;TeleportLevel(){super(null,null,null,null,null,null,null,false);}
   @Override public int getMinY(){d.event("min "+id);return n(d.config(),"min");}
   @Override public int getLogicalHeight(){d.event("height "+id);return n(d.config(),"height");}
   @Override public void gameEvent(Holder<GameEvent> event,Vec3 p,GameEvent.Context context){if(event!=GameEvent.TELEPORT||context.sourceEntity()!=d.actor)throw new AssertionError();d.event("game-event "+id+" "+bits(p.x)+" "+bits(p.y)+" "+bits(p.z));}

@@ -13,7 +13,7 @@ public final class VanillaPistonMovementOracle {
     static Vec3 vector(JsonElement v){var a=v.getAsJsonArray();return new Vec3(number(a.get(0)),number(a.get(1)),number(a.get(2)));}
     static final class Level extends net.minecraft.server.level.ServerLevel {
         JsonObject op;PrintWriter out;int calls;
-        private Level(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+        private Level(){super(null,null,null,null,null,null,null,false);}
         @Override public long getGameTime(){out.println("time");calls++;if(op.get("fail").getAsBoolean())throw new Stop();return op.get("time").getAsLong();}
     }
     static final class Actor extends Marker {Actor(){super(null,null);}void configure(Level level){setLevel(level);}Vec3 limit(Vec3 v){return limitPistonMovement(v);}}

@@ -21,7 +21,7 @@ public final class VanillaWetFireOracle {
         int sounds;
         net.minecraft.world.level.chunk.ProtoChunk chunk;
         int next;
-        Scene() { super(null,null,null,null,null,null,false,0L,List.of(),false); }
+        Scene() { super(null,null,null,null,null,null,null,false); }
         @Override public int getNextEntityId() { return ++next; }
         @Override public RegistryAccess registryAccess() { return ParityData.access; }
         @Override public MinecraftServer getServer() { return SERVER; }
@@ -80,7 +80,7 @@ public final class VanillaWetFireOracle {
         var debug=MinecraftServer.class.getDeclaredField("debugSubscribers");debug.setAccessible(true);debug.set(SERVER,new net.minecraft.util.debug.ServerDebugSubscribers(SERVER));
         var biome=net.minecraft.core.Holder.Reference.createStandAlone(new net.minecraft.core.HolderOwner<net.minecraft.world.level.biome.Biome>(){},net.minecraft.world.level.biome.Biomes.PLAINS);
         var ids=new net.minecraft.core.IdMapper<net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome>>();ids.add(biome);
-        var factory=new net.minecraft.world.level.chunk.PalettedContainerFactory(net.minecraft.world.level.chunk.Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,net.minecraft.world.level.chunk.Strategy.createForBiomes(ids),biome,null);
+        var factory=new net.minecraft.world.level.chunk.PalettedContainerFactory(net.minecraft.world.level.chunk.Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,biome,null,null,net.minecraft.world.level.chunk.Strategy.createForBiomes(ids),null);
         scene.chunk=new net.minecraft.world.level.chunk.ProtoChunk(new ChunkPos(0,0),net.minecraft.world.level.chunk.UpgradeData.EMPTY,LevelHeightAccessor.create(-64,384),factory,null);
         for(var section:scene.chunk.getSections()) section.setBlockState(15,15,15,Blocks.WATER.defaultBlockState(),false);
         for(boolean noAi:new boolean[]{true,false}) for(String wet:new String[]{"dry","water","rain"}) for(int fire:new int[]{0,1,19,20,21,40}) {

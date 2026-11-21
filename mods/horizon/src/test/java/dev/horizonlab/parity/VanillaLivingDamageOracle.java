@@ -16,7 +16,7 @@ public final class VanillaLivingDamageOracle {
     }
     static final class Source extends DamageSource {Data d;Source(){super(null);}@Override public Entity getEntity(){d.query("attacker");return switch(d.state().get("attacker").getAsInt()){case 0->null;case 1->d.other;case 2->d.attacker;default->throw new AssertionError();};}@Override public float getFoodExhaustion(){d.query("food-exhaustion");return single(d.state().get("food_exhaustion"));}}
     static final class Tracker extends CombatTracker {Data d;Tracker(){super(null);}@Override public void recordDamage(DamageSource s,float v){d.query("record "+bits(v));d.recorded=v;}}
-    static final class Level extends ServerLevel {Level(){super(null,null,null,null,null,null,false,0L,List.of(),false);}}
+    static final class Level extends ServerLevel {Level(){super(null,null,null,null,null,null,null,false);}}
     static final class Actor extends net.minecraft.world.entity.decoration.ArmorStand {Actor(){super(null,null);}
 
         Data d;

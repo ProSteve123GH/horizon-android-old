@@ -28,7 +28,7 @@ public final class VanillaBiomeChunkOracle {
         try(var out=new PrintWriter(Files.newBufferedWriter(dir.resolve(args[0]+".txt"),StandardCharsets.UTF_8))) {
             for(String line:Files.readAllLines(dir.resolve("inputs.txt"))) {
                 var f=JsonParser.parseString(line).getAsJsonObject();int min=f.get("min").getAsInt(),height=f.get("height").getAsInt();
-                var factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,Strategy.createForBiomes(ids),ids.byId(f.get("default").getAsInt()),null);
+                var factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,ids.byId(f.get("default").getAsInt()),null,null,Strategy.createForBiomes(ids),null);
                 var bounds=new int[]{min,min+height-1};
                 var chunk=new ProtoChunk(new ChunkPos(f.get("cx").getAsInt(),f.get("cz").getAsInt()),UpgradeData.EMPTY,LevelHeightAccessor.create(min,height),factory,null){@Override public LevelHeightAccessor getHeightAccessorForGeneration(){return LevelHeightAccessor.create(bounds[0],bounds[1]-bounds[0]+1);}};
                 chunk.setPersistedStatus(net.minecraft.world.level.chunk.status.ChunkStatus.BIOMES);

@@ -45,7 +45,7 @@ public final class VanillaEntityComponentsOracle {
     }
 
     static final class Lvl extends ServerLevel {
-        Lvl() { super(null, null, null, null, null, null, false, 0L, List.of(), false); }
+        Lvl() { super(null, null, null, null, null, null, null, false); }
         net.minecraft.server.MinecraftServer fake;
         RegistryAccess registries;
         GameRules rules;

@@ -40,8 +40,8 @@ public final class VanillaMaterialConditionOracle {
     private static String encode(MaterialCondition value) {return MaterialCondition.CODEC.encodeStart(ops,value).result().map(v->canonical(v).toString()).orElse("error");}
     @SuppressWarnings("unchecked")
     private static RegistryOps<JsonElement> conditionOps(HolderGetter<MaterialCondition> lookup) {
-        return RegistryOps.create(JsonOps.INSTANCE,new RegistryOps.RegistryInfoLookup(){
-            public <T> Optional<HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){
+        return RegistryOps.create(JsonOps.INSTANCE,new HolderGetter.Provider(){
+            public <T> Optional<? extends HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){
                 if(key.equals(Registries.NOISE))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(noises);
                 if(key.equals(Registries.DENSITY_FUNCTION))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.ofNullable(densityLookup);
                 if(key.equals(Registries.MATERIAL_RULE))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.ofNullable(ruleLookup);

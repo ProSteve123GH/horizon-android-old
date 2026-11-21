@@ -22,13 +22,13 @@ public final class VanillaFluidOracle {
             for(var first:BuiltInRegistries.FLUID)for(var second:BuiltInRegistries.FLUID)
                 out.println("family "+BuiltInRegistries.FLUID.getKey(first)+" "+BuiltInRegistries.FLUID.getKey(second)+" "+first.isSame(second));
             for(var block:Block.BLOCK_STATE_REGISTRY) {
-                var state=block.getFluidState();boolean falling=state.hasProperty(FlowingFluid.FALLING)&&state.getValue(FlowingFluid.FALLING);
+                var state=block.getFluidState();boolean falling=state.getType() instanceof FlowingFluid state_falling && state_falling.isFalling(state);
                 out.println("state "+Block.getId(block)+" "+BuiltInRegistries.FLUID.getKey(state.getType())+" "+state.getAmount()+" "+falling+" "+state.isFull()+" "+state.isSource()+" "+Integer.toUnsignedString(Float.floatToRawIntBits(state.getOwnHeight()))+" "+Block.getId(state.createLegacyBlock()));
             }
             for(var line:Files.readAllLines(dir.resolve("codec-inputs.txt"))) {
                 var decoded=FluidState.CODEC.parse(JsonOps.INSTANCE,JsonParser.parseString(line)).result();
                 if(decoded.isEmpty()){out.println("codec error");continue;}
-                var state=decoded.get();boolean falling=state.hasProperty(FlowingFluid.FALLING)&&state.getValue(FlowingFluid.FALLING);
+                var state=decoded.get();boolean falling=state.getType() instanceof FlowingFluid state_falling && state_falling.isFalling(state);
                 out.println("codec "+BuiltInRegistries.FLUID.getKey(state.getType())+" "+state.getAmount()+" "+falling+" "+state.isSource()+" "+Block.getId(state.createLegacyBlock()));
                 var raw=FluidState.CODEC.encodeStart(JsonOps.INSTANCE,state).getOrThrow().getAsJsonObject();
                 var canonical=new JsonObject();canonical.add("id",raw.get("id"));

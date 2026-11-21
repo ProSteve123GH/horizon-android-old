@@ -43,7 +43,7 @@ public final class VanillaEntityMoveOracle {
         Data d;@Override public boolean isInsideCloseToBorder(Entity e,AABB b){d.query(box("border-test",b));return false;}
     }
     static final class Level extends net.minecraft.server.level.ServerLevel {
-        Data d;Border border;Level(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+        Data d;Border border;Level(){super(null,null,null,null,null,null,null,false);}
         @Override public boolean isClientSide(){d.query("client");return d.flag("client");}
         @Override public BlockState getBlockState(BlockPos p){d.query("block "+pos(p));return d.state;}
         @Override public WorldBorder getWorldBorder(){d.query("border");return border;}

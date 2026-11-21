@@ -90,7 +90,7 @@ public final class VanillaCauldronOracle {
 
     static final class World extends ServerLevel {
         World() {
-            super(null, null, null, null, null, null, false, 0L, List.of(), false);
+            super(null, null, null, null, null, null, null, false);
         }
         @Override public boolean isClientSide() { return false; }
         @Override public boolean setBlock(BlockPos pos, BlockState state, int flags, int limit) { events.add("set " + describe(state)); return true; }

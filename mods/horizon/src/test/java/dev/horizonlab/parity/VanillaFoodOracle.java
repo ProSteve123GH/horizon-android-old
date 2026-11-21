@@ -17,7 +17,7 @@ public final class VanillaFoodOracle {
     }
     static final class Rules extends GameRules {Data d;Rules(){super(net.minecraft.world.flag.FeatureFlagSet.of());}@SuppressWarnings("unchecked")@Override public <T>T get(GameRule<T> r){if(r!=GameRules.NATURAL_HEALTH_REGENERATION)throw new AssertionError();d.query("regeneration");return (T)Boolean.valueOf(d.state().get("regen").getAsBoolean());}}
     static final class Sources extends DamageSources {Data d;DamageSource source;Sources(){super(null);}@Override public DamageSource starve(){d.query("starve-source");return source;}}
-    static final class Level extends ServerLevel {Data d;Level(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+    static final class Level extends ServerLevel {Data d;Level(){super(null,null,null,null,null,null,null,false);}
         @Override public Difficulty getDifficulty(){d.query("difficulty");return Difficulty.values()[d.state().get("difficulty").getAsInt()];}
         @Override public GameRules getGameRules(){d.query("rules");return d.rules;}
     }

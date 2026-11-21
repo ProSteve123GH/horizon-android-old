@@ -21,6 +21,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import net.minecraft.SharedConstants;
 import net.minecraft.commands.CommandBuildContext;
+import net.minecraft.commands.Commands;
 import net.minecraft.commands.ParseBox;
 import net.minecraft.commands.ParseContext;
 import net.minecraft.commands.SuggestionBox;
@@ -226,6 +227,9 @@ public final class VanillaCommandParseOracle {
             public PermissionSet permissions() { return perms; }
             public HolderGetter.Provider holderGetters() { return lookup; }
             public FeatureFlagSet enabledFeatures() { return FeatureFlags.VANILLA_SET; }
+            public <T extends net.minecraft.world.level.storage.loot.Validatable> net.minecraft.commands.arguments.ValidationWrapper<T> getOrCreateValidationWrapper(net.minecraft.core.Holder<T> holder, net.minecraft.util.context.ContextKeySet keys) throws CommandSyntaxException {
+                return net.minecraft.commands.arguments.ValidationWrapper.Provider.IMMEDIATE.getOrCreate(holder, keys);
+            }
         };
         Field parseResultsField = ParseBox.Result.class.getDeclaredField("parseResults");
         parseResultsField.setAccessible(true);

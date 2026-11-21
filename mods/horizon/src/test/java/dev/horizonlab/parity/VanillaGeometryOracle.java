@@ -67,7 +67,7 @@ public final class VanillaGeometryOracle {
         StepBorder border;
         List<VoxelShape> entities, initial, stepping;
         int queries;
-        private StepLevel() { super(null, null, null, null, null, null, false, 0L, List.of(), false); }
+        private StepLevel() { super(null, null, null, null, null, null, null, false); }
         @Override public net.minecraft.world.level.border.WorldBorder getWorldBorder() { return border; }
         @Override public List<VoxelShape> getEntityCollisions(Entity entity, AABB query) { oracle.box("entity-query", query); return entities; }
         @Override public Iterable<VoxelShape> getBlockCollisions(Entity entity, AABB query) { oracle.box("block-query", query); return queries++ == 0 ? initial : stepping; }

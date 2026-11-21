@@ -32,8 +32,8 @@ public final class VanillaTerrainOracle {
         noises=new MappedRegistry<>(Registries.NOISE,Lifecycle.stable());
         var densities=new MappedRegistry<DensityFunction>(Registries.DENSITY_FUNCTION,Lifecycle.stable());
         var noiseLookup=noises.createRegistrationLookup();var densityLookup=densities.createRegistrationLookup();
-        ops=RegistryOps.create(JsonOps.INSTANCE,new RegistryOps.RegistryInfoLookup() {
-            public <T> Optional<HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key) {
+        ops=RegistryOps.create(JsonOps.INSTANCE,new HolderGetter.Provider() {
+            public <T> Optional<? extends HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key) {
                 if(key.equals(Registries.NOISE))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(noiseLookup);
                 if(key.equals(Registries.DENSITY_FUNCTION))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(densityLookup);
                 return Optional.empty();
@@ -46,7 +46,7 @@ public final class VanillaTerrainOracle {
         VanillaHeightmapOracle.bindTags(bundle.getAsJsonObject("tags"));
         biome=Holder.Reference.createStandAlone(new HolderOwner<Biome>(){},Biomes.PLAINS);
         var ids=new IdMapper<Holder<Biome>>();ids.add(biome);
-        factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,Strategy.createForBiomes(ids),biome,null);
+        factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,biome,null,null,Strategy.createForBiomes(ids),null);
     }
     private static Beardifier structure(JsonObject f) {
         if(!f.has("structure"))return Beardifier.EMPTY;

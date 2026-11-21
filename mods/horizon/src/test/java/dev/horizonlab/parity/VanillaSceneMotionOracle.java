@@ -105,7 +105,7 @@ public final class VanillaSceneMotionOracle {
         @Override public net.minecraft.world.TickRateManager tickRateManager(){return TICK_RATE;}
         @Override public long getGameTime(){return time;}
         @Override public void broadcastDamageEvent(Entity actor,DamageSource source){this.actor.events.add("broadcast-damage");}
-        Level(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+        Level(){super(null,null,null,null,null,null,null,false);}
         // LevelReader.containsAnyLiquid over the scene chunks (its section scan
         // needs level chunks): any fluid from the box's minimum block to its
         // maximum block, both included.

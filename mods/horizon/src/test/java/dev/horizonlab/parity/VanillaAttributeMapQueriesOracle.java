@@ -28,7 +28,7 @@ public final class VanillaAttributeMapQueriesOracle {
         void removed(List<MobEffectInstance> es){super.onEffectsRemoved(es);}
     }
     static final class EffectLevel extends ServerLevel {
-        Data d;EffectLevel(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+        Data d;EffectLevel(){super(null,null,null,null,null,null,null,false);}
         @Override public boolean isClientSide(){d.event("client");return d.op.has("client")&&d.op.get("client").getAsBoolean();}
     }
     @SuppressWarnings("unchecked")

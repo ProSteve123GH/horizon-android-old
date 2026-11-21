@@ -30,7 +30,7 @@ public final class VanillaArrowContentsExpiryOracle {
     }
     static <T> T bare(Class<T> c) throws Exception { return c.cast(allocate.invoke(unsafe, c)); }
     static final class Level extends ServerLevel {
-        Level() { super(null,null,null,null,null,null,false,0L,List.of(),false); }
+        Level() { super(null,null,null,null,null,null,null,false); }
         @Override public boolean isClientSide() { return false; }
         @Override public int getNextEntityId() { return 1; }
         @Override public net.minecraft.util.RandomSource getRandom() { return net.minecraft.util.RandomSource.create(1); }

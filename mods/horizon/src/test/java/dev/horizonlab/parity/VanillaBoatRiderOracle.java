@@ -33,7 +33,7 @@ public final class VanillaBoatRiderOracle {
     }
     static class Lvl extends ServerLevel {
         int next, paddles;
-        Lvl(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+        Lvl(){super(null,null,null,null,null,null,null,false);}
         @Override public boolean isClientSide(){return true;}
         @Override public int getNextEntityId(){return next++;}
         @Override public void sendPacketToServer(Packet<?> p){if(p instanceof ServerboundPaddleBoatPacket) paddles++;}

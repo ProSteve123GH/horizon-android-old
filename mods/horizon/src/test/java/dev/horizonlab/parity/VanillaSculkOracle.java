@@ -382,9 +382,9 @@ public final class VanillaSculkOracle {
                     // LevelEventHandler: the block's break sound (the client plays it).
                     BlockState state = net.minecraft.world.level.block.Block.stateById(p.getData());
                     if (!state.isAir()) {
-                        var sound = state.getSoundType();
-                        LOG.add("sound " + sound.getBreakSound().location() + " " + pos(p.getPos()) + " " + f((sound.getVolume() + 1.0F) / 2.0F)
-                            + " " + f(sound.getPitch() * 0.8F));
+                        var sound = VanillaBlockBehaviourExporter.soundSet(state);
+                        LOG.add("sound " + sound.breakSound().map(h -> h.value().location().toString()).orElse("") + " " + pos(p.getPos()) + " " + f((sound.volume() + 1.0F) / 2.0F)
+                            + " " + f(sound.pitch() * 0.8F));
                     }
                 }
             }

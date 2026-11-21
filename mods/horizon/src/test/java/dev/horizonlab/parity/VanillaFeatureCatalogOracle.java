@@ -39,7 +39,7 @@ public final class VanillaFeatureCatalogOracle {
         var bundle=JsonParser.parseString(Files.readString(dir.resolve("catalog.json"))).getAsJsonObject();
         var features=new MappedRegistry<Feature>(Registries.FEATURE,Lifecycle.stable());
         var placed=new MappedRegistry<PlacedFeature>(Registries.PLACED_FEATURE,Lifecycle.stable());
-        var ops=RegistryOps.create(JsonOps.INSTANCE,new RegistryOps.RegistryInfoLookup(){public <T> Optional<HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){
+        var ops=RegistryOps.create(JsonOps.INSTANCE,new HolderGetter.Provider(){public <T> Optional<? extends HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){
             if(key.equals(Registries.FLUID))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(net.minecraft.core.registries.BuiltInRegistries.FLUID);
             if(key.equals(Registries.BLOCK))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(net.minecraft.core.registries.BuiltInRegistries.BLOCK);
             if(key.equals(Registries.FEATURE))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(features);

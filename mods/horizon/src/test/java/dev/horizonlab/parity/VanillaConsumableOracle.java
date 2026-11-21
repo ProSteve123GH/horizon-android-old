@@ -66,7 +66,7 @@ public final class VanillaConsumableOracle {
   @Override public void awardStat(Stat<?> stat){if(stat.getType()!=Stats.ITEM_USED)throw new AssertionError();d.event("stat "+kind((Item)stat.getValue()));}
   @Override public PlayerAdvancements getAdvancements(){d.event("criterion");return d.advancements;}
  }
- static final class ParticleLevel extends ServerLevel{Data d;int id;ParticleLevel(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+ static final class ParticleLevel extends ServerLevel{Data d;int id;ParticleLevel(){super(null,null,null,null,null,null,null,false);}
   @Override public boolean isClientSide(){d.event("client "+id);return d.config().get("client").getAsBoolean();}
   @Override public void playSound(Entity excluded,double x,double y,double z,SoundEvent sound,SoundSource source,float volume,float pitch){if(excluded!=null)throw new AssertionError();int s=sound==SoundEvents.GENERIC_EAT.value()?0:sound==SoundEvents.PLAYER_BURP?1:-1;d.event("food-sound "+id+" "+s+" "+source.ordinal()+" "+bits(x)+" "+bits(y)+" "+bits(z)+" "+Integer.toUnsignedString(Float.floatToIntBits(volume))+" "+Integer.toUnsignedString(Float.floatToIntBits(pitch)));}
   @Override public void addParticle(ParticleOptions options,double x,double y,double z,double vx,double vy,double vz){var p=(ItemParticleOption)options;if(p.getType()!=ParticleTypes.ITEM)throw new AssertionError();boolean same=d.first==null||d.first==p;if(d.first==null)d.first=p;var t=p.getItem();d.event("particle "+id+" "+kind(t.item().value())+" "+t.count()+" "+opt(t.get(DataComponents.DAMAGE))+" "+same+" "+bits(x)+" "+bits(y)+" "+bits(z)+" "+bits(vx)+" "+bits(vy)+" "+bits(vz));}

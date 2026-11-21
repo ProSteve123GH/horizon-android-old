@@ -10,7 +10,7 @@ public final class VanillaClimbingOracle {
     static String text(BlockPos p){return p.getX()+" "+p.getY()+" "+p.getZ();}
     static final class Data {JsonObject op;PrintWriter out;int calls;BlockPos position;Actor actor;
         void query(String s){out.println(s);int n=calls++;if(n==op.get("fail").getAsInt())throw new Stop();if(n==op.get("mutate_at").getAsInt()){position=new BlockPos(31,32,33);try{last.set(actor,Optional.of(new BlockPos(-8,-9,-10)));}catch(ReflectiveOperationException e){throw new AssertionError(e);}}}}
-    static final class Level extends net.minecraft.server.level.ServerLevel {Data d;Level(){super(null,null,null,null,null,null,false,0L,List.of(),false);}@Override public BlockState getBlockState(BlockPos p){d.query("below "+text(p));return Block.stateById(d.op.get("below").getAsInt());}}
+    static final class Level extends net.minecraft.server.level.ServerLevel {Data d;Level(){super(null,null,null,null,null,null,null,false);}@Override public BlockState getBlockState(BlockPos p){d.query("below "+text(p));return Block.stateById(d.op.get("below").getAsInt());}}
     static final class Actor extends net.minecraft.world.entity.decoration.ArmorStand {Data d;Actor(){super(null,null);}void configure(Level l){setLevel(l);}
         @Override public boolean isSpectator(){d.query("spectator");return d.op.get("spectator").getAsBoolean();}
         @Override public BlockPos blockPosition(){d.query("position");return d.position;}

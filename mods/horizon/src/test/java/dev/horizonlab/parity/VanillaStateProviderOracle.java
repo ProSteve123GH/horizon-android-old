@@ -62,7 +62,7 @@ public final class VanillaStateProviderOracle {
         var biomeRegistry=(MappedRegistry<Biome>)biomeField.get(null);
         var biomeNames=new ArrayList<>(new TreeSet<>(biomeRegistry.keySet()));
         var providers=new MappedRegistry<BlockStateProvider>(Registries.BLOCK_STATE_PROVIDER,com.mojang.serialization.Lifecycle.stable());
-        var ops=RegistryOps.create(JsonOps.INSTANCE,new RegistryOps.RegistryInfoLookup(){public <T> Optional<HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){
+        var ops=RegistryOps.create(JsonOps.INSTANCE,new HolderGetter.Provider(){public <T> Optional<? extends HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key){
             if(key.equals(Registries.BIOME))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(biomeRegistry);
             if(key.equals(Registries.FLUID))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(BuiltInRegistries.FLUID);
             if(key.equals(Registries.BLOCK_STATE_PROVIDER))return (Optional<HolderGetter<T>>)(Optional<?>)Optional.of(providers);
@@ -75,7 +75,7 @@ public final class VanillaStateProviderOracle {
         providers.freeze();
         try(var out=new PrintWriter(Files.newBufferedWriter(dir.resolve(args[0]+".txt"),StandardCharsets.UTF_8));var inputs=Files.lines(dir.resolve("inputs.txt"))) {
             for(var state:Block.BLOCK_STATE_REGISTRY) {
-                var fluid=state.getFluidState();boolean falling=fluid.hasProperty(FlowingFluid.FALLING)&&fluid.getValue(FlowingFluid.FALLING);
+                var fluid=state.getFluidState();boolean falling=fluid.getType() instanceof FlowingFluid fluid_falling && fluid_falling.isFalling(fluid);
                 out.println("fluid "+Block.getId(state)+" "+BuiltInRegistries.FLUID.getKey(fluid.getType())+" "+fluid.getAmount()+" "+falling+" "+fluid.isSource()+" "+Integer.toUnsignedString(Float.floatToRawIntBits(fluid.getOwnHeight())));
             }
             for(var line:(Iterable<String>)inputs::iterator) {

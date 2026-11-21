@@ -27,7 +27,7 @@ public final class VanillaPlayerBlockingOracle {
         return type.cast(allocate.invoke(unsafe, type));
     }
     static final class Level extends ServerLevel {
-        Level() { super(null, null, null, null, null, null, false, 0L, List.of(), false); }
+        Level() { super(null, null, null, null, null, null, null, false); }
         @Override public boolean isClientSide() { return false; }
     }
     static final class Player extends ServerPlayer {

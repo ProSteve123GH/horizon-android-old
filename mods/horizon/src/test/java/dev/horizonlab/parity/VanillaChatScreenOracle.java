@@ -35,7 +35,8 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.commands.CommandBuildContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
-import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.commands.SuggestionBox;
+import net.minecraft.commands.suggestions.SuggestionContext;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.Registry;
 import net.minecraft.core.RegistryAccess;
@@ -83,8 +84,8 @@ import org.joml.Matrix3x2fStack;
 public final class VanillaChatScreenOracle {
     static Object unsafe;
     static Method allocate;
-    static CommandDispatcher<CommandSourceStack> server;
-    static CommandSourceStack source;
+    static CommandDispatcher<SuggestionContext> server;
+    static SuggestionContext source;
     static RegistryAccess access;
     static HolderLookup.Provider lookup;
 
@@ -112,12 +113,12 @@ public final class VanillaChatScreenOracle {
     /** The client's suggestion provider; what it asks the server is answered at once. */
     public static final class Provider extends ClientSuggestionProvider {
         private Provider() { super(null, null, null); }
-        @Override public Collection<String> getOnlinePlayerNames() { return new ArrayList<>(List.of(VanillaCommandParseOracle.PLAYERS)); }
-        @Override public Collection<String> getCustomTabSuggestions() { return getOnlinePlayerNames(); }
-        @Override public Collection<String> getSelectedEntities() { return new ArrayList<>(List.of(VanillaCommandParseOracle.SELECTED)); }
-        @Override public Collection<String> getAllTeams() { return new ArrayList<>(List.of(VanillaCommandParseOracle.TEAMS)); }
-        @Override public java.util.stream.Stream<Identifier> getAvailableSounds() { return BuiltInRegistries.SOUND_EVENT.keySet().stream(); }
-        @Override public java.util.stream.Stream<Identifier> getAvailablePostEffects() { return source.getAvailablePostEffects(); }
+        @Override public Collection<String> onlinePlayerNames() { return new ArrayList<>(List.of(VanillaCommandParseOracle.PLAYERS)); }
+        @Override public Collection<String> customTabSuggestions() { return onlinePlayerNames(); }
+        @Override public Collection<String> selectedEntities() { return new ArrayList<>(List.of(VanillaCommandParseOracle.SELECTED)); }
+        @Override public Collection<String> allTeams() { return new ArrayList<>(List.of(VanillaCommandParseOracle.TEAMS)); }
+        @Override public java.util.stream.Stream<Identifier> availableSounds() { return BuiltInRegistries.SOUND_EVENT.keySet().stream(); }
+        @Override public java.util.stream.Stream<Identifier> availablePostEffects() { return source.availablePostEffects(); }
         /** ClientPacketListener's: the player's (an operator's) and ALLOW_RESTRICTED_COMMANDS. */
         @Override public PermissionSet permissions() {
             try {
@@ -128,14 +129,14 @@ public final class VanillaChatScreenOracle {
                 throw new IllegalStateException(e);
             }
         }
-        @Override public Collection<SharedSuggestionProvider.TextCoordinates> getRelevantCoordinates() { return source.getRelevantCoordinates(); }
-        @Override public Collection<SharedSuggestionProvider.TextCoordinates> getAbsoluteCoordinates() { return source.getAbsoluteCoordinates(); }
+        // relevantCoordinates()/absoluteCoordinates() use SuggestionContext's defaults (global).
         @Override public Set<ResourceKey<Level>> levels() { return source.levels(); }
-        @Override public RegistryAccess registryAccess() { return access; }
+        @Override public HolderLookup.Provider holderLookups() { return lookup; }
         @Override public FeatureFlagSet enabledFeatures() { return FeatureFlags.VANILLA_SET; }
-        @Override public <E> CompletableFuture<Suggestions> suggestRegistryElements(ResourceKey<? extends Registry<E>> key,
-            SharedSuggestionProvider.ElementSuggestionType elements, SuggestionsBuilder builder, CommandContext<?> context, java.util.function.Predicate<E> filter) {
-            return source.suggestRegistryElements(key, elements, builder, context, filter);
+        @Override public <E> CompletableFuture<Suggestions> suggestRegistryElements(CommandContext<?> context,
+            ResourceKey<? extends Registry<? extends E>> key, SuggestionContext.ElementSuggestionType elements,
+            SuggestionsBuilder builder, java.util.function.Predicate<E> filter) {
+            return source.suggestRegistryElements(context, key, elements, builder, filter);
         }
         @Override public CompletableFuture<Suggestions> customSuggestion(CommandContext<?> context) {
             StringReader reader = new StringReader(context.getInput());
@@ -181,8 +182,13 @@ public final class VanillaChatScreenOracle {
         staticTags.forEach(Registry.PendingTags::apply);
         components.forEach(net.minecraft.core.component.DataComponentInitializers.PendingComponents::apply);
         access = loaded.layers().compositeAccess();
-        Commands commands = new Commands(Commands.CommandSelection.INTEGRATED, CommandBuildContext.simple(lookup, FeatureFlags.VANILLA_SET));
-        server = commands.getDispatcher();
+        Commands commands = Commands.createVanilla(Commands.CommandSelection.INTEGRATED, CommandBuildContext.simple(FeatureFlags.VANILLA_SET));
+        SuggestionBox suggestionBox = commands.suggestionBox();
+        Field dispatcherField = net.minecraft.commands.CommandBox.class.getDeclaredField("dispatcher");
+        dispatcherField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        CommandDispatcher<SuggestionContext> dispatcher = (CommandDispatcher<SuggestionContext>) dispatcherField.get(suggestionBox);
+        server = dispatcher;
         MinecraftServer mcs = alloc(DedicatedServer.class);
         put(mcs, MinecraftServer.class, "registries", loaded.layers());
         Class<?> reloadable = Class.forName("net.minecraft.server.MinecraftServer$ReloadableResources");
@@ -220,24 +226,24 @@ public final class VanillaChatScreenOracle {
                 net.minecraft.world.scores.criteria.ObjectiveCriteria.RenderType.INTEGER, true, null);
         for (String tracked : VanillaCommandParseOracle.TRACKED)
             scoreboard.getOrCreatePlayerScore(net.minecraft.world.scores.ScoreHolder.forNameOnly(tracked), scoreboard.getObjective("kills"));
-        source = new VanillaCommandParseOracle.Src(mcs, level, LevelBasedPermissionSet.forLevel(PermissionLevel.byId(4)), access, lookup);
+        source = new VanillaCommandParseOracle.Sug(mcs, level, LevelBasedPermissionSet.forLevel(PermissionLevel.byId(4)), access, lookup);
     }
 
     /** Commands.sendCommands for an operator, then ClientPacketListener.handleCommands. */
     @SuppressWarnings("unchecked")
     static CommandDispatcher<ClientSuggestionProvider> clientTree() throws Exception {
-        RootCommandNode<CommandSourceStack> root = new RootCommandNode<>();
-        Map<com.mojang.brigadier.tree.CommandNode<CommandSourceStack>, com.mojang.brigadier.tree.CommandNode<CommandSourceStack>> converted = new HashMap<>();
+        RootCommandNode<SuggestionContext> root = new RootCommandNode<>();
+        Map<com.mojang.brigadier.tree.CommandNode<SuggestionContext>, com.mojang.brigadier.tree.CommandNode<SuggestionContext>> converted = new HashMap<>();
         converted.put(server.getRoot(), root);
-        Method fill = Commands.class.getDeclaredMethod("fillUsableCommands", com.mojang.brigadier.tree.CommandNode.class, com.mojang.brigadier.tree.CommandNode.class, Object.class, Map.class);
+        Method fill = SuggestionBox.class.getDeclaredMethod("fillUsableCommands", com.mojang.brigadier.tree.CommandNode.class, com.mojang.brigadier.tree.CommandNode.class, Object.class, Map.class);
         fill.setAccessible(true);
         fill.invoke(null, server.getRoot(), root, source, converted);
-        Field inspector = Commands.class.getDeclaredField("COMMAND_NODE_INSPECTOR");
+        Field inspector = SuggestionBox.class.getDeclaredField("COMMAND_NODE_INSPECTOR");
         inspector.setAccessible(true);
-        var packet = new ClientboundCommandsPacket(root, (ClientboundCommandsPacket.NodeInspector<CommandSourceStack>) inspector.get(null));
+        var packet = new ClientboundCommandsPacket(root, (ClientboundCommandsPacket.NodeInspector<SuggestionContext>) inspector.get(null));
         Field builder = ClientPacketListener.class.getDeclaredField("COMMAND_NODE_BUILDER");
         builder.setAccessible(true);
-        return new CommandDispatcher<>(packet.getRoot(CommandBuildContext.simple(access, FeatureFlags.VANILLA_SET),
+        return new CommandDispatcher<>(packet.getRoot(
             (ClientboundCommandsPacket.NodeBuilder<ClientSuggestionProvider>) builder.get(null)));
     }
 

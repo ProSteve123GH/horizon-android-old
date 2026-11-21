@@ -77,7 +77,7 @@ public final class VanillaMenuOracle {
     static final class World extends ServerLevel {
         Server server;
         World() {
-            super(null, null, null, null, null, null, false, 0L, List.of(), false);
+            super(null, null, null, null, null, null, null, false);
         }
         @Override public net.minecraft.server.MinecraftServer getServer() { return server; }
         @Override public RecipeManager recipeAccess() { return recipes; }

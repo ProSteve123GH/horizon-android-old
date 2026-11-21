@@ -34,7 +34,7 @@ public final class VanillaMovementSupportOracle {
     }
     static final class Level extends net.minecraft.server.level.ServerLevel {
         Data d;State[] states;
-        private Level(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+        private Level(){super(null,null,null,null,null,null,null,false);}
         @Override public BlockState getBlockState(BlockPos p){d.query("state "+p.getX()+" "+p.getY()+" "+p.getZ());return states[d.reads++ % states.length];}
     }
     static final class Actor extends Marker {

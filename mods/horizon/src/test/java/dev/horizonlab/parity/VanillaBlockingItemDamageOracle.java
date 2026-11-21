@@ -14,7 +14,7 @@ public final class VanillaBlockingItemDamageOracle {
     static final class Data {Server level;JsonObject f;PrintWriter out;int calls;boolean changed;ItemStack stack;PlayerAdvancements advancements;
         void event(String s){out.println(s+" | "+snapshot(stack));int n=calls++;if(n==f.get("fail").getAsInt())throw new Stop();if(n==f.get("mutate_at").getAsInt()){changed=true;reset(stack,f.getAsJsonObject("after"));}}
         boolean flag(String name){return f.get((changed?"after_":"")+name).getAsBoolean();} boolean infinite(){return flag("infinite");}}
-    static final class Server extends ServerLevel {Data d;Server(){super(null,null,null,null,null,null,false,0L,List.of(),false);}@Override public boolean isClientSide(){d.event("client");return d.flag("client");}}
+    static final class Server extends ServerLevel {Data d;Server(){super(null,null,null,null,null,null,null,false);}@Override public boolean isClientSide(){d.event("client");return d.flag("client");}}
     static final class Actor extends net.minecraft.world.entity.decoration.ArmorStand {Actor(){super(null,null);}}
     static void broken(Data d,ItemStack copy,net.minecraft.world.entity.EquipmentSlot slot){d.out.println("copy "+snapshot(copy));d.event("break "+(slot==net.minecraft.world.entity.EquipmentSlot.MAINHAND?0:1));}
     static void stat(Data d,net.minecraft.stats.Stat<?> s){if(s.getType()!=net.minecraft.stats.Stats.ITEM_USED)throw new AssertionError();d.event("stat "+(s.getValue()==Items.AIR?0:1));}

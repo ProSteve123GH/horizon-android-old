@@ -11,7 +11,7 @@ public final class VanillaWaterSplashOracle {
     static final class Data {JsonObject f;PrintWriter out;int calls;Actor actor,other;Vec3 velocity,otherVelocity;SoundEvent low,high;
         void query(String s){out.println(s);int n=calls++;if(n==f.get("fail").getAsInt())throw new Stop();if(n==f.get("mutate_at").getAsInt()){velocity=vec(f.get("after_velocity"));otherVelocity=vec(f.get("after_other_velocity"));try{position.set(actor,vec(f.get("after_position")));dimensions.set(actor,EntityDimensions.fixed(single(f.get("after_width")),2));}catch(Exception e){throw new AssertionError(e);}}}
     }
-    static final class World extends net.minecraft.server.level.ServerLevel {Data d;World(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+    static final class World extends net.minecraft.server.level.ServerLevel {Data d;World(){super(null,null,null,null,null,null,null,false);}
         @Override public void addParticle(ParticleOptions type,double x,double y,double z,double vx,double vy,double vz){d.query("particle "+(type==ParticleTypes.BUBBLE?"bubble":type==ParticleTypes.SPLASH?"splash":"unexpected")+" "+vector(new Vec3(x,y,z))+" "+vector(new Vec3(vx,vy,vz)));}
     }
     static final class Actor extends net.minecraft.world.entity.decoration.ArmorStand {Data d;boolean other;Actor(){super(null,null);}
