@@ -16,7 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const PROTOCOL: i32 = 777;
+const PROTOCOL: i32 = 1073742172;
 
 /// Echoes every connection back until it closes.
 fn echo_server() -> SocketAddr {
@@ -54,7 +54,7 @@ fn start(relay: Option<&str>, path: PathMode) -> Host {
     Host::start(HostConfig {
         lan: echo_server(),
         protocol: PROTOCOL,
-        game: "26.3".into(),
+        game: "26.4-snapshot-10".into(),
         relay: relay.map(str::to_owned),
         path,
         port: 0,
@@ -109,7 +109,7 @@ fn join(code: &str, relay: Option<&str>, path: PathMode) -> Result<guest::Tunnel
         code: code.to_owned(),
         relay: relay.map(str::to_owned),
         protocol: PROTOCOL,
-        game: "26.3".into(),
+        game: "26.4-snapshot-10".into(),
         path,
     })
 }
@@ -439,7 +439,7 @@ fn a_host_that_never_attaches_is_unreachable() {
         &ToRelay::Host {
             v: wire::VERSION,
             protocol: PROTOCOL,
-            game: "26.3".into(),
+            game: "26.4-snapshot-10".into(),
         },
     )
     .unwrap();

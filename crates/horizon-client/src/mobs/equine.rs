@@ -1147,7 +1147,7 @@ mod tests {
     #[test]
     fn horse_armor_draws_its_equipment_asset_texture() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client/26.3");
+            .join("../../.local/horizon-client/26.4-snapshot-10");
         let Ok(items) = std::fs::read(root.join("items.json")) else {
             return;
         };

@@ -55,7 +55,7 @@ def download_game(version, directory):
     pins = json.loads((ROOT / 'research-lock.json').read_text())['minecraft']
     if version != pins['version']:
         raise ValueError(f"This engine implements {pins['version']}; {version} is unsupported")
-    # Mojang republishes 26.3 metadata with different asset indexes. Use the
+    # Mojang may republish version metadata with different asset indexes. Use the
     # content-addressed copy the engine pins, not whatever the launcher manifest
     # currently lists, so preparation stays reproducible.
     versions = directory / 'versions' / version

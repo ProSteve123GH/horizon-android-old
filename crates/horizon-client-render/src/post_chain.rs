@@ -2429,7 +2429,7 @@ mod tests {
         let Some((device, queue)) = device() else {
             return;
         };
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/horizon-client/26.3");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/horizon-client/26.4-snapshot-10");
         if !root
             .join("assets/minecraft/post_effect/invert.json")
             .exists()
@@ -2462,7 +2462,7 @@ mod tests {
         let Some((device, queue)) = device() else {
             return;
         };
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/horizon-client/26.3");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/horizon-client/26.4-snapshot-10");
         if !root
             .join("assets/minecraft/post_effect/invert.json")
             .exists()

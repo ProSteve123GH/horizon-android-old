@@ -13,8 +13,8 @@ fn register(relay: SocketAddr) -> Result<TcpStream, ErrorCode> {
     s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     let hello = ToRelay::Host {
         v: wire::VERSION,
-        protocol: 777,
-        game: "26.3".into(),
+        protocol: 1073742172,
+        game: "26.4-snapshot-10".into(),
     };
     wire::send(&mut s, &hello).unwrap();
     match wire::recv::<_, FromRelay>(&mut s).unwrap() {

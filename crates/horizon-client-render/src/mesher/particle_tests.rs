@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn terrain_particles_use_the_particle_sprite_and_vanilla_tint_sources() {
     let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/horizon-client/26.3");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/horizon-client/26.4-snapshot-10");
     if !root.join("horizon-resources.json").exists() {
         return;
     }
@@ -61,7 +61,7 @@ fn terrain_particles_use_the_particle_sprite_and_vanilla_tint_sources() {
 #[test]
 fn block_tints_match_the_chunk_mesh_for_grass_blocks() {
     let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/horizon-client/26.3");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/horizon-client/26.4-snapshot-10");
     if !root.join("horizon-resources.json").exists() {
         return;
     }

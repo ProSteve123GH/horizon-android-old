@@ -291,7 +291,7 @@ mod tests {
         )
         .unwrap();
         if prepared {
-            let res = dir.join(".local/horizon-client/26.3");
+            let res = dir.join(".local/horizon-client/26.4-snapshot-10");
             std::fs::create_dir_all(&res).unwrap();
             std::fs::write(res.join("horizon-resources.json"), "{}").unwrap();
         }
@@ -315,7 +315,7 @@ mod tests {
             install
                 .resources
                 .unwrap()
-                .ends_with(".local/horizon-client/26.3")
+                .ends_with(".local/horizon-client/26.4-snapshot-10")
         );
         assert_eq!(install.cwd, Some(game_home()));
         let picked = find(None, Some("2026.10.2"), None, &home).unwrap();

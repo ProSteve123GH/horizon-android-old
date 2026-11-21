@@ -414,7 +414,7 @@ mod tests {
 
     #[test]
     fn vanilla_trims_are_recoloured() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/horizon-client/26.3");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/horizon-client/26.4-snapshot-10");
         if !root.join("assets/minecraft/textures/trims").is_dir() {
             return;
         }

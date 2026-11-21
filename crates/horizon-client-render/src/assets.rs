@@ -458,7 +458,7 @@ mod tests {
     #[test]
     fn always_edible_and_consume_effects_loaded() {
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client/26.3");
+            .join("../../.local/horizon-client/26.4-snapshot-10");
         if !root.join("items.json").exists() {
             return;
         }

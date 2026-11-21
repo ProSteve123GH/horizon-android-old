@@ -861,7 +861,7 @@ mod tests {
     #[test]
     fn posed_on_the_gpu_every_mob_draws_what_the_cpu_draws() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client/26.3");
+            .join("../../.local/horizon-client/26.4-snapshot-10");
         if !root.join("entity-models.json").exists() {
             eprintln!("no prepared resources: skipped");
             return;
@@ -998,7 +998,7 @@ mod tests {
     #[test]
     fn only_culled_render_types_ask_for_culled_back_faces() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client/26.3");
+            .join("../../.local/horizon-client/26.4-snapshot-10");
         if !root.join("entity-models.json").exists() {
             eprintln!("no prepared resources: skipped");
             return;
@@ -1077,7 +1077,7 @@ mod tests {
     #[test]
     fn armor_stand_models_pose_on_the_gpu_as_on_the_cpu() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client/26.3");
+            .join("../../.local/horizon-client/26.4-snapshot-10");
         if !root.join("entity-models.json").exists() {
             eprintln!("no prepared resources: skipped");
             return;

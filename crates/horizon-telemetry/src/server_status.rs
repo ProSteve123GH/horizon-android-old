@@ -25,9 +25,9 @@ pub const OFFICIAL_STATUS_ADDRESS: &str = horizon_addresses::OFFICIAL_SERVER_STA
 /// The port a server address without one means.
 pub const DEFAULT_PORT: u16 = 25565;
 
-/// The protocol version the handshake names (`horizon_protocol`'s, 26.3). A server answers the
-/// status of any version.
-const PROTOCOL: i32 = 777;
+/// The protocol version the handshake names, from the generated pinned constant. A server
+/// answers the status of any version.
+const PROTOCOL: i32 = horizon_core::version::PROTOCOL_VERSION;
 
 /// The longest status answer read: room for a 64x64 icon in base64 and a long description.
 const MAX_ANSWER: usize = 256 * 1024;
@@ -223,7 +223,7 @@ mod tests {
             let mut got = vec![0; expected.len()];
             socket.read_exact(&mut got).unwrap();
             assert_eq!(got, expected);
-            let json = r#"{"version":{"name":"26.3","protocol":777},"players":{"max":100,"online":12,"sample":[]},"description":{"text":"Horizon"}}"#;
+            let json = r#"{"version":{"name":"26.4-snapshot-10","protocol":1073742172},"players":{"max":100,"online":12,"sample":[]},"description":{"text":"Horizon"}}"#;
             socket.write_all(&answer(json)).unwrap();
         });
         let players = players(&format!("127.0.0.1:{port}"), Duration::from_secs(2)).unwrap();

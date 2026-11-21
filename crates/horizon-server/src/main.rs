@@ -43,7 +43,7 @@ const VERSION: &str = match option_env!("HORIZON_VERSION") {
 };
 
 const HELP: &str = "\
-horizon-server: host a Horizon (Minecraft Java Edition 26.3) server
+horizon-server: host a Horizon (Minecraft Java Edition 26.4-snapshot-10) server
 
 Usage: horizon-server [--dir DIR] <command>
 

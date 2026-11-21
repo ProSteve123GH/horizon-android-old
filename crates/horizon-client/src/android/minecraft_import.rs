@@ -1,4 +1,4 @@
-//! Android glue for importing an existing Minecraft 26.3 installation.
+//! Android glue for importing an existing Minecraft 26.4-snapshot-10 installation.
 //!
 //! The platform-independent importer (`horizon_client::minecraft_import`) fills
 //! the official installer's download cache. This module supplies the two Android
@@ -344,10 +344,11 @@ fn prepare(home: PathBuf, label: String, report: core::Report) {
             }
             let reused = report.files_copied.saturating_add(report.files_reused);
             let text = if report.files_missing == 0 {
-                format!("Minecraft 26.3 imported from {label}. {reused} files were reused.")
+                format!("Minecraft {} imported from {label}. {reused} files were reused.", horizon_core::version::VANILLA_VERSION)
             } else {
                 format!(
-                    "Minecraft 26.3 imported from {label}. {reused} files were reused and {} missing files were downloaded.",
+                    "Minecraft {} imported from {label}. {reused} files were reused and {} missing files were downloaded.",
+                    horizon_core::version::VANILLA_VERSION,
                     report.files_missing
                 )
             };

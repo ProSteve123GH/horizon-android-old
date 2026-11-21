@@ -16,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// SharedConstants resource pack format of 26.3 (major, minor).
+/// SharedConstants resource pack format of 26.4-snapshot-10 (major, minor).
 pub const RESOURCE_FORMAT: (i64, i64) = horizon_core::version::RESOURCE_PACK_FORMAT;
 
 #[derive(Clone, Debug)]

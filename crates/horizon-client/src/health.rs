@@ -1352,7 +1352,7 @@ mod tests {
         assert!(negative.health == 10.0 && nan.health <= 0.0);
     }
 
-    /// Needs the prepared data in `.local/horizon-client/26.3`; skipped
+    /// Needs the prepared data in `.local/horizon-client/26.4-snapshot-10`; skipped
     /// without it.
     #[test]
     fn the_native_damage_hook_changes_or_cancels_a_players_hit() {
@@ -1485,7 +1485,7 @@ mod tests {
         assert_eq!(taken(9205), [(false, 2.0), (true, f32::MAX)]);
     }
 
-    /// Needs the prepared data in `.local/horizon-client/26.3`; skipped
+    /// Needs the prepared data in `.local/horizon-client/26.4-snapshot-10`; skipped
     /// without it.
     #[test]
     fn the_native_damage_hooks_see_and_change_what_a_players_health_takes() {

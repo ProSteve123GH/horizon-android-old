@@ -1,6 +1,6 @@
-//! Reuse an existing Minecraft 26.3 installation instead of downloading it again.
+//! Reuse an existing Minecraft 26.4-snapshot-10 installation instead of downloading it again.
 //!
-//! A source is either a normal launcher layout (`versions/26.3/26.3.json`,
+//! A source is either a normal launcher layout (`versions/26.4-snapshot-10/26.4-snapshot-10.json`,
 //! `assets/indexes/34.json`, `assets/objects/xx/<hash>`) or a ZIP of one. The
 //! importer verifies the same pins the official installer uses and fills the
 //! installer's existing download cache. It never writes the prepared
@@ -111,11 +111,11 @@ pub fn info(home: &Path) -> InstallationInfo {
     }
 }
 
-/// Deletes the prepared 26.3 resources and its reusable download cache.
+/// Deletes the prepared 26.4-snapshot-10 resources and its reusable download cache.
 /// Saves, profiles, packs, mods and the APK's engine tables are untouched.
 pub fn remove(home: &Path) -> Result<()> {
     let versions = home.join(".local/horizon-client");
-    for name in ["26.3", "26.3.previous", "26.3.partial", "official.partial"] {
+    for name in ["26.4-snapshot-10", "26.4-snapshot-10.previous", "26.4-snapshot-10.partial", "26.3", "26.3.previous", "26.3.partial", "official.partial"] {
         remove_owned(&versions.join(name))?;
     }
     remove_owned(&crate::official_install::download_directory(home))?;
@@ -1003,7 +1003,7 @@ mod tests {
     fn remove_deletes_only_minecraft_resources() {
         let fixture = fixture("remove");
         let home = fixture.root.join("home");
-        let prepared = home.join(".local/horizon-client/26.3");
+        let prepared = home.join(".local/horizon-client/26.4-snapshot-10");
         fs::create_dir_all(&prepared).unwrap();
         fs::write(prepared.join("horizon-resources.json"), b"{}").unwrap();
         fs::create_dir_all(home.join("saves/world")).unwrap();
@@ -1061,7 +1061,7 @@ mod tests {
     fn a_failed_import_leaves_an_existing_installation_untouched() {
         let fixture = fixture("existing");
         let home = fixture.root.join("home");
-        let sentinel = home.join(".local/horizon-client/26.3/sentinel");
+        let sentinel = home.join(".local/horizon-client/26.4-snapshot-10/sentinel");
         fs::create_dir_all(sentinel.parent().unwrap()).unwrap();
         fs::write(&sentinel, b"keep me").unwrap();
         fs::remove_file(fixture.root.join("versions/26.3/26.3.json")).unwrap();

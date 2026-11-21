@@ -2912,7 +2912,7 @@ mod bucket_use_tests {
 #[cfg(test)]
 pub(crate) fn prepared_items() -> Option<Items> {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../.local/horizon-client/26.3");
+        .join("../../.local/horizon-client/26.4-snapshot-10");
     if !root.join("items.json").exists() {
         return None;
     }

@@ -1,4 +1,4 @@
-//! `horizon-bots`: load-test bots for any Minecraft Java Edition 26.3 server, vanilla, Paper or Horizon
+//! `horizon-bots`: load-test bots for any Minecraft Java Edition 26.4-snapshot-10 server, vanilla, Paper or Horizon
 //! (docs/server.md, section 9). Each bot logs in offline, goes through configuration as vanilla's client
 //! does, answers keep-alives and pings, accepts teleports, acknowledges chunk batches, and moves at 20 Hz.
 //!
@@ -51,7 +51,7 @@ use std::{
 };
 
 const HELP: &str = "\
-horizon-bots: load-test bots for a Minecraft Java Edition 26.3 server (offline mode, creative)
+horizon-bots: load-test bots for a Minecraft Java Edition 26.4-snapshot-10 server (offline mode, creative)
 
   --server HOST:PORT     default 127.0.0.1:25565
   --bots N               default 10
@@ -678,7 +678,7 @@ fn raw(id: i32, write: impl FnOnce(&mut Writer)) -> Vec<u8> {
     w.data
 }
 
-/// Item ids of the pinned version (26.3's item registry).
+/// Item ids of the pinned version (26.4-snapshot-10's item registry).
 const STONE: i32 = 1;
 const WRITABLE_BOOK: i32 = 1371;
 

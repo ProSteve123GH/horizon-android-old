@@ -14,7 +14,7 @@ use std::{
 
 pub fn main() -> Result<()> {
     let args: Vec<_> = crate::args().collect();
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/horizon-client/26.3");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/horizon-client/26.4-snapshot-10");
     let items = Items::catalog(&root, &PackOverlay::NONE)?;
     let mut out = BufWriter::new(File::create(&args[2])?);
     for line in BufReader::new(File::open(&args[1])?).lines() {

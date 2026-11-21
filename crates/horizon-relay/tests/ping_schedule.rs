@@ -37,8 +37,8 @@ fn guest_joins_do_not_starve_a_hosts_pings() {
     host.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     let hello = ToRelay::Host {
         v: wire::VERSION,
-        protocol: 777,
-        game: "26.3".into(),
+        protocol: 1073742172,
+        game: "26.4-snapshot-10".into(),
     };
     wire::send(&mut host, &hello).unwrap();
     let nameplate = match wire::recv::<_, FromRelay>(&mut host).unwrap() {
@@ -71,8 +71,8 @@ fn guest_joins_do_not_starve_a_hosts_pings() {
         let join = ToRelay::Join {
             v: wire::VERSION,
             nameplate: nameplate.clone(),
-            protocol: 777,
-            game: "26.3".into(),
+            protocol: 1073742172,
+            game: "26.4-snapshot-10".into(),
         };
         wire::send(&mut guest, &join).unwrap();
         match wire::recv::<_, FromRelay>(&mut guest).unwrap() {

@@ -3,7 +3,7 @@
 in its brightest state, alone in dark tunnels, to judge and tune how light sources shine
 in HDR output (#1441).
 
-  hdr_gallery.py --world SAVES/MyWorld [--resources .local/horizon-client/26.3]
+  hdr_gallery.py --world SAVES/MyWorld [--resources .local/horizon-client/26.4-snapshot-10]
 
 Then, in the world (creative, on a flat open spot, high up is easiest):
 
@@ -237,7 +237,7 @@ def gallery(names, states):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--world", type=Path, required=True, help="the world's save folder")
-    parser.add_argument("--resources", type=Path, default=ROOT / ".local/horizon-client/26.3")
+    parser.add_argument("--resources", type=Path, default=ROOT / ".local/horizon-client/26.4-snapshot-10")
     args = parser.parse_args()
     if not (args.world / "level.dat").exists():
         sys.exit(f"{args.world}: no level.dat, not a world folder")

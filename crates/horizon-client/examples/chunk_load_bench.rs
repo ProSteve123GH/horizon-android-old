@@ -4,7 +4,7 @@
 //! change to generation or meshing shows as time per column and per section.
 //!
 //!     cargo run --release -p horizon-client --example chunk_load_bench -- \
-//!         .local/horizon-client/26.3 [--seed 1234] [--center CX CZ] [--radius 8]
+//!         .local/horizon-client/26.4-snapshot-10 [--seed 1234] [--center CX CZ] [--radius 8]
 //!         [--threads N] [--rounds 3] [--mesh-threads N] [--json out.json]
 //!
 //! The default centre is the village of `tools/perf_bench.py`. The generation

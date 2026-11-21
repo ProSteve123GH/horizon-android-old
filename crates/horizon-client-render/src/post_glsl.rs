@@ -270,7 +270,7 @@ mod tests {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .ancestors()
             .nth(2)?
-            .join(".local/horizon-client/26.3");
+            .join(".local/horizon-client/26.4-snapshot-10");
         dir.join("assets/minecraft/shaders/post/blit.fsh")
             .exists()
             .then_some(dir)

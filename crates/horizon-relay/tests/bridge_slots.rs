@@ -6,7 +6,7 @@ use std::io::{BufReader, Read};
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
-const PROTOCOL: i32 = 777;
+const PROTOCOL: i32 = 1073742172;
 
 fn relay(max_bridges: usize) -> (Relay, SocketAddr) {
     let (relay, address, _) = Relay::spawn_local(Config {
@@ -33,7 +33,7 @@ fn host(address: SocketAddr) -> (BufReader<TcpStream>, TcpStream, String, String
         &ToRelay::Host {
             v: wire::VERSION,
             protocol: PROTOCOL,
-            game: "26.3".into(),
+            game: "26.4-snapshot-10".into(),
         },
     )
     .unwrap();
@@ -55,7 +55,7 @@ fn join(address: SocketAddr, nameplate: &str) -> TcpStream {
             v: wire::VERSION,
             nameplate: nameplate.into(),
             protocol: PROTOCOL,
-            game: "26.3".into(),
+            game: "26.4-snapshot-10".into(),
         },
     )
     .unwrap();

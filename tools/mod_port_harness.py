@@ -222,7 +222,7 @@ def compare_mod(mod, oracle, horizon, carry, upgrades, old_items, carry_dir=None
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--work', required=True)
-    parser.add_argument('--resources', default=str(ROOT / '.local/horizon-client/26.3'))
+    parser.add_argument('--resources', default=str(ROOT / '.local/horizon-client/26.4-snapshot-10'))
     parser.add_argument('--jars', help='export the oracle facts from these jars first')
     parser.add_argument('--deps')
     parser.add_argument('mods', nargs='*')

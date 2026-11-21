@@ -2923,7 +2923,7 @@ mod tests {
     #[test]
     fn villager_layers_name_textures_that_exist() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client/26.3");
+            .join("../../.local/horizon-client/26.4-snapshot-10");
         if !root.join("entity-models.json").exists() {
             return;
         }
@@ -2958,7 +2958,7 @@ mod tests {
     #[test]
     fn sulfur_cube_opaque_core_is_submitted_before_its_translucent_shell() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client/26.3");
+            .join("../../.local/horizon-client/26.4-snapshot-10");
         if !root.join("entity-models.json").exists() {
             return;
         }
@@ -3051,7 +3051,7 @@ mod tests {
     #[test]
     fn copper_golem_eyes_are_drawn_on_the_body_model() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client/26.3");
+            .join("../../.local/horizon-client/26.4-snapshot-10");
         if !root.join("entity-models.json").exists() {
             return;
         }
@@ -3107,7 +3107,7 @@ mod tests {
     #[test]
     fn the_vex_holds_its_item_at_the_small_scale() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client/26.3");
+            .join("../../.local/horizon-client/26.4-snapshot-10");
         if !root.join("entity-models.json").exists() {
             return;
         }
@@ -3148,7 +3148,7 @@ mod tests {
     #[test]
     fn villagers_and_traders_hold_items_in_crossed_arms() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client/26.3");
+            .join("../../.local/horizon-client/26.4-snapshot-10");
         if !root.join("entity-models.json").exists() {
             return;
         }
@@ -3172,7 +3172,7 @@ mod tests {
     #[test]
     fn the_phantom_model_sits_in_its_box() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client/26.3");
+            .join("../../.local/horizon-client/26.4-snapshot-10");
         if !root.join("entity-models.json").exists() {
             return;
         }
@@ -3219,7 +3219,7 @@ mod tests {
             .contains(&ARMOR_GLINT)
         );
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client/26.3");
+            .join("../../.local/horizon-client/26.4-snapshot-10");
         if !root.join("entity-models.json").exists() {
             return;
         }
@@ -3322,7 +3322,7 @@ mod tests {
     #[test]
     fn a_jeb_sheep_cycles_its_wool_colour_and_keeps_the_undercoat() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client/26.3");
+            .join("../../.local/horizon-client/26.4-snapshot-10");
         if !root.join("entity-models.json").exists() {
             return;
         }
@@ -3419,7 +3419,7 @@ mod scroll_tests {
     #[test]
     fn a_sheared_dyed_sheep_keeps_its_wool_undercoat() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client/26.3");
+            .join("../../.local/horizon-client/26.4-snapshot-10");
         if !root.join("entity-models.json").exists() {
             return;
         }
@@ -3557,7 +3557,7 @@ mod scroll_tests {
     #[test]
     fn no_two_part_names_share_a_key() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client/26.3");
+            .join("../../.local/horizon-client/26.4-snapshot-10");
         if !root.join("entity-models.json").exists() {
             return;
         }
@@ -3594,7 +3594,7 @@ mod scroll_tests {
     fn benchmark_mob_farm_geometry() {
         use std::{hash::Hasher, hint::black_box, time::Instant};
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client/26.3");
+            .join("../../.local/horizon-client/26.4-snapshot-10");
         if !root.join("entity-models.json").exists() {
             return;
         }

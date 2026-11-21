@@ -18,7 +18,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path,
                         default=Path("target/release/examples/gameplay_decode_profile"))
-    parser.add_argument("--resources", type=Path, default=Path(".local/horizon-client/26.3"))
+    parser.add_argument("--resources", type=Path, default=Path(".local/horizon-client/26.4-snapshot-10"))
     parser.add_argument("--repeats", type=int, default=8)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()

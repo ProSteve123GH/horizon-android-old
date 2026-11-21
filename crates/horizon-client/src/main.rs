@@ -1,4 +1,4 @@
-//! Horizon: native Rust client for Minecraft Java Edition 26.3 gameplay.
+//! Horizon: native Rust client for Minecraft Java Edition 26.4-snapshot-10 gameplay.
 #![forbid(unsafe_code)]
 
 #[cfg(not(feature = "system-allocator"))]

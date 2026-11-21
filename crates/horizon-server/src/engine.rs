@@ -147,7 +147,7 @@ pub fn resources(config: &Config, dir: &Path, program: Option<&Path>) -> Result<
                 .map(|d| format!("  {}", d.display()))
                 .collect();
             format!(
-                "no prepared game files. Horizon reads them from your own copy of Minecraft 26.3:\n\
+                "no prepared game files. Horizon reads them from your own copy of Minecraft 26.4-snapshot-10:\n\
                  prepare them with `horizon-prepare --prepare --server-jar PATH` (or the launcher) and copy \
                  the folder to resources/ here, or set engine.resources in server.toml. Looked in:\n{}",
                 tried.join("\n")
@@ -493,7 +493,7 @@ mod tests {
         let program = Path::new("/opt/horizon/target/release/horizon-client");
         let found = resource_candidates(&config, dir, Some(program));
         assert_eq!(found[0], Path::new("/srv/mc/resources"));
-        assert!(found.contains(&PathBuf::from("/opt/horizon/.local/horizon-client/26.3")));
+        assert!(found.contains(&PathBuf::from("/opt/horizon/.local/horizon-client/26.4-snapshot-10")));
         config.engine.resources = "/data/res".into();
         assert_eq!(
             resource_candidates(&config, dir, Some(program)),
@@ -504,7 +504,7 @@ mod tests {
     #[test]
     fn resources_prepared_without_sounds_are_found() {
         let root = std::env::temp_dir().join(format!("horizon-server-res-{}", std::process::id()));
-        let prepared = root.join(".local/horizon-client/26.3");
+        let prepared = root.join(".local/horizon-client/26.4-snapshot-10");
         std::fs::create_dir_all(&prepared).unwrap();
         let program = root.join("horizon-client");
         let config = Config::default();

@@ -1852,7 +1852,7 @@ mod preview_tests {
     #[test]
     fn an_invisible_body_keeps_its_armour() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client/26.3");
+            .join("../../.local/horizon-client/26.4-snapshot-10");
         let Some(kind) = player_type(&root) else {
             return;
         };

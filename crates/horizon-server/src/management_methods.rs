@@ -1,4 +1,4 @@
-//! The methods of vanilla's management protocol (`management.rs`), as vanilla 26.3's `methods/*Service` answer
+//! The methods of vanilla's management protocol (`management.rs`), as vanilla 26.4-snapshot-10's `methods/*Service` answer
 //! them: the players, the server's state, and the lists. Kicks, saves and messages go through the game's
 //! console, so they log and save as an operator's command would; the lists change through the game's
 //! `management` request (game/dedicated/management.rs), which finds the players and sends the shut-out away as
@@ -1467,7 +1467,7 @@ status-heartbeat-interval=0
         assert_eq!(
             reply.unwrap().unwrap(),
             json!({ "jsonrpc": "2.0", "id": null, "result": {
-                "started": false, "version": { "name": "26.3", "protocol": 777 } } })
+                "started": false, "version": { "name": "26.4-snapshot-10", "protocol": 1073742172 } } })
         );
     }
 

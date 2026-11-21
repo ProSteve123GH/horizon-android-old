@@ -7,7 +7,7 @@ use std::path::Path;
 
 #[test]
 fn vanilla_models_and_animations_stay_inside_the_precheck_envelope() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/horizon-client/26.3");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/horizon-client/26.4-snapshot-10");
     if !root.join("entity-models.json").exists() {
         eprintln!("no prepared resources: skipped model coverage");
         return;

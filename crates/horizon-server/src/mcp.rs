@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 use std::path::Path;
 
 /// What an agent reads before its first call.
-const INSTRUCTIONS: &str = "Run and moderate a Horizon (Minecraft Java Edition 26.3) server. Start with status and players. Moderation tools (kick, ban, pardon, ban_ip, op, whitelist...) run vanilla's console commands and answer `changed` and the console's lines; events and logs read what happened since a number they return. Destructive tools that can't be undone need confirm: true.";
+const INSTRUCTIONS: &str = "Run and moderate a Horizon (Minecraft Java Edition 26.4-snapshot-10) server. Start with status and players. Moderation tools (kick, ban, pardon, ban_ip, op, whitelist...) run vanilla's console commands and answer `changed` and the console's lines; events and logs read what happened since a number they return. Destructive tools that can't be undone need confirm: true.";
 
 /// The revisions this server advertises: `horizon_mcp` serves them (`2026-07-28` stateless,
 /// `2025-06-18` for the clients that still open with `initialize`).

@@ -17,7 +17,7 @@ Horizon's headless client (`HORIZON_NET_REPORT`, the net harness) joins, sends t
   chats unsigned as before ("[Not Secure]" in the log).
 
     python3 tools/secure_chat_client_e2e.py --binary target/fast/horizon-client \\
-        --resources .local/horizon-client/26.3 --server-jar .local/minecraft/26.3/jars/server.jar \\
+        --resources .local/horizon-client/26.4-snapshot-10 --server-jar .local/minecraft/26.4-snapshot-10/jars/server.jar \\
         --java /path/to/java25
 
 Needs `openssl` on PATH (the mock's RSA). Logs and reports go to --out.

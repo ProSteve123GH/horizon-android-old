@@ -10,7 +10,7 @@ Prints how many blocks differ, the most common (26.2 -> 26.3) pairs and
 which heights they are at. The server logs are checked for data pack and
 registry errors: a pack 26.3 refuses fails the run.
 
-Jars: `.local/vanilla-26.2/server.jar` and `.local/minecraft/26.3/jars/server.jar`
+Jars: `.local/vanilla-26.2/server.jar` and `.local/minecraft/26.4-snapshot-10/jars/server.jar`
 (the bundler jars the player downloaded). Needs Java 25 on PATH or JAVA_HOME.
 
 usage: datapack_upgrade_fidelity.py [--old-pack P --new-pack Q] [--seed N]
@@ -31,7 +31,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import anvil_dump  # noqa: E402
 from test_dedicated_server_parity import Server, free_port  # noqa: E402
 
-JARS = {"26.2": ROOT / ".local/vanilla-26.2/server.jar", "26.3": ROOT / ".local/minecraft/26.3/jars/server.jar"}
+JARS = {"26.2": ROOT / ".local/vanilla-26.2/server.jar", "26.3": ROOT / ".local/minecraft/26.4-snapshot-10/jars/server.jar"}
 ERRORS = re.compile(r"Failed to (load|parse|get element)|Errors in registry|Unknown registry key|"
                     r"No key|Missing|Couldn't load|Failed to load datapacks|Exception", re.I)
 

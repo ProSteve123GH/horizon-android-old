@@ -4,7 +4,7 @@
 //! world loads, once per worker count, each on a freshly seeded generator.
 //!
 //!     cargo run --release -p horizon-client-lib --example gen_light_bench -- \
-//!         .local/horizon-client/26.3 [--seed 1234] [--center CX CZ] [--radius 12]
+//!         .local/horizon-client/26.4-snapshot-10 [--seed 1234] [--center CX CZ] [--radius 12]
 //!         [--threads 1,2,4,8] [--period-ms 2] [--repeat 1] [--json]
 //!
 //! For each run it prints the wall time until every column within the radius

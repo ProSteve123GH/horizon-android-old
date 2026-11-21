@@ -6,7 +6,7 @@ use serde_json::Value as Json;
 use std::collections::BTreeMap;
 
 /// The Minecraft version Horizon plays, for `modOn('minecraft', range)`.
-pub const MINECRAFT_VERSION: &str = "26.3";
+pub const MINECRAFT_VERSION: &str = "26.4-snapshot-10";
 
 /// A config entry's value: a number (slider), text (cycle button) or boolean (toggle).
 #[derive(Clone, Debug, PartialEq)]

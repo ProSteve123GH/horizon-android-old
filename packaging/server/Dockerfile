@@ -5,7 +5,7 @@
 # (horizon-prepare --prepare, see packaging/PLAY.txt) and mount the folder it writes, read-only:
 #   docker run -d --name horizon -p 25565:25565 --stop-timeout 180 \
 #     -v horizon-data:/data \
-#     -v /path/to/.local/horizon-client/26.3:/opt/horizon/.local/horizon-client/26.3:ro \
+#     -v /path/to/.local/horizon-client/26.4-snapshot-10:/opt/horizon/.local/horizon-client/26.4-snapshot-10:ro \
 #     -e HORIZON_EULA=true -e HORIZON_WHITELIST=true -e HORIZON_PLAYERS=Alex,Steve -e HORIZON_OP=Alex \
 #     horizon-server
 #

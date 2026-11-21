@@ -4,7 +4,7 @@
 Vanilla 26.2's worldgen (from the 26.2 server jar the player downloaded
 themselves, `--jar-26-2`, default `.local/vanilla-26.2/server-game.jar`) is
 written out as a data pack, upgraded, and compared with vanilla 26.3's
-worldgen (`.local/minecraft/26.3/jars/server-game.jar`) file by file: the
+worldgen (`.local/minecraft/26.4-snapshot-10/jars/server-game.jar`) file by file: the
 registries whose format changed and whose content did not must come out
 identical. Per registry it prints how many files match and the paths where
 the rest differ, most common first. Density functions and noise settings
@@ -89,7 +89,7 @@ def main():
     parser.add_argument("--show", type=int, default=6, help="diff paths shown per registry")
     parser.add_argument("--keep", type=pathlib.Path, help="copy both trees here to inspect them")
     args = parser.parse_args()
-    new_jar = ROOT / ".local/minecraft/26.3/jars/server-game.jar"
+    new_jar = ROOT / ".local/minecraft/26.4-snapshot-10/jars/server-game.jar"
     for jar in (args.jar_26_2, new_jar):
         if not jar.exists():
             sys.exit(f"missing {jar}")

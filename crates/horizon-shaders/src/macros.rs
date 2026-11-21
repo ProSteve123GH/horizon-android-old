@@ -30,7 +30,7 @@ fn is_feature(name: &str) -> bool {
     FEATURES.iter().any(|f| f.eq_ignore_ascii_case(name))
 }
 
-/// `MC_VERSION` of the version Horizon plays: 26.3 → 260300.
+/// `MC_VERSION` of the version Horizon plays: 26.4-snapshot-10 → 260400.
 pub const MC_VERSION: u32 = mc_version(horizon_core::version::VERSION_ID);
 
 /// The documented rule, `major * 10000 + minor * 100 + patch` (spec 1.5.1, OQ-1): `1.21` → 12100,
@@ -604,8 +604,8 @@ mod tests {
         assert_eq!(mc_version("1.21.0"), 12100);
         assert_eq!(mc_version("1.7.10"), 10710);
         assert_eq!(mc_version("26.3"), 260300);
-        assert_eq!(MC_VERSION, 260300);
-        assert_eq!(Macros::standard().get("MC_VERSION"), Some("260300"));
+        assert_eq!(MC_VERSION, 260400);
+        assert_eq!(Macros::standard().get("MC_VERSION"), Some("260400"));
     }
 
     #[test]

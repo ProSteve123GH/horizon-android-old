@@ -596,7 +596,7 @@ mod tests {
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| {
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../.local/horizon-client/26.3")
+                    .join("../../.local/horizon-client/26.4-snapshot-10")
             });
         let path = root.join(format!("worldgen/biome_parameters/{name}.json"));
         let Ok(report) = std::fs::read_to_string(&path) else {

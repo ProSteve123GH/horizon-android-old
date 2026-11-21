@@ -4,7 +4,7 @@ use super::*;
 fn a_folder_without_prepared_files_is_named_before_loading() {
     let root = std::env::temp_dir().join(format!("horizon-unprepared-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
-    let unprepared = root.join(".local/horizon-client/26.3");
+    let unprepared = root.join(".local/horizon-client/26.4-snapshot-10");
     let missing = missing_resources(&unprepared, None).expect("no manifest is reported");
     assert!(missing.contains("horizon-resources.json"), "{missing}");
     assert!(missing.contains("horizon-unprepared-"), "{missing}");

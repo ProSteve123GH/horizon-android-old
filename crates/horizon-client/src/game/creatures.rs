@@ -8203,7 +8203,7 @@ mod knockback_tests {
     /// knockback resistance and the motion changes; a mod's strength or
     /// direction pushes, a cancel pushes nothing, and without a mod in the way
     /// the push is vanilla's. Needs the prepared data in
-    /// `.local/horizon-client/26.3`; skipped without it.
+    /// `.local/horizon-client/26.4-snapshot-10`; skipped without it.
     #[test]
     fn the_native_knockback_hook_changes_or_cancels_a_players_push() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

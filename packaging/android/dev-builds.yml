@@ -69,7 +69,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up JDK 25 for Minecraft 26.3 exporters
+      - name: Set up JDK 25 for Minecraft 26.4-snapshot-10 exporters
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
@@ -150,7 +150,7 @@ jobs:
           restore-keys: |
             android-gradle-build-${{ runner.os }}-${{ matrix.abi }}-
 
-      - name: Restore prepared Minecraft 26.3 engine inputs
+      - name: Restore prepared Minecraft 26.4-snapshot-10 engine inputs
         id: minecraft-cache
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
@@ -211,7 +211,7 @@ jobs:
           python3 tools/check_public_tree.py
           python3 -m unittest discover -s tests -p 'test_android_release_audit.py'
 
-      - name: Prepare Minecraft 26.3 engine inputs from official Mojang downloads
+      - name: Prepare Minecraft 26.4-snapshot-10 engine inputs from official Mojang downloads
         run: python3 tools/android_prepare.py --java-home "$JAVA25_HOME"
 
       - name: Build, sign and audit the Horizon Android dev APK
@@ -317,7 +317,7 @@ jobs:
           path: .local/android/gradle-build
           key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
-      - name: Save the prepared Minecraft 26.3 engine inputs on the Android main branch
+      - name: Save the prepared Minecraft 26.4-snapshot-10 engine inputs on the Android main branch
         if: github.ref == 'refs/heads/android' && steps.minecraft-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:

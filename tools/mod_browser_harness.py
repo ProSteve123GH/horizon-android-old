@@ -20,7 +20,7 @@ Prints one JSON line per step and a summary; exits 1 when a step fails.
 Needs the launcher (launcher/target/debug/horizon-launcher, built with
 `--features gpui_platform/runtime_shaders` on macOS), the game and horizon-ctl
 (target/fast/horizon-client, target/fast/horizon-ctl, or --bin DIR) and the prepared resources in
-.local/horizon-client/26.3. Downloads from Modrinth.
+.local/horizon-client/26.4-snapshot-10. Downloads from Modrinth.
 """
 import argparse
 import json
@@ -154,7 +154,7 @@ def main():
     ap.add_argument("--query", default="macaw", help="the search text that finds it")
     ap.add_argument("--launcher", default=str(ROOT / "launcher/target/debug/horizon-launcher"))
     ap.add_argument("--bin", default=str(ROOT / "target/fast"), help="folder with horizon-client and horizon-ctl")
-    ap.add_argument("--resources", default=str(ROOT / ".local/horizon-client/26.3"))
+    ap.add_argument("--resources", default=str(ROOT / ".local/horizon-client/26.4-snapshot-10"))
     ap.add_argument("--keep", action="store_true", help="keep the scratch game folder")
     args = ap.parse_args()
 

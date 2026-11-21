@@ -151,14 +151,14 @@ mod tests {
             &ToRelay::Join {
                 v: VERSION,
                 nameplate: "K7QM".into(),
-                protocol: 777,
-                game: "26.3".into(),
+                protocol: 1073742172,
+                game: "26.4-snapshot-10".into(),
             },
         )
         .unwrap();
         assert_eq!(
             String::from_utf8(buf.clone()).unwrap(),
-            "{\"op\":\"join\",\"v\":1,\"nameplate\":\"K7QM\",\"protocol\":777,\"game\":\"26.3\"}\n"
+            "{\"op\":\"join\",\"v\":1,\"nameplate\":\"K7QM\",\"protocol\":1073742172,\"game\":\"26.4-snapshot-10\"}\n"
         );
         send(
             &mut buf,
@@ -171,7 +171,7 @@ mod tests {
         buf.extend_from_slice(b"raw");
         let mut r = &buf[..];
         let first: ToRelay = recv(&mut r).unwrap();
-        assert!(matches!(first, ToRelay::Join { protocol: 777, .. }));
+        assert!(matches!(first, ToRelay::Join { protocol: 1073742172, .. }));
         let second: FromRelay = recv(&mut r).unwrap();
         assert_eq!(
             second,

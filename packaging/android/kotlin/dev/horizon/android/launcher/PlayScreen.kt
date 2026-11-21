@@ -59,6 +59,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.util.Locale
 
+/** The Minecraft version this build of Horizon plays. */
+private const val MINECRAFT_VERSION = "26.4-snapshot-10"
+
 /**
  * The Play page reads as one dashboard: a status card, the primary action, then labelled groups
  * of shortcuts and game-file controls. On wide windows the groups flow into two columns with the
@@ -149,7 +152,7 @@ private fun StatusCard(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    "${state.version}  ·  Minecraft 26.3  ·  ${state.config.renderer}",
+                    "${state.version}  ·  Minecraft $MINECRAFT_VERSION  ·  ${state.config.renderer}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
@@ -297,7 +300,7 @@ private fun InstallCard(install: Install, actions: LauncherActions, modifier: Mo
 private fun ImportOptions(install: Install, actions: LauncherActions) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(
-            "Already have Minecraft 26.3? Reuse its files from this phone or a ZIP; only missing files download. " +
+            "Already have Minecraft $MINECRAFT_VERSION? Reuse its files from this phone or a ZIP; only missing files download. " +
                 "Java libraries and LWJGL are not needed by Horizon.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -381,7 +384,7 @@ fun RemoveInstallationDialog(install: Install, onDismiss: () -> Unit) {
         title = { Text("Remove Minecraft resources?") },
         text = {
             Text(
-                "This deletes the prepared Minecraft 26.3 files (${formatBytes(install.sizeBytes)}) " +
+                "This deletes the prepared Minecraft $MINECRAFT_VERSION files (${formatBytes(install.sizeBytes)}) " +
                     "so you can import or download them again. Saves, profiles, packs and mods stay.",
             )
         },
@@ -470,7 +473,7 @@ private fun VersionCard(state: Snapshot, onClick: () -> Unit, modifier: Modifier
                 }
             }
             Column(Modifier.padding(start = 12.dp).weight(1f)) {
-                Text("Minecraft 26.3", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("Minecraft $MINECRAFT_VERSION", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text(
                     "${state.config.profileName}  ·  ${state.config.renderScale}%  ·  ${state.config.input}",
                     style = MaterialTheme.typography.bodyMedium,
@@ -584,7 +587,7 @@ private fun PlayActionCard(
                     when {
                         install.installed -> "Play"
                         state.error != null -> "Retry installation"
-                        else -> "Download Minecraft 26.3"
+                        else -> "Download Minecraft $MINECRAFT_VERSION"
                     },
                     style = if (install.installed) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,

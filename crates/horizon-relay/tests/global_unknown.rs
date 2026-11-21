@@ -6,7 +6,7 @@ use std::io::BufReader;
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
-const PROTOCOL: i32 = 777;
+const PROTOCOL: i32 = 1073742172;
 
 fn connect(address: SocketAddr) -> TcpStream {
     let s = TcpStream::connect(address).unwrap();
@@ -20,7 +20,7 @@ fn join(address: SocketAddr, nameplate: &str) -> FromRelay {
         v: wire::VERSION,
         nameplate: nameplate.into(),
         protocol: PROTOCOL,
-        game: "26.3".into(),
+        game: "26.4-snapshot-10".into(),
     };
     wire::send(&mut s, &hello).unwrap();
     wire::recv(&mut s).unwrap()
@@ -40,7 +40,7 @@ fn a_spent_global_budget_refuses_unknown_codes_but_not_real_ones() {
     let hello = ToRelay::Host {
         v: wire::VERSION,
         protocol: PROTOCOL,
-        game: "26.3".into(),
+        game: "26.4-snapshot-10".into(),
     };
     wire::send(&mut host, &hello).unwrap();
     let mut reader = BufReader::new(host.try_clone().unwrap());

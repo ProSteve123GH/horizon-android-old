@@ -281,7 +281,7 @@ mod tests {
     /// The screen in English, every key it asks for there.
     fn screen(get: Option<GetTheGame>) -> NoResources {
         let (screen, missed) = lang::scoped(lang::Language::load(&[], "en_us"), || {
-            NoResources::new(std::path::Path::new(".local/horizon-client/26.3"), get)
+            NoResources::new(std::path::Path::new(".local/horizon-client/26.4-snapshot-10"), get)
         });
         assert_eq!(missed, Vec::<String>::new());
         screen

@@ -383,7 +383,7 @@ pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + S
 }
 
 /// Installs while keeping an accepted asset index supplied by an import.
-/// Minecraft republished 26.3's asset index for translations only; replacing a
+/// Mojang may republish an asset index for translations only; replacing a
 /// complete imported index would download files the source already contained.
 pub fn install_with_progress_and_index(
     home: &Path,
@@ -423,7 +423,7 @@ pub fn install_with_progress_and_index(
     let checksum = entry["sha1"]
         .as_str()
         .ok_or("Missing version metadata hash")?;
-    // Mojang may reissue metadata while Minecraft 26.3's game jars are unchanged.
+    // Mojang may reissue metadata while the game jars are unchanged.
     // The downloaded JSON is still verified against the catalogue's SHA-1,
     // and the actual client/server jar hashes remain engine-pinned.
     let manifest_url = entry["url"]
