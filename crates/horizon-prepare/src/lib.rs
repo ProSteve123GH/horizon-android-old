@@ -586,7 +586,17 @@ impl Run<'_> {
         log: &Path,
     ) -> Result<(), String> {
         (self.log)(&format!("Exporting {what} ({})", mains.join(", ")));
-        let fail = |e: String| format!("{e} while exporting {what}; see {}", log.display());
+        // Include the failing compiler's output in the error itself. The per-exporter log lives
+        // in the staging tree and is gone by the time a CI job's artifacts would be collected.
+        let fail = |e: String| {
+            let output = fs::read_to_string(log).unwrap_or_default();
+            let tail = output.chars().rev().take(12000).collect::<Vec<_>>();
+            let tail: String = tail.into_iter().rev().collect();
+            format!(
+                "{e} while exporting {what}; see {}\n--- exporter output (tail) ---\n{tail}",
+                log.display()
+            )
+        };
         // Compiled first, so the time is this step's (the JVM's start included).
         self.bundle().map_err(fail)?;
         let started = Instant::now();
