@@ -22,12 +22,15 @@ pub enum SkipRendering {
     Leaves,
     Liquid,
     MangroveRoots,
+    /// 26.4 `IceBlock.skipRendering`: neighbour in `minecraft:face_occluding_ice_blocks`.
+    Ice,
 }
 #[derive(Clone, Copy, Debug)]
 pub struct RenderDefinition {
     pub skip: SkipRendering,
     pub can_occlude: bool,
     pub bars_tag: bool,
+    pub face_occluding_ice_tag: bool,
 }
 #[derive(Clone, Copy)]
 struct State {
@@ -164,6 +167,7 @@ impl FaceVisibility {
             SkipRendering::Leaves => !cutout_leaves && b.definition.skip == SkipRendering::Leaves,
             SkipRendering::Liquid => a.fluid.same_family(b.fluid),
             SkipRendering::MangroveRoots => a.block == b.block && vertical,
+            SkipRendering::Ice => b.definition.face_occluding_ice_tag || a.block == b.block,
             SkipRendering::Bars => {
                 (a.block == b.block
                     || (a.definition.bars_tag

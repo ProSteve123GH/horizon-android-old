@@ -25,6 +25,7 @@ public final class VanillaFaceVisibilityOracle {
                     case "IronBarsBlock" -> "bars";
                     case "LeavesBlock" -> "leaves";
                     case "LiquidBlock" -> "liquid";
+                    case "IceBlock" -> "ice";
                     case "MangroveRootsBlock" -> "mangrove_roots";
                     default -> throw new AssertionError("Unhandled skip-rendering owner "+type);
                 };
@@ -46,7 +47,9 @@ public final class VanillaFaceVisibilityOracle {
                 var state=block.defaultBlockState();var ids=new ArrayList<Integer>();
                 for(var value:block.getStateDefinition().getPossibleStates())ids.add(Block.getId(value));
                 definitions.put(BuiltInRegistries.BLOCK.getKey(block).toString(),Map.of("rule",rule(block),
-                    "can_occlude",state.canOcclude(),"bars_tag",state.is(BlockTags.BARS),"default",Block.getId(state),"states",ids));
+                    "can_occlude",state.canOcclude(),"bars_tag",state.is(BlockTags.BARS),
+                    "face_occluding_ice_tag",state.is(BlockTags.FACE_OCCLUDING_ICE_BLOCKS),
+                    "default",Block.getId(state),"states",ids));
             }
             Files.writeString(directory.resolve("definitions.json"),JSON.toJson(definitions));return;
         }

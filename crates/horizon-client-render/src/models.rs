@@ -173,6 +173,7 @@ pub fn load_visibility(
                 "leaves" => SkipRendering::Leaves,
                 "liquid" => SkipRendering::Liquid,
                 "mangrove_roots" => SkipRendering::MangroveRoots,
+                "ice" => SkipRendering::Ice,
                 _ => return Err("unrecognized render rule"),
             };
             Ok((
@@ -181,6 +182,9 @@ pub fn load_visibility(
                     skip,
                     can_occlude: v["can_occlude"].as_bool().ok_or("missing occlusion flag")?,
                     bars_tag: v["bars_tag"].as_bool().ok_or("missing bars tag")?,
+                    face_occluding_ice_tag: v["face_occluding_ice_tag"]
+                        .as_bool()
+                        .ok_or("missing face-occluding ice tag")?,
                 },
             ))
         })
