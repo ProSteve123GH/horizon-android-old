@@ -26,6 +26,11 @@ public final class VanillaGameplayFactsExporter {
         return result;
     }
 
+    /** 26.4 block sound sets hold optional sound holders instead of a SoundType. */
+    private static JsonElement sound(java.util.Optional<net.minecraft.core.Holder<SoundEvent>> holder) {
+        return holder.<JsonElement>map(h -> sound(h.value())).orElse(JsonNull.INSTANCE);
+    }
+
     /** Writes each state as it is read: the whole file (56 MB) never sits in memory. */
     private static void states(Gson gson, com.google.gson.stream.JsonWriter out) throws java.io.IOException {
         var level = EmptyBlockGetter.INSTANCE;
@@ -79,15 +84,15 @@ public final class VanillaGameplayFactsExporter {
             o.addProperty("jump_factor", block.getJumpFactor());
             o.addProperty("explosion_resistance", block.getExplosionResistance());
             o.addProperty("item", BuiltInRegistries.ITEM.getKey(block.asItem()).toString());
-            var sound = state.getSoundType();
+            var sound = VanillaBlockBehaviourExporter.soundSet(state);
             var sounds = new JsonObject();
-            sounds.addProperty("volume", sound.getVolume());
-            sounds.addProperty("pitch", sound.getPitch());
-            sounds.add("break", sound(sound.getBreakSound()));
-            sounds.add("step", sound(sound.getStepSound()));
-            sounds.add("place", sound(sound.getPlaceSound()));
-            sounds.add("hit", sound(sound.getHitSound()));
-            sounds.add("fall", sound(sound.getFallSound()));
+            sounds.addProperty("volume", sound.volume());
+            sounds.addProperty("pitch", sound.pitch());
+            sounds.add("break", sound(sound.breakSound()));
+            sounds.add("step", sound(sound.stepSound()));
+            sounds.add("place", sound(sound.placeSound()));
+            sounds.add("hit", sound(sound.hitSound()));
+            sounds.add("fall", sound(sound.fallSound()));
             o.add("sound", sounds);
             gson.toJson(o, out);
         }

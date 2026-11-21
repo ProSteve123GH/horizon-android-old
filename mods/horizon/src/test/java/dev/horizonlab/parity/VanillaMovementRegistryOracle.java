@@ -30,7 +30,7 @@ public final class VanillaMovementRegistryOracle {
     }
     static final class Level extends net.minecraft.server.level.ServerLevel {
         JsonObject input;PrintWriter out;int calls;
-        private Level(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+        private Level(){super(null,null,null,null,null,null,null,false);}
         @Override public BlockState getBlockState(BlockPos p){out.println("state "+p.getX()+" "+p.getY()+" "+p.getZ());int call=calls++;if(call==input.get("fail").getAsInt())throw new Stop();var states=input.getAsJsonArray("states");return Block.stateById(states.get(call%states.size()).getAsInt());}
     }
     static final class Actor extends Marker {

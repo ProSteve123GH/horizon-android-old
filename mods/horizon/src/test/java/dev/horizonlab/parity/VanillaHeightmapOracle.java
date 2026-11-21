@@ -131,7 +131,7 @@ public final class VanillaHeightmapOracle {
         Holder<Biome> biome=Holder.Reference.createStandAlone(new HolderOwner<Biome>(){},Biomes.PLAINS);
         var ids=new IdMapper<Holder<Biome>>();ids.add(biome);
         // Only in-memory section storage is exercised; biome and section codecs are not invoked.
-        factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,Strategy.createForBiomes(ids),biome,null);
+        factory=new PalettedContainerFactory(Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY),Blocks.AIR.defaultBlockState(),null,biome,null,null,Strategy.createForBiomes(ids),null);
         bindTags(JsonParser.parseString(Files.readString(directory.resolve("tags.json"))).getAsJsonObject());
         try(var out=new PrintWriter(Files.newBufferedWriter(directory.resolve(args[0]+".txt"),StandardCharsets.UTF_8))) {
             for(int t=0;t<TYPES.length;t++)out.println("type "+t+" "+TYPES[t].getSerializationKey()+" "+TYPES[t].sendToClient()+" "+TYPES[t].keepAfterWorldgen());

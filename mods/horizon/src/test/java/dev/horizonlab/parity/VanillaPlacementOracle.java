@@ -24,7 +24,7 @@ public final class VanillaPlacementOracle {
     private static PlacementContext context(JsonObject f,PrintWriter out) {
         var v=f.getAsJsonArray("context");int min=v.get(0).getAsInt(),height=v.get(1).getAsInt(),sea=v.get(2).getAsInt();
         var zero=DensityFunctions.zero();
-        var settings=new NoiseGeneratorSettings(new NoiseSettings(min,height),Blocks.STONE.defaultBlockState(),Blocks.WATER.defaultBlockState(),new NoiseRouter(zero,zero,zero,zero,zero,zero,zero,zero),Holder.direct(new BlockRule(Blocks.STONE.defaultBlockState())),List.of(),sea,false,Optional.empty(),false,NoiseGeneratorSettings.DebugFunctions.EMPTY);
+        var settings=new NoiseGeneratorSettings(new NoiseSettings(min,height),Blocks.WATER.defaultBlockState(),new NoiseRouter(zero,zero,zero,zero,zero,zero,zero,zero),Holder.direct((net.minecraft.world.level.levelgen.material.rule.MaterialRule)new BlockRule(Blocks.STONE.defaultBlockState())),List.of(),sea,false,Optional.empty(),false,NoiseGeneratorSettings.DebugFunctions.EMPTY);
         var biome=Holder.Reference.createStandAlone(new HolderOwner<Biome>(){},Biomes.PLAINS);
         var generator=new NoiseBasedChunkGenerator(new FixedBiomeSource(biome),Holder.direct(settings));
         int worldMin=f.has("world_min")?f.get("world_min").getAsInt():min;int mode=f.has("height_mode")?f.get("height_mode").getAsInt():0;int fail=f.has("query_fail")?f.get("query_fail").getAsInt():-1;int[] calls={0};boolean layerWorld=f.has("layer_world")&&f.get("layer_world").getAsBoolean();

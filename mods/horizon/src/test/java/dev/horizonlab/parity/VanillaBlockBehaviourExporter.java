@@ -22,7 +22,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.sounds.BlockSoundSet;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.SupportType;
@@ -36,6 +36,45 @@ import net.minecraft.world.level.material.Fluid;
  * fire odds and block-item placement bindings. No behaviour is evaluated here.
  */
 public final class VanillaBlockBehaviourExporter {
+    private static volatile net.minecraft.core.MappedRegistry<BlockSoundSet> soundSets;
+
+    /**
+     * 26.4 replaced the old SoundType constants with a data-driven BlockSoundSet registry.
+     * Bootstrap the built-in sets directly so the exporters can resolve a block's sound key
+     * without loading data packs.
+     */
+    public static net.minecraft.core.MappedRegistry<BlockSoundSet> blockSoundSets() {
+        var cached = soundSets;
+        if (cached != null) return cached;
+        var registry = new net.minecraft.core.MappedRegistry<BlockSoundSet>(
+            net.minecraft.core.registries.Registries.BLOCK_SOUND_SET, com.mojang.serialization.Lifecycle.stable());
+        net.minecraft.data.worldgen.BootstrapContext<BlockSoundSet> context =
+            new net.minecraft.data.worldgen.BootstrapContext<>() {
+                public net.minecraft.core.Holder.Reference<BlockSoundSet> register(
+                        ResourceKey<BlockSoundSet> key, BlockSoundSet value) {
+                    return registry.register(key, value, net.minecraft.core.RegistrationInfo.BUILT_IN);
+                }
+                public <S> net.minecraft.core.HolderGetter<S> lookup(
+                        ResourceKey<? extends net.minecraft.core.Registry<? extends S>> key) {
+                    throw new UnsupportedOperationException();
+                }
+                public <S> java.util.stream.Stream<net.minecraft.core.Holder.Reference<S>> listContextElements(
+                        ResourceKey<? extends net.minecraft.core.Registry<? extends S>> key) {
+                    return java.util.stream.Stream.empty();
+                }
+            };
+        net.minecraft.world.level.block.sounds.BlockSoundSets.bootstrap(context);
+        registry.freeze();
+        soundSets = registry;
+        return registry;
+    }
+
+    /** The effective built-in sound set of a state, matching vanilla's block-sound lookup. */
+    public static BlockSoundSet soundSet(BlockState state) {
+        var sets = blockSoundSets();
+        return state.getSounds().map(sets::getValue).orElse(BlockSoundSet.EMPTY);
+    }
+
     private static JsonElement value(Object v, int depth) {
         if (v == null) {
             return JsonNull.INSTANCE;
@@ -79,7 +118,7 @@ public final class VanillaBlockBehaviourExporter {
                 o.add(key.isJsonPrimitive() ? key.getAsString() : key.toString(), value(entry.getValue(), depth - 1));
             }
             return o;
-        } else if (depth > 0 && v.getClass().isRecord()) {
+        } else if (depth > 0 && v.getClass().isRecord() && !(v instanceof BlockSoundSet)) {
             var o = new JsonObject();
             for (RecordComponent component : v.getClass().getRecordComponents()) {
                 try {
@@ -90,12 +129,12 @@ public final class VanillaBlockBehaviourExporter {
                 }
             }
             return o;
-        } else if (depth > 0 && v instanceof SoundType sound) {
+        } else if (depth > 0 && v instanceof BlockSoundSet sound) {
             var o = new JsonObject();
-            o.addProperty("volume", sound.getVolume());
-            o.addProperty("pitch", sound.getPitch());
-            o.addProperty("break", sound.getBreakSound().location().toString());
-            o.addProperty("place", sound.getPlaceSound().location().toString());
+            o.addProperty("volume", sound.volume());
+            o.addProperty("pitch", sound.pitch());
+            o.add("break", sound.breakSound().<JsonElement>map(h -> new JsonPrimitive(h.value().location().toString())).orElse(JsonNull.INSTANCE));
+            o.add("place", sound.placeSound().<JsonElement>map(h -> new JsonPrimitive(h.value().location().toString())).orElse(JsonNull.INSTANCE));
             return o;
         } else if (v instanceof net.minecraft.core.particles.ParticleType<?> particle) {
             return new JsonPrimitive(BuiltInRegistries.PARTICLE_TYPE.getKey(particle).toString());
@@ -194,7 +233,7 @@ public final class VanillaBlockBehaviourExporter {
             var fluid = state.getFluidState();
             int fluidId = BuiltInRegistries.FLUID.getId(fluid.getType());
             int fluidAmount = fluid.getAmount();
-            boolean falling = fluid.hasProperty(FlowingFluid.FALLING) && fluid.getValue(FlowingFluid.FALLING);
+            boolean falling = fluid.getType() instanceof FlowingFluid flowing && flowing.isFalling(fluid);
             // Weak/strong signals over an empty level, packed 4 bits per direction.
             long weak = 0;
             long strong = 0;

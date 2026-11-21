@@ -2,7 +2,6 @@ package dev.horizonlab.parity;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.ParseResults;
 import com.mojang.brigadier.StringReader;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -22,10 +21,11 @@ import java.util.Set;
 import java.util.TreeSet;
 import net.minecraft.SharedConstants;
 import net.minecraft.commands.CommandBuildContext;
-import net.minecraft.commands.CommandSource;
-import net.minecraft.commands.CommandSourceStack;
-import net.minecraft.commands.Commands;
-import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.commands.ParseBox;
+import net.minecraft.commands.ParseContext;
+import net.minecraft.commands.SuggestionBox;
+import net.minecraft.commands.suggestions.SuggestionContext;
+import net.minecraft.core.HolderGetter;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.Registry;
 import net.minecraft.core.RegistryAccess;
@@ -73,24 +73,48 @@ public final class VanillaCommandParseOracle {
     static final String[] OBJECTIVES = {"kills", "health", "obj"};
     static final String[] TRACKED = {"#total", "Steve", "fake"};
 
-    static final class Src extends CommandSourceStack {
+    /**
+     * 26.4 split command sources into a parse context and a suggestion context. This is the
+     * suggestion side: the same fixture players, teams, selected entities and registries the
+     * old CommandSourceStack overrides provided.
+     */
+    static final class Sug implements SuggestionContext {
+        final MinecraftServer server;
+        final net.minecraft.server.level.ServerLevel level;
+        final PermissionSet perms;
         final RegistryAccess access;
         final HolderLookup.Provider lookup;
-        Src(MinecraftServer server, PermissionSet perms, RegistryAccess access, HolderLookup.Provider lookup) {
-            this(server, null, perms, access, lookup);
-        }
-        Src(MinecraftServer server, net.minecraft.server.level.ServerLevel level, PermissionSet perms, RegistryAccess access, HolderLookup.Provider lookup) {
-            super(CommandSource.NULL, Vec3.ZERO, Vec2.ZERO, level, perms, Component.literal("Player"), server);
+        Sug(MinecraftServer server, net.minecraft.server.level.ServerLevel level, PermissionSet perms, RegistryAccess access, HolderLookup.Provider lookup) {
+            this.server = server;
+            this.level = level;
+            this.perms = perms;
             this.access = access;
             this.lookup = lookup;
         }
-        @Override public Collection<String> getOnlinePlayerNames() { return new ArrayList<>(List.of(PLAYERS)); }
-        @Override public Collection<String> getSelectedEntities() { return new ArrayList<>(List.of(SELECTED)); }
-        @Override public Collection<String> getAllTeams() { return new ArrayList<>(List.of(TEAMS)); }
-        @Override public RegistryAccess registryAccess() { return access; }
-        @Override public Set<ResourceKey<Level>> levels() { return Set.of(Level.OVERWORLD, Level.NETHER, Level.END); }
-        @Override public FeatureFlagSet enabledFeatures() { return FeatureFlags.VANILLA_SET; }
-        @Override public <E> java.util.concurrent.CompletableFuture<Suggestions> suggestRegistryElements(ResourceKey<? extends Registry<E>> key, SharedSuggestionProvider.ElementSuggestionType elements, com.mojang.brigadier.suggestion.SuggestionsBuilder builder, com.mojang.brigadier.context.CommandContext<?> context, java.util.function.Predicate<E> filter) {
+        public PermissionSet permissions() { return perms; }
+        public Collection<String> onlinePlayerNames() { return new ArrayList<>(List.of(PLAYERS)); }
+        public Collection<String> selectedEntities() { return new ArrayList<>(List.of(SELECTED)); }
+        public Collection<String> allTeams() { return new ArrayList<>(List.of(TEAMS)); }
+        public java.util.stream.Stream<net.minecraft.resources.Identifier> availableSounds() {
+            return BuiltInRegistries.SOUND_EVENT.keySet().stream();
+        }
+        public java.util.stream.Stream<net.minecraft.resources.Identifier> availablePostEffects() {
+            return java.util.stream.Stream.empty();
+        }
+        public MinecraftServer server() { return server; }
+        public Level level() { return level; }
+        public Set<ResourceKey<Level>> levels() { return Set.of(Level.OVERWORLD, Level.NETHER, Level.END); }
+        public net.minecraft.world.entity.Entity entity() { return null; }
+        public Vec3 position() { return Vec3.ZERO; }
+        public FeatureFlagSet enabledFeatures() { return FeatureFlags.VANILLA_SET; }
+        public HolderLookup.Provider holderLookups() { return lookup; }
+        public java.util.concurrent.CompletableFuture<Suggestions> suggestObjectiveNames(com.mojang.brigadier.context.CommandContext<?> context, com.mojang.brigadier.suggestion.SuggestionsBuilder builder) {
+            return SuggestionContext.suggest(new ArrayList<>(List.of(OBJECTIVES)), builder);
+        }
+        public java.util.concurrent.CompletableFuture<Suggestions> customSuggestion(com.mojang.brigadier.context.CommandContext<?> context) {
+            return Suggestions.empty();
+        }
+        public <E> java.util.concurrent.CompletableFuture<Suggestions> suggestRegistryElements(com.mojang.brigadier.context.CommandContext<?> context, ResourceKey<? extends Registry<? extends E>> key, SuggestionContext.ElementSuggestionType elements, com.mojang.brigadier.suggestion.SuggestionsBuilder builder, java.util.function.Predicate<E> filter) {
             java.util.Optional<? extends HolderLookup<E>> registry = access.lookup(key);
             if (registry.isEmpty()) registry = lookup.lookup(key);
             if (registry.isEmpty()) return Suggestions.empty();
@@ -143,14 +167,15 @@ public final class VanillaCommandParseOracle {
             return;
         }
         FeatureFlagSet features = FeatureFlags.VANILLA_SET;
-        CommandBuildContext buildContext = CommandBuildContext.simple(lookup, features);
+        CommandBuildContext buildContext = CommandBuildContext.simple(features);
         // `tree OUT_DIR ALL` exports the tree of every command (dedicated and integrated).
         var selection = args[0].equals("tree") && args.length > 2 ? Commands.CommandSelection.valueOf(args[2]) : Commands.CommandSelection.INTEGRATED;
-        Commands commands = new Commands(selection, buildContext);
-        CommandDispatcher<CommandSourceStack> dispatcher = commands.getDispatcher();
+        Commands commands = Commands.createVanilla(selection, buildContext);
+        ParseBox parseBox = commands.parseBox();
+        SuggestionBox suggestionBox = commands.suggestionBox();
 
         if (args[0].equals("tree")) {
-            Files.writeString(out.resolve("tree.json"), net.minecraft.commands.synchronization.ArgumentUtils.serializeNodeToJson(dispatcher, dispatcher.getRoot()).toString());
+            Files.writeString(out.resolve("tree.json"), suggestionBox.dumpReport().toString());
             return;
         }
         MinecraftServer server = (MinecraftServer) unsafe.allocateInstance(DedicatedServer.class);
@@ -196,7 +221,14 @@ public final class VanillaCommandParseOracle {
         for (String tracked : TRACKED)
             scoreboard.getOrCreatePlayerScore(net.minecraft.world.scores.ScoreHolder.forNameOnly(tracked), scoreboard.getObjective("kills"));
         PermissionSet perms = LevelBasedPermissionSet.forLevel(PermissionLevel.byId(Integer.parseInt(args[3])));
-        Src source = new Src(server, level, perms, access, lookup);
+        Sug sctx = new Sug(server, level, perms, access, lookup);
+        ParseContext pctx = new ParseContext() {
+            public PermissionSet permissions() { return perms; }
+            public HolderGetter.Provider holderGetters() { return lookup; }
+            public FeatureFlagSet enabledFeatures() { return FeatureFlags.VANILLA_SET; }
+        };
+        Field parseResultsField = ParseBox.Result.class.getDeclaredField("parseResults");
+        parseResultsField.setAccessible(true);
 
         List<String> lines = Files.readAllLines(Path.of(args[2]), StandardCharsets.UTF_8);
         java.io.BufferedWriter sb = Files.newBufferedWriter(out.resolve("vanilla.jsonl"));
@@ -205,7 +237,8 @@ public final class VanillaCommandParseOracle {
             JsonObject row = new JsonObject();
             row.addProperty("in", input);
             try {
-                ParseResults<CommandSourceStack> parse = dispatcher.parse(new StringReader(input), source);
+                var pres = parseBox.parse(new StringReader(input), pctx);
+                @SuppressWarnings("unchecked") ParseResults<ParseContext> parse = (ParseResults<ParseContext>) parseResultsField.get(pres);
                 JsonObject result = new JsonObject();
                 String error = null;
                 int cursor = 0;
@@ -231,9 +264,9 @@ public final class VanillaCommandParseOracle {
                 if (error == null) {
                     result.addProperty("ok", true);
                     JsonArray nodes = new JsonArray();
-                    CommandContextBuilder<CommandSourceStack> b = parse.getContext();
+                    CommandContextBuilder<ParseContext> b = parse.getContext();
                     while (b != null) {
-                        for (ParsedCommandNode<CommandSourceStack> n : b.getNodes()) nodes.add(n.getNode().getName());
+                        for (ParsedCommandNode<ParseContext> n : b.getNodes()) nodes.add(n.getNode().getName());
                         b = b.getChild();
                     }
                     result.add("nodes", nodes);
@@ -243,7 +276,7 @@ public final class VanillaCommandParseOracle {
                     result.addProperty("cursor", cursor);
                 }
                 row.add("parse", result);
-                Suggestions suggestions = dispatcher.getCompletionSuggestions(parse, input.length()).get();
+                Suggestions suggestions = suggestionBox.parse(input, sctx).computeSuggestions(input.length()).get();
                 JsonObject sg = new JsonObject();
                 sg.addProperty("start", suggestions.getRange().getStart());
                 sg.addProperty("end", suggestions.getRange().getEnd());

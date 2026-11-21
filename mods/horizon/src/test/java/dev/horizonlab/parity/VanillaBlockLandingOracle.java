@@ -27,7 +27,7 @@ public final class VanillaBlockLandingOracle {
     static String pos(BlockPos p){return p.getX()+" "+p.getY()+" "+p.getZ();}
     static String bounds(String label,AABB b){return String.format("%s %016x %016x %016x %016x %016x %016x",label,Double.doubleToLongBits(b.minX),Double.doubleToLongBits(b.minY),Double.doubleToLongBits(b.minZ),Double.doubleToLongBits(b.maxX),Double.doubleToLongBits(b.maxY),Double.doubleToLongBits(b.maxZ));}
     static AABB box(JsonElement v){var a=v.getAsJsonArray();return new AABB(number(a.get(0)),number(a.get(1)),number(a.get(2)),number(a.get(3)),number(a.get(4)),number(a.get(5)));}
-    static String sound(SoundEvent s){if(s==SoundEvents.HONEY_BLOCK_SLIDE)return "honey-slide";if(s==SoundEvents.HONEY_BLOCK_FALL)return "honey-fall";if(s==SoundEvents.TURTLE_EGG_BREAK)return "egg-break";if(s==SoundEvents.SHELF_MUSHROOM_BOUNCE)return "mushroom";if(s==SoundEvents.GENERIC_SMALL_FALL)return "small";if(s==SoundEvents.GENERIC_BIG_FALL)return "big";throw new AssertionError(s);}
+    static String sound(SoundEvent s){if(s==SoundEvents.HONEY_BLOCK_SLIDE)return "honey-slide";if(net.minecraft.core.registries.BuiltInRegistries.SOUND_EVENT.getKey(s).toString().equals("minecraft:block.honey_block.fall"))return "honey-fall";if(s==SoundEvents.TURTLE_EGG_BREAK)return "egg-break";if(s==SoundEvents.SHELF_MUSHROOM_BOUNCE)return "mushroom";if(s==SoundEvents.GENERIC_SMALL_FALL)return "small";if(s==SoundEvents.GENERIC_BIG_FALL)return "big";throw new AssertionError(s);}
     static final class Data {
         JsonObject f;PrintWriter out;int calls;BlockState state;Sources sources;Rules rules;Server server;RandomSource random;List<Occupant> occupants;
         boolean flag(String name){return f.get(name).getAsBoolean();}
@@ -51,7 +51,7 @@ public final class VanillaBlockLandingOracle {
     }
     static final class Server extends net.minecraft.server.MinecraftServer {
         @Override public int getMaxPlayers(){throw new UnsupportedOperationException();}
-        Data d;Server(){super(null,null,null,null,Optional.empty(),null,null,null,null,false,null);}
+        Data d;Server(){super(null,null,null,null,Optional.empty(),null,null,null,null,false,null,0L);}
         @Override public boolean isUnderSpawnProtection(net.minecraft.server.level.ServerLevel level,BlockPos p,Player player){d.query("protection "+pos(p));return d.flag("protected");}
         @Override public boolean initServer(){throw new UnsupportedOperationException();}
         @Override public net.minecraft.server.permissions.LevelBasedPermissionSet operatorUserPermissions(){throw new UnsupportedOperationException();}
@@ -70,7 +70,7 @@ public final class VanillaBlockLandingOracle {
         @Override public boolean isSingleplayerOwner(net.minecraft.server.players.NameAndId p0){throw new UnsupportedOperationException();}
     }
     static final class ServerWorld extends net.minecraft.server.level.ServerLevel {
-        Data d;ServerWorld(){super(null,null,null,null,null,null,false,0L,List.of(),false);}
+        Data d;ServerWorld(){super(null,null,null,null,null,null,null,false);}
         @Override public GameRules getGameRules(){d.query("rules");return d.rules;}
 
         @Override public boolean isClientSide(){d.query("client");return d.flag("client");}
@@ -86,7 +86,7 @@ public final class VanillaBlockLandingOracle {
         @Override public List<Entity> getEntities(Entity excluded,AABB bounds){return d.entities(excluded,bounds);}
     }
     static final class ClientWorld extends Level {
-        Data d;ClientWorld(){super(null,null,null,null,false,false,0L,0);}
+        Data d;ClientWorld(){super(null,null,null,null,false,0);}
 
         @Override public boolean isClientSide(){d.query("client");return d.flag("client");}
         @Override public RandomSource getRandom(){d.query("random");return d.random;}
@@ -106,7 +106,7 @@ public final class VanillaBlockLandingOracle {
 @Override public net.minecraft.world.attribute.EnvironmentAttributeSystem environmentAttributes(){throw new UnsupportedOperationException();}
 @Override public void explode(net.minecraft.world.entity.Entity p0,net.minecraft.world.damagesource.DamageSource p1,net.minecraft.world.level.ExplosionDamageCalculator p2,double p3,double p4,double p5,float p6,boolean p7,net.minecraft.world.level.Level.ExplosionInteraction p8,net.minecraft.core.particles.ParticleOptions p9,net.minecraft.core.particles.ParticleOptions p10,net.minecraft.util.random.WeightedList p11,net.minecraft.core.Holder p12){throw new UnsupportedOperationException();}
 @Override public void gameEvent(net.minecraft.core.Holder p0,net.minecraft.world.phys.Vec3 p1,net.minecraft.world.level.gameevent.GameEvent.Context p2){throw new UnsupportedOperationException();}
-@Override public java.lang.String gatherChunkSourceStats(){throw new UnsupportedOperationException();}
+public java.lang.String gatherChunkSourceStats(){throw new UnsupportedOperationException();}
 @Override public net.minecraft.world.ticks.LevelTickAccess getBlockTicks(){throw new UnsupportedOperationException();}
 @Override public net.minecraft.world.level.chunk.ChunkSource getChunkSource(){throw new UnsupportedOperationException();}
 @Override public net.minecraft.world.level.entity.LevelEntityGetter getEntities(){throw new UnsupportedOperationException();}
@@ -116,7 +116,7 @@ public final class VanillaBlockLandingOracle {
 @Override public net.minecraft.world.level.storage.LevelData.RespawnData getRespawnData(){throw new UnsupportedOperationException();}
 @Override public net.minecraft.world.scores.Scoreboard getScoreboard(){throw new UnsupportedOperationException();}
 @Override public int getSeaLevel(){throw new UnsupportedOperationException();}
-@Override public net.minecraft.core.Holder getUncachedNoiseBiome(int p0,int p1,int p2){throw new UnsupportedOperationException();}
+@Override public net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome> getUncachedBiome(int p0,int p1,int p2){throw new UnsupportedOperationException();}
 @Override public net.minecraft.world.level.border.WorldBorder getWorldBorder(){throw new UnsupportedOperationException();}
 @Override public void levelEvent(net.minecraft.world.entity.Entity p0,int p1,net.minecraft.core.BlockPos p2,int p3){throw new UnsupportedOperationException();}
 @Override public void playSeededSound(net.minecraft.world.entity.Entity p0,net.minecraft.world.entity.Entity p1,net.minecraft.core.Holder p2,net.minecraft.sounds.SoundSource p3,float p4,float p5,long p6){throw new UnsupportedOperationException();}
@@ -195,9 +195,9 @@ public final class VanillaBlockLandingOracle {
     }
     static void export(Path dir)throws Exception {
         VanillaCollisionOracle.main(new String[]{"generate",dir.toString()});VanillaMovementRegistryOracle.export(dir);
-        var definitions=new JsonObject();var metadata=new JsonArray();var base=FarmlandBlock.class.getDeclaredField("baseBlock");base.setAccessible(true);var sound=BlockBehaviour.class.getDeclaredField("soundType");sound.setAccessible(true);
+        var definitions=new JsonObject();var metadata=new JsonArray();var base=FarmlandBlock.class.getDeclaredField("baseBlock");base.setAccessible(true);
         var owners=Set.of(Block.class,HayBlock.class,HoneyBlock.class,SlimeBlock.class,PowderSnowBlock.class,PointedDripstoneBlock.class,FarmlandBlock.class,TurtleEggBlock.class);
-        for(var block:BuiltInRegistries.BLOCK){var owner=block.getClass().getMethod("fallOn",Level.class,BlockState.class,BlockPos.class,Entity.class,double.class).getDeclaringClass();if(!owners.contains(owner))throw new AssertionError(owner);var bounce=block.getClass().getMethod("bounceOn",Level.class,BlockState.class,BlockPos.class,Entity.class,double.class).getDeclaringClass();if(bounce!=Block.class&&bounce!=ShelfMushroomBlock.class)throw new AssertionError(bounce);var entry=new JsonObject();entry.addProperty("fall",owner.getSimpleName());entry.addProperty("bounce",bounce==ShelfMushroomBlock.class);if(owner==FarmlandBlock.class)entry.addProperty("base",BuiltInRegistries.BLOCK.getKey((Block)base.get(block)).toString());if(owner==HoneyBlock.class){var type=(SoundType)sound.get(block);entry.addProperty("volume",String.format("%08x",Float.floatToIntBits(type.getVolume())));entry.addProperty("pitch",String.format("%08x",Float.floatToIntBits(type.getPitch())));if(type.getFallSound()!=SoundEvents.HONEY_BLOCK_FALL)throw new AssertionError();}definitions.add(BuiltInRegistries.BLOCK.getKey(block).toString(),entry);}
+        for(var block:BuiltInRegistries.BLOCK){var owner=block.getClass().getMethod("fallOn",Level.class,BlockState.class,BlockPos.class,Entity.class,double.class).getDeclaringClass();if(!owners.contains(owner))throw new AssertionError(owner);var bounce=block.getClass().getMethod("bounceOn",Level.class,BlockState.class,BlockPos.class,Entity.class,double.class).getDeclaringClass();if(bounce!=Block.class&&bounce!=ShelfMushroomBlock.class)throw new AssertionError(bounce);var entry=new JsonObject();entry.addProperty("fall",owner.getSimpleName());entry.addProperty("bounce",bounce==ShelfMushroomBlock.class);if(owner==FarmlandBlock.class)entry.addProperty("base",BuiltInRegistries.BLOCK.getKey((Block)base.get(block)).toString());if(owner==HoneyBlock.class){var type=VanillaBlockBehaviourExporter.soundSet(block.defaultBlockState());entry.addProperty("volume",String.format("%08x",Float.floatToIntBits(type.volume())));entry.addProperty("pitch",String.format("%08x",Float.floatToIntBits(type.pitch())));var fall=type.fallSound().map(h->h.value().location().toString()).orElse("");if(!fall.equals("minecraft:block.honey_block.fall"))throw new AssertionError(fall);}definitions.add(BuiltInRegistries.BLOCK.getKey(block).toString(),entry);}
         for(var state:Block.BLOCK_STATE_REGISTRY){var row=new JsonObject();row.addProperty("id",Block.getId(state));row.addProperty("name",BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString());metadata.add(row);}
         Files.writeString(dir.resolve("landing-definitions.json"),definitions.toString());Files.writeString(dir.resolve("landing-states.json"),metadata.toString());
     }
