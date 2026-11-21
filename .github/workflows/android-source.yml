@@ -141,4 +141,6 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add crates/horizon-protocol/src/ids.rs
           git commit -m "Regenerate packet ids from the pinned version's data-generator report [skip ci]"
+          # Another job may have pushed to the branch while prepare was running.
+          git pull --rebase origin "${{ github.ref_name }}"
           git push origin HEAD:"${{ github.ref_name }}"
