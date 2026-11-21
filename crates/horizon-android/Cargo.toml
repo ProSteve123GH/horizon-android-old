@@ -92,10 +92,14 @@ zip = { version = "9.1.3", default-features = false, features = ["deflate"] }
 rustix = { version = "1", default-features = false, features = ["std", "time", "fs"] }
 
 [features]
-default = ["mods", "audio"]
+# General mod support is removed on dev/26.4; only the standalone voice-chat client
+# and the built-in Android features remain (both use the native host API, not a loader).
+default = ["audio"]
 audio = ["horizon-client/audio", "horizon-client-render/audio", "dep:cpal"]
 controllers = []
-mods = ["horizon-client/mods", "horizon-mods/runtime"]
+# Kept as a declared, off-by-default feature so `cfg(feature = "mods")` in shared
+# gameplay sources stays a known cfg; it is never enabled by this build.
+mods = []
 # Shared gameplay source gates these; Android intentionally keeps them off.
 # Declaring them here makes the `cfg(feature = "...")` checks in game.rs known
 # to the cdylib build instead of reporting an unexpected `cfg` condition value.
