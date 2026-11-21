@@ -42,9 +42,11 @@ packet!(CookieRequest { key: String => Ident });
 
 packet_enum!(Clientbound, crate::ids::login::clientbound {
     Disconnect(Disconnect) = LOGIN_DISCONNECT,
-    Hello(Hello) = HELLO,
+    // 26.4 renamed `minecraft:hello` to `minecraft:key` and `minecraft:login_compression`
+    // to `minecraft:setup_compression`; the payload layouts are unchanged.
+    Hello(Hello) = KEY,
     LoginFinished(LoginFinished) = LOGIN_FINISHED,
-    Compression(Compression) = LOGIN_COMPRESSION,
+    Compression(Compression) = SETUP_COMPRESSION,
     CustomQuery(CustomQuery) = CUSTOM_QUERY,
     CookieRequest(CookieRequest) = COOKIE_REQUEST,
 });
