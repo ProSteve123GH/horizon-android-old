@@ -11,6 +11,10 @@ on:
         description: Type-check all four Android ABIs (slower)
         type: boolean
         default: false
+      regenerate_tables:
+        description: Prepare the pinned Minecraft version and commit regenerated packet ids
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -98,3 +102,43 @@ jobs:
           rustup target add "${{ matrix.target }}"
       - name: Check Android Rust code without building an APK
         run: python3 tools/android_build.py --abi "${{ matrix.abi }}" --check --public --sdk "$ANDROID_HOME" --java-home "$JAVA_HOME_17_X64" --ndk-version 28.2.13676358 --build-tools-version 35.0.0
+
+  tables:
+    if: github.event_name == 'workflow_dispatch' && inputs.regenerate_tables
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      CARGO_BUILD_JOBS: 4
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      HORIZON_TELEMETRY_URL: 'off'
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: ${{ github.ref_name }}
+      - name: Set up JDK 25 for the vanilla data generator
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Prepare the pinned Minecraft version and its reports
+        run: python3 tools/android_prepare.py --java-home "$JAVA_HOME"
+      - name: Regenerate the packet-id table from vanilla's report
+        run: |
+          set -euo pipefail
+          python3 tools/generate_packet_ids.py
+          rustfmt --edition 2024 crates/horizon-protocol/src/ids.rs
+          git diff --stat -- crates/horizon-protocol/src/ids.rs
+      - name: Commit and push the regenerated table
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- crates/horizon-protocol/src/ids.rs; then
+            echo 'packet-id table unchanged'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add crates/horizon-protocol/src/ids.rs
+          git commit -m "Regenerate packet ids from the pinned version's data-generator report [skip ci]"
+          git push origin HEAD:"${{ github.ref_name }}"
