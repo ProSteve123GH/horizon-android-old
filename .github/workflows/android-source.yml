@@ -11,10 +11,6 @@ on:
         description: Type-check all four Android ABIs (slower)
         type: boolean
         default: false
-      launcher_check:
-        description: Type-check the separate launcher workspace
-        type: boolean
-        default: false
 permissions:
   contents: read
 concurrency:
@@ -102,22 +98,3 @@ jobs:
           rustup target add "${{ matrix.target }}"
       - name: Check Android Rust code without building an APK
         run: python3 tools/android_build.py --abi "${{ matrix.abi }}" --check --public --sdk "$ANDROID_HOME" --java-home "$JAVA_HOME_17_X64" --ndk-version 28.2.13676358 --build-tools-version 35.0.0
-
-  launcher:
-    if: github.event_name == 'workflow_dispatch' && inputs.launcher_check
-    needs: source
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      HORIZON_TELEMETRY_URL: "off"
-      CARGO_BUILD_JOBS: "2"
-    steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
-        with:
-          persist-credentials: false
-      - name: Install the launcher's platform libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwayland-dev libxkbcommon-dev libx11-dev libfontconfig1-dev libfreetype-dev
-      - name: Type-check the launcher workspace
-        run: cargo check --manifest-path launcher/Cargo.toml --locked
