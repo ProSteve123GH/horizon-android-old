@@ -459,7 +459,7 @@ impl Launcher {
                         .as_ref()
                         .is_some_and(|e| native_status::is_native_file(&e.file))
             });
-        let build = native.then(|| self.native_build(cx)).flatten();
+        let build = native.then(|| self.native_status_row(cx)).flatten();
         let card = plate::cut(
             night::PIXEL_CORNER,
             2,

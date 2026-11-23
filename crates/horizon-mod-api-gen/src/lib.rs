@@ -440,8 +440,7 @@ fn fresh_name(base: &str, used: &mut HashSet<String>) -> String {
 /// itself, written back after every mod has run; any other `&mut` stays a reference to the caller's
 /// value. Either way one event goes through every mod, so each sees the changes before it. Every
 /// elided reference lifetime becomes the event's `'a`, or `'b` inside a `&mut`, which can't shorten
-/// it. The launcher keeps a copy for trait injections (`launcher/src/native_mods/inject.rs`); both
-/// test the same types.
+/// it. The generator's dispatch tests check the same types.
 #[derive(Default)]
 struct EventLifetimes {
     a: bool,

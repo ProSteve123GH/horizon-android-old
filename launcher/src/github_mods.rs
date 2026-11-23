@@ -1,32 +1,33 @@
 //! Native mods installed from a GitHub link (docs/native-mods.md, "Install from GitHub"), so an
 //! author can ship a version without a registry pull request. The link names a repository (its
 //! latest release), a release tag, a branch or tag (`tree/`) or a commit. It is resolved through
-//! GitHub's public API to an exact **release asset** (a `.hnmod`, kept by its SHA-256) or an exact
-//! **commit** (the archive of that commit, whose mod folder is packed into a `.hnmod`), never to a
-//! branch that moves. The result passes the checks the registry's `.hnmod`s pass
-//! (`horizon_mods::index::native::Bundle::read`) before anything is installed, and the origin is
-//! kept beside the file (`horizon-native-mods/<id>.origin.json`) for "check for updates".
+//! GitHub's public API to an exact **release asset**, kept by its SHA-256, never to a branch that
+//! moves. A release asset that was built by an older launcher is still installed, checked the same
+//! way the registry's native packages are checked
+//! (`horizon_mods::index::native::Bundle::read`); the origin is kept beside the file
+//! (`horizon-native-mods/<id>.origin.json`) for "check for updates".
+//!
+//! Building a native mod from a commit's source and packing it into an `.hnmod` is gone: the
+//! launcher no longer compiles mods. Only already-built release assets can be installed here;
+//! ordinary `.hmod` content mods still install from the registry and from releases as before.
 //!
 //! Nothing here runs the mod's code, and nothing here trusts it: the registry has not reviewed it.
 //! Callers show [`WARNING`] and ask first (`--trust-native-code`).
 use crate::backend;
 use crate::browser::java;
-use crate::native_mods::{self, Bundle, INSTALLED};
+use crate::native_mods::{self, INSTALLED};
 use horizon_mods::index::native as format;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// What a player is told before a mod from GitHub is installed.
 pub const WARNING: &str = "Not reviewed by the Horizon registry. Native mods run with full access to this computer. Read the source first.";
 
-/// The most a release asset or a mod's archive may be.
+/// The most a release asset may be.
 const MAX_ASSET: u64 = 64 << 20;
-const MAX_ARCHIVE: u64 = 256 << 20;
-/// How deep below the archive's root a mod folder is looked for.
-const DEPTH: usize = 6;
 
 /// What a link points at.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -407,113 +408,6 @@ fn checked(bytes: &[u8], dir: &Path) -> Result<Packed, String> {
     })
 }
 
-/// Every mod folder under `root`: a `horizon-mixin.toml`, or an unpacked `.hnmod`
-/// (`horizon-native.json`), the rules of `native-build <folder>`. A mod's folder is not searched
-/// further.
-pub fn find_mods(root: &Path) -> Result<Vec<Bundle>, String> {
-    fn walk(dir: &Path, depth: usize, out: &mut Vec<Bundle>) -> Result<(), String> {
-        if let Some(found) = native_mods::bundle_in(dir)? {
-            out.push(found);
-            return Ok(());
-        }
-        if depth == 0 {
-            return Ok(());
-        }
-        let mut dirs: Vec<PathBuf> = fs::read_dir(dir)
-            .map_err(|e| format!("{}: {e}", dir.display()))?
-            .flatten()
-            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-            .filter(|e| {
-                let name = e.file_name();
-                let name = name.to_string_lossy();
-                !name.starts_with('.') && name != "target" && name != "node_modules"
-            })
-            .map(|e| e.path())
-            .collect();
-        dirs.sort();
-        for sub in dirs {
-            walk(&sub, depth - 1, out)?;
-        }
-        Ok(())
-    }
-    let mut found = Vec::new();
-    walk(root, DEPTH, &mut found)?;
-    found.sort_by(|a, b| a.id.cmp(&b.id));
-    Ok(found)
-}
-
-fn walk_files(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) -> Result<(), String> {
-    let mut entries: Vec<_> = fs::read_dir(dir)
-        .map_err(|e| format!("{}: {e}", dir.display()))?
-        .flatten()
-        .collect();
-    entries.sort_by_key(|e| e.file_name());
-    for entry in entries {
-        let path = entry.path();
-        let kind = entry.file_type().map_err(|e| e.to_string())?;
-        if kind.is_symlink() {
-            return Err(format!(
-                "{} is a link: not allowed in a mod.",
-                path.display()
-            ));
-        } else if kind.is_dir() {
-            walk_files(root, &path, out)?;
-        } else {
-            let relative = path.strip_prefix(root).unwrap_or(&path);
-            out.push((relative.to_string_lossy().replace('\\', "/"), path));
-        }
-    }
-    Ok(())
-}
-
-/// The `.hnmod` of a mod folder, as bytes: its source (Rust, TOML and `data/`) with a manifest made
-/// from its `horizon-mixin.toml`, which must pin the Horizon commit it was made for
-/// (`[compatibility] horizon_revision`). An unpacked `.hnmod` (`horizon-native.json`) keeps the
-/// pins and hook points its manifest names. The zip is the same for the same files.
-pub fn pack(bundle: &Bundle) -> Result<Vec<u8>, String> {
-    let horizon = bundle.horizon.clone().filter(|h| format::revision(h)).ok_or_else(|| {
-        format!(
-            "{} has no [compatibility] horizon_revision (40 hex digits): add the Horizon commit it was made for.",
-            bundle.id
-        )
-    })?;
-    let manifest = format::Manifest {
-        schema: 1,
-        id: bundle.id.clone(),
-        version: bundle.version.clone(),
-        game: crate::browser::GAME.into(),
-        horizon,
-        mixins: bundle
-            .mixins
-            .clone()
-            .unwrap_or_else(|| native_mods::MIXINS_REV.into()),
-        hooks: bundle.hooks,
-    };
-    manifest.check()?;
-    let mut put = vec![(
-        format::MANIFEST.to_owned(),
-        serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?,
-    )];
-    let mut files = Vec::new();
-    walk_files(&bundle.dir, &bundle.dir, &mut files)?;
-    for (name, path) in files {
-        // What the registry allows in a bundle: sources, data and crates' text files.
-        if format::allowed(&name) {
-            let bytes = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            put.push((format!("mixins/{}/{name}", bundle.id), bytes));
-        }
-    }
-    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    let options = zip::write::SimpleFileOptions::default()
-        .last_modified_time(zip::DateTime::default())
-        .unix_permissions(0o644);
-    for (name, bytes) in put {
-        zip.start_file(name, options).map_err(|e| e.to_string())?;
-        zip.write_all(&bytes).map_err(|e| e.to_string())?;
-    }
-    Ok(zip.finish().map_err(|e| e.to_string())?.into_inner())
-}
-
 fn download(url: &str) -> Result<Vec<u8>, String> {
     let mut body = Vec::new();
     backend::get(url)?
@@ -527,47 +421,32 @@ fn download(url: &str) -> Result<Vec<u8>, String> {
     Ok(body)
 }
 
-/// Downloads what `found` names and checks it: the release's `.hnmod` (its SHA-256 compared with
-/// GitHub's when it reports one), else the mods of the commit's archive, each packed. A repository
-/// of several mods gives several `Packed`. Nothing is installed.
+/// Downloads the release asset `found` names and checks it (its SHA-256 compared with GitHub's
+/// when it reports one). A commit link has no built asset: the launcher no longer compiles a
+/// mod's source into a package, so such a link cannot be installed here. Nothing is installed.
 pub fn fetch(found: &Resolved) -> Result<Vec<Packed>, String> {
-    let dir = scratch(&found.commit);
-    if let Some(asset) = &found.asset {
-        let bytes = download(&asset.url)?;
-        if let Some(expected) = &asset.sha256 {
-            if sha256(&bytes) != *expected {
-                return Err(format!(
-                    "{} does not match the checksum GitHub lists for it.",
-                    asset.name
-                ));
-            }
-        }
-        return Ok(vec![checked(&bytes, &dir)?]);
-    }
-    let url = format!(
-        "https://codeload.github.com/{}/{}/tar.gz/{}",
-        found.owner, found.repo, found.commit
-    );
-    let top = native_mods::unpack_archive(&url, &dir.join("source"), MAX_ARCHIVE)?;
-    let mods = find_mods(&top)?;
-    if mods.is_empty() {
+    let Some(asset) = &found.asset else {
         return Err(match &found.content_only {
             Some(file) => format!(
-                "{} ships {file}, a content mod: installing .hmod files from GitHub is not supported yet.",
+                "{} ships {file}, a content mod: installing .hmod files from GitHub is not supported here.",
                 found.label()
             ),
             None => format!(
-                "{} holds no native mod (a folder with horizon-mixin.toml, or an unpacked .hnmod).",
+                "{} has no built native mod release asset. Building a mod from its source is no longer supported: install an already-built release instead.",
                 found.label()
             ),
         });
+    };
+    let bytes = download(&asset.url)?;
+    if let Some(expected) = &asset.sha256 {
+        if sha256(&bytes) != *expected {
+            return Err(format!(
+                "{} does not match the checksum GitHub lists for it.",
+                asset.name
+            ));
+        }
     }
-    let packed: Result<Vec<Packed>, String> = mods
-        .iter()
-        .map(|m| checked(&pack(m)?, &dir).map_err(|e| format!("{}: {e}", m.id)))
-        .collect();
-    let _ = fs::remove_dir_all(dir.join("source"));
-    packed
+    Ok(vec![checked(&bytes, &scratch(&found.commit))?])
 }
 
 /// Deletes what [`fetch`] left for `found` (the files of mods not installed).

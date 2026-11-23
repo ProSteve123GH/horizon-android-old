@@ -663,7 +663,7 @@ pub fn linker() -> Result<(), String> {
     link(true)
 }
 
-/// The headless build's ([`crate::native_mods::build_server`]): the same check, minus what only
+/// The headless build's: the same check, minus what only
 /// the game links. A server build compiles without the default features, so it links none of
 /// the system's sound or controller libraries and needs no pkg-config to find them: only a C
 /// compiler and the C library's headers.

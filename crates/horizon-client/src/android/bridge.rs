@@ -142,7 +142,6 @@ impl Controller {
             error: None,
         };
         controller.resume();
-        crate::native_mods::resume_build(&home);
         controller
     }
 
@@ -1194,16 +1193,6 @@ impl Controller {
                 self.catalog.status =
                     "Native mods disabled. The stock game runs on the next start.".into();
                 return Ok(json!({"disabled": true}));
-            }
-            "native_compile" => {
-                let game_home = self.catalog.config.game_home(&self.home);
-                return Ok(crate::native_mods::compile(&self.home, &game_home, arg)?);
-            }
-            "native_compile_status" => {
-                return Ok(crate::native_mods::compile_status());
-            }
-            "native_install" => {
-                return Ok(crate::native_mods::install(&self.home, arg)?);
             }
             "native_enabled" => {
                 let args: serde_json::Value = serde_json::from_str(arg)

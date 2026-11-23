@@ -1,288 +1,96 @@
 # Native mods on Android (`.hmod` and legacy `.hnmod`)
 
-Status: **import, list, enable/disable, remove, Compile and "play without
-native mods" are wired end to end.** A unified `.hmod` carries content and
-native Rust source in one archive: the native part is detected by the
-presence of `horizon-native.json` (`horizon_mods::index::native::holds`);
-legacy `.hnmod` remains native-only. The content part of a unified `.hmod`
-is mirrored to `horizon-mods/<id>.hmod` so the content installer and list
-see it, while the native bundle stays in `horizon-native-mods/`. Native code
-is **not sandboxed** and is compiled on a GitHub-hosted runner through the
-fork's build service (a Cloudflare Worker that rebuilds the game there); the
-launcher downloads the resulting library, verifies it against the job's
-SHA-256, writes `files/native/current.json` and the unchanged Java loader
-hands it to the trampoline on the next start. Nothing is executed or tested
-on the phone as part of compilation. The Java load chain was verified on a
-device with a no-op mod compiled by the service; the Compile button flow
-itself has not yet been exercised on a phone (see
-[What was verified](#what-was-verified)).
+Status: **import, list, enable/disable and remove are wired end to end.**
+Native mod **building is not supported on Android**: there is no upstream
+Android SDK slice to rebuild the game against, and the hosted build pipeline
+has been removed from this fork. Native mods now use the new `mod_api` SDK and
+`.hmod` packages on supported hosts. Nothing is compiled or executed on the
+phone; a bundle carrying native code can only run as part of a game library
+installed for this APK by other means (for example, by hand for testing).
 
 ## What a native mod is
 
-A native mod is a [horizon-mixins](https://github.com/horizon-rust/horizon-mixins)
-source bundle: a `horizon-native.json` manifest, a `horizon-mixin.toml` and
-`.rs` hook files that patch the game's own Rust before it is compiled. It is
-not sandboxed and not interpreted — it is compiled into the game. Two
-archive formats carry it:
+A `.hnmod` bundle is a native-only mod; a unified `.hmod` may carry both
+content and native code. The archive's contents, not its extension, decide
+what it is: a file with `horizon-native.json` is native
+(`horizon_mods::index::native::holds`), whether it arrives as `.hmod` or
+`.hnmod`. Native code runs **unsandboxed** with full access to the device; it
+is never treated like a sandboxed content mod.
 
-- **Unified `.hmod`**: content and native Rust source in one archive. The
-  presence of `horizon-native.json` marks it as native
-  (`horizon_mods::index::native::holds`); a `.hmod` without that manifest is
-  ordinary content. Its content part is also mirrored into
-  `horizon-mods/<id>.hmod` so the existing content installer and list see it
-  without a second download.
-- **Legacy `.hnmod`**: native source only, with no content part and no mirror.
-
-See [native-mods.md](native-mods.md) for the bundle format and hook points.
-
-The upstream registry validates bundles with `horizon_mods::index::native`
-(schema 1, `id` `[a-z0-9_]{1,64}`, exact `.rs`/`.toml` sources under
-`mixins/<id>/` plus crate text files and `data/` directories, at most 512
-files and 64 MiB unpacked, manifest identity matching the mixin manifest).
-This fork imports bundles with the same rules
-(`horizon-mods`, `index` feature), so a bundle the registry accepts imports
-here, and vice versa.
+The fork imports bundles with the same validation as the upstream registry
+(`horizon-mods`, `index` feature): schema 1, id `[a-z0-9_]{1,64}`, exact
+`.rs`/`.toml` sources under `mixins/<id>/`, at most 512 files and 64 MiB
+unpacked, with manifest identity matching the mixin manifest.
 
 ## What works today
 
 Three import paths feed the same bundle folder, all with the same validation
-(`horizon-mods`, `Bundle::read`). The archive's contents, not its extension,
-decide what it is: a file with `horizon-native.json` is native, whether it
-arrives as `.hmod` or `.hnmod`.
+(`horizon-mods`, `Bundle::read`):
 
 - **SAF picker**: the source picker on the Mods page
   (**Native mods (.hmod / legacy .hnmod) → Import**);
 - **HTTPS link**: paste an `https://…/name.hmod` (or `.hnmod`) link into the
-  Mods page search field and press **Import .hmod** — the file is downloaded
-  (at most 64 MiB) and stored on success. A pasted link gets **no registry
-  hash or signature check** by default; only a URL that exactly matches a
-  known Horizon registry file is checked against that registry entry, and a
-  failed check refuses the import. A pasted link from anywhere else is
-  installed unverified, so paste only links you trust.
-- **Horizon catalog**: native rows carry **Install**: the bundle is downloaded
+  Mods page search field and press **Import .hmod** (at most 64 MiB). A pasted
+  link gets **no registry hash or signature check** by default; only a URL that
+  exactly matches a known Horizon registry file is checked against that entry,
+  and a failed check refuses the import. Paste only links you trust.
+- **Horizon catalog**: native rows carry **Install**; the bundle is downloaded
   and checked against the registry's hash/signature where the registry
   provides one, then validated and stored.
 
-The native bundle is stored as `<game>/horizon-native-mods/<id>.hmod` or
-`<id>.hnmod` (it moves with the rest of the game files if you change
-**Settings → Storage → Game files location**). A unified `.hmod` is also
-mirrored to `<game>/horizon-mods/<id>.hmod` so the content installer and list
-see its content part; legacy `.hnmod` has no mirror. Removing a native mod
-removes both files. Nothing is executed by the import itself.
+The bundle is stored as `<game>/horizon-native-mods/<id>.hmod` or `<id>.hnmod`
+(it moves with the rest of the game files if you change **Settings → Storage →
+Game files location**). A unified `.hmod` is also mirrored to
+`<game>/horizon-mods/<id>.hmod` so the content installer and list see its
+content part; a legacy `.hnmod` has no mirror. **Remove** deletes both files
+when they provably belong to that bundle. Import itself never executes code.
 
-Each row shows the id, version, size, a toggle that decides whether the mod
-takes part in **Compile** (persisted in
-`<game>/horizon-native-mods/enabled.json`; a missing file means every
-imported bundle is enabled), and a **Remove** button. Long-press a row to see
-its id, version and file name. Each bundle's state:
+Each row shows the id, version, size, an enable/disable toggle (persisted in
+`<game>/horizon-native-mods/enabled.json`; a missing file means every imported
+bundle is enabled), and a Remove button. Long-press a row for its id and
+version. The row's state:
 
 | State | Meaning |
 | --- | --- |
-| Imported | Stored; part of Compile if its toggle is on. |
-| Selected — runs on the next start | `files/native/current.json` points at a compiled build of it. |
-| Set aside after crashing twice | The build crashed before its first frame twice and was set aside (see below). |
+| Imported | Stored and enabled in the launcher's list. |
+| Disabled | Stored, but its toggle is off. |
+| Selected — runs on the next start | `files/native/current.json` names a library for it. |
+| Set aside after crashing twice | The library crashed before its first frame twice. |
 | Invalid bundle | The stored file no longer parses; remove and re-import it. |
 
-## The Compile flow, end to end
-
-1. Import one or more bundles as above and enable the ones you want built
-   (the toggle per row).
-2. Press **Compile** (the **Mods** tab → **Native mods (.hmod / legacy .hnmod)**, the big
-   button below the list). If no mod is enabled the button is greyed out and
-   says why; while a build is in flight it stays greyed out.
-3. A confirmation dialog states the risk, literally:
-   > A unified .hmod may bundle content plus native Rust. Its native code runs
-   > UNSANDBOXED with full access to this device. It is compiled on a
-   > GitHub-hosted runner — nothing is executed or tested on the phone — and
-   > applies on the next start. Only compile mods you trust. This may take a
-   > few minutes.
-
-   **Cancel** / **Compile**.
-4. The launcher packs the enabled bundles and `mods.json` into a single
-   `mods.bin` (a zip), computes each bundle's SHA-256, and POSTs it
-   (as the whole body) to `https://horizon-android-mod-builds.steve-horizon-android-hnmod.workers.dev/v1/build?version=0.7.7`.
-   The request is content-addressed by the service; nothing about your APK
-   other than this fork's pinned revision is published. The POST runs on a
-   worker thread; if the upload exceeds the limits the compile refuses
-   up front (more than 30 MiB of bundles, or a `mods.bin` larger than
-   32 MiB — both are refused with a plain message, before anything leaves
-   the phone).
-5. The service answers `{"job": "<24 hex>"}` (or `{"cached": true}` when
-   the exact same build was done before — the upload is then nearly free).
-   The launcher stores the job id in `files/native/build.json` and starts
-   polling `/v1/job/<job>` every few seconds for up to 45 minutes.
-6. The inline status row under the list shows progress:
-   - `queued` → **Waiting for a free build slot (N ahead).**
-   - `building` → **Building… <seconds>s (up to ~15 min).** On a warm cache
-     a no-op mod takes roughly 5–15 minutes; a cold or re-pinned base cache
-     runs longer. **This is not a failure**; leave the launcher open or
-     come back later (see Resuming below).
-   - `done` → **Ready — restart Horizon to use it.** with a **Restart**
-     button (see Restart below).
-   - `failed` → the error string the worker returned.
-7. When the job reaches `done`, the launcher automatically downloads
-   `/v1/job/<job>/lib` to
-   `files/native/builds/<job>/libhorizon_android.so`
-   (atomic `.partial` + rename; resumes an interrupted download when the
-   service honors `Range: bytes=N-` with HTTP 206). The library is
-   SHA-256-verified against the job's published hash; on a mismatch it is
-   deleted and **one from-scratch retry** is performed. Still mismatching:
-   the download is abandoned, the partial file is removed, and you can
-   press **Retry** or **Compile** again.
-8. On success the launcher writes `files/native/current.json` in exactly the
-   schema the Java loader reads (see below) and deletes `build.json`.
-   The launcher's Mods page shows a badge **Native build active: <mod ids>**,
-   switches the button label to **Recompile (applies after re-launch)** and
-   keeps **Play without native mods** (which forgets the build) for recovery.
-   That button stops the native build only: content from the same unified
-   `.hmod` stays installed in `horizon-mods/`.
-9. Restart the game. `HorizonActivity` picks the modded library at the
-   start, the trampoline loads it, and the mods run with full access.
-
-### Resuming
-
-Closing or restarting the launcher mid-build does not lose state: the job id
-is persisted in `files/native/build.json`, and the launcher resumes polling
-(or the download, with its `.partial` file) on the next start of the UI.
-
-### Restart
-
-The **Restart** button sends `killBackgroundProcesses` for this app's own
-`:game` process (the `KILL_BACKGROUND_PROCESSES` normal permission, granted
-at install; no prompt). If the game is running, it is closed; press **Play**
-to start with the modded build. If the kill is a no-op on your device, close
-the game from Recents and press **Play** — the effect is the same: the game
-reads `current.json` only at process start. A clean exit never advances the
-native-mod crash guard, so restarting this way can never count as a crash.
-
-## The versionCode invariant
-
-`current.json` names the `versionCode` of the APK the build was compiled
-for. **The build service compiles the game at the exact commit its
-`versions.json` pins**, and the Java loader refuses a build whose
-`versionCode` differs from the running APK — silently, logging one line and
-running the stock game. Therefore the pinned commit and the APK you install
-must come from the same `dev/android-classic-launcher-removal` commit: APKs
-built from CI after `versions.json` is re-pinned to that commit work; any
-other combination means native mods **never activate** despite every badge
-saying the build is installed. `aapt2 dump badging file.apk` shows the
-`versionCode`; the fork's CI dev APKs use `1000 + run_number`.
-
-## Failure modes and recovery
-
-| Symptom | What happened / what to do |
-| --- | --- |
-| Compile greyed out | No bundle imported (import one), no mod enabled (toggle one on), or a build is in flight (wait). |
-| "No mods selected…" | Same as above; the dialog never opened. |
-| "the selected mods add up to more than 30 MiB" / "build archive is larger than 32 MiB" | Disable some bundles or split the set; the service caps request size. |
-| "cannot reach the build service" / "the build service answered HTTP 413/429" / "…HTTP 503" | Network or service capacity problem. 413 = too large (see above). 429/503 = busy or rate-limited; wait a few minutes. |
-| "the build service did not return a job id" | The service rejected the request body. Keep the APK and the service's pinned commit in sync. |
-| "cache not found" / "base not found" | The build cache for the pinned commit does not exist (it is rebuilt after every re-pin of `versions.json`). Wait for the base rebuild to finish; pressing **Compile** again before then hits the same wall. This is not fixable on the phone. |
-| "Waiting for a free build slot (N ahead)" for a long time | All build runners are busy. On a warm base cache an idle slot finishes in minutes; the line disappears when the job starts. |
-| **Building…** runs for a very long time | A cold build cache runs longest; typical no-op builds are ~5–15 minutes. 45 minutes is the client-side timeout, after which the job is forgotten and you can compile again. |
-| "lost contact with the build service" | Eight consecutive polls failed. Check the network, keep the launcher open, or compile again. |
-| "downloaded library failed sha256 — retried from scratch once and it still did not match" | The library bytes do not match the job's hash; the file was discarded. Check the connection to the service; if it repeats, the service/pinned commit is suspect — do not retry endlessly. |
-| Modded build crashes before the first frame twice | The crash guard sets the build aside (`current.json` moves to `current.json.rejected`, `last_rejected` records why) and the stock game runs. Launcher shows the reason and **Play without native mods** stays available; the bundle itself is untouched. |
-| Native mods never seem to activate after install | `versionCode` mismatch with the running APK (see above), `abi` not in `Build.SUPPORTED_ABIS`, a missing `native/active.json`, or a sha256 mismatch — all fail the Java check silently. Check logcat (`HorizonNativeMods` tag) for the rejection line. |
-| **Play without native mods** | Stops the native build: stock game on the next start. The native bundles, their mirrored content, the downloaded library and `build.json` are kept; Compile again and the same cached build can be reinstalled if the APK did not change. |
-
-**Play without native mods is always safe**: it clears the native loader and
-rollback state (`current.json`, `active.json`, `pending_crash`, `crash_streak`,
-`last_rejected`, `last_failed_mod`, `last_known_good.json` and `first-frame`).
-Native bundles are never touched, and neither is the content mirrored from a
-unified `.hmod` into `horizon-mods/` — that content stays installed.
+**Play without native mods** clears the loader state so the stock game runs on
+the next start. It never touches the bundles, their mirrored content, or a
+library installed by hand.
 
 ## File layout
 
 All paths inside the app's private `files/` directory (`home`) plus the game
-content folder (`game_home`, default the same):
+content folder (`game_home`, by default the same):
 
 | Path | Role |
 | --- | --- |
-| `game_home/horizon-native-mods/<id>.hmod` / `<id>.hnmod` | The imported native bundle, in its original format (moves with the game files). |
-| `game_home/horizon-mods/<id>.hmod` | Mirror of the content part of a unified `.hmod`, so the content installer and list see it. No mirror for legacy `.hnmod`. |
-| `game_home/horizon-native-mods/enabled.json` | `{"enabled": ["<id>", …]}` — the Compile selection; missing file = all enabled. |
-| `native/current.json` | The selected build: `{"id", "version", "lib", "stock", "abi", "versionCode", "sha256", "mods":[{"id","version","sha256"}]}`, plus optional `engine_commit`, `api_level` and `min_apk_version` for the compatibility gate (absent = accept). |
-| `native/active.json` | Written on **every** start by Java: `{"lib": …, "stock": …}`. The trampoline reads this; installs read `stock` from it when present. |
-| `native/active.json.tmp` | Staging file for the atomic rename that publishes `active.json`. |
-| `native/builds/<job>/libhorizon_android.so` | The library the build service produced for job `<job>`. |
-| `native/builds/<job>/libhorizon_android.so.partial` | Interrupted download, resumed with `Range:` when possible. |
-| `native/build.json` | The in-flight build (job id, mods, hashes, APK identity, `stock`) so the launcher can resume after a restart. Deleted on success. |
-| `native/pending_crash` | Marker left on every start that uses a modded build; the game deletes it on its first frame. |
-| `native/first-frame` | Universal marker written atomically on the game's first `about_to_wait` (stock and modded starts alike). The launcher's launch overlay waits for this file, and Java removes any stale copy at process start. |
-| `native/crash_streak` | How many starts in a row died before the first frame (`0` on a clean start). |
-| `native/current.json.rejected` | A set-aside build, kept for the error message. |
-| `native/last_rejected` | Human-readable reason the build was set aside; the launcher shows it in a banner. |
-| `native/last_known_good.json` | A healthy `current.json` saved on the first frame; restored when no build is selected and the last one was not just rejected. |
-| `native/last_failed_mod` | Mod ids recorded when a build crashed early, included in the rejection reason. |
+| `game_home/horizon-native-mods/<id>.hmod` / `<id>.hnmod` | The imported native bundle, in its original format. |
+| `game_home/horizon-mods/<id>.hmod` | Mirror of the content part of a unified `.hmod`. No mirror for legacy `.hnmod`. |
+| `game_home/horizon-native-mods/enabled.json` | `{"enabled": ["<id>", …]}`; a missing file means all enabled. |
+| `native/current.json` | The library selected for this APK, when one is installed by hand. |
+| `native/active.json` | Written every start by Java: `{"lib": …, "stock": …}`; the trampoline reads it. |
+| `native/pending_crash`, `native/crash_streak` | Crash guard for a selected library. |
+| `native/first-frame` | Written by the game on its first frame. |
+| `native/last_known_good.json`, `native/current.json.rejected`, `native/last_rejected`, `native/last_failed_mod` | Rollback and rejection state for the Java loader. |
 
-The crash guard itself uses `pending_crash` and `crash_streak`. The loader also
-writes `native/first-frame` (temp file + rename) and `last_known_good.json` on
-a healthy first frame — the launcher's splash overlay watches `first-frame`,
-and `last_known_good.json` is the rollback target — while Java records
-`last_failed_mod` when a build crashes early. None of these files carries mod
-code; they are only state for the loader and the launcher.
-
-## The load chain
-
-1. `HorizonActivity.onCreate` runs before `super.onCreate`:
-   - parses `native/current.json` and checks it: well-formed, targets this
-     APK's `longVersionCode`, `abi` matches a supported ABI, the library
-     exists and its SHA-256 matches, and the crash guard (below) passes;
-   - writes `native/active.json` atomically (stock path, or the chosen
-     library) **and always writes it** — the trampoline depends on it;
-   - creates `native/pending_crash` when a modded build was chosen;
-   - `System.load()s` the chosen library, so `HorizonActivity`'s JNI bindings
-     resolve against the same library the process runs;
-   - then `super.onCreate` loads **`libhorizon_trampoline.so`** (the
-     `android.app.lib_name` meta-data).
-2. The trampoline (`crates/horizon-trampoline`, a cdylib with no game code)
-   reads `active.json`, sets `HORIZON_GAME_LIB` and
-   `HORIZON_NATIVE_PENDING` (the `pending_crash` path) in the environment,
-   `dlopen()`s the named library and forwards Android's own
-   `ANativeActivity_onCreate` to it — the game, either the stock build or a
-   modded one, with the same JNI setup as a stock start.
-3. On its first `about_to_wait`, the game clears the crash guard once: when
-   `HORIZON_NATIVE_PENDING` names the `pending_crash` file it deletes that
-   marker and writes `crash_streak` back to `0`. It also writes
-   `native/first-frame` (temp file + rename) and saves a healthy
-   `current.json` to `last_known_good.json`; the launcher's splash overlay
-   disappears when `first-frame` appears. A stock start has no pending marker
-   and leaves the crash guard alone.
-
-## The crash guard
-
-A modded build that crashes before rendering its first frame is suspected on
-the next start: `crash_streak` increments. Two crashes in a row set the build
-aside — `current.json` moves to `current.json.rejected`, `last_rejected`
-records why, and the stock game runs. Removing the marker by hand (or playing
-without native mods) resets the cycle. A build that reaches the first frame
-clears the guard itself.
-
-## Installing a build by hand (for testers)
-
-**Compile** does this automatically; the by-hand path exists for tests. With
-a modded `libhorizon_android.so` built for this fork's APK, write
-`files/native/builds/<id>/libhorizon_android.so` and a matching
-`current.json` (the schema above; `versionCode` of this APK, `abi`
-`arm64-v8a`, `sha256` of the library). The launcher shows it as selected; the
-crash guard still applies. Removing it (**Play without native mods**, or
-deleting `current.json`) returns to stock.
+The loader (`NativeMods.java`) validates `current.json` (version code, ABI,
+APK install stamp, optional API gates and SHA-256), writes `active.json`, and
+loads the chosen library before `super.onCreate`. The trampoline forwards
+Android's start callback to it. A library that crashes before its first frame
+twice is set aside and the stock game runs.
 
 ## What was verified
 
 - The stock path runs indistinguishably from the previous APK
   (`current.json` absent ⇒ `active.json` points at the stock library) —
-  confirmed on-device for the stock game.
-- The Java load order, the trampoline's `dlopen` dispatch and the crash
-  guard end to end — confirmed on-device: a modded build selected by an
-  installed `current.json` starts and survives, and a crashing build is
-  set aside.
-- The build service compiles the pinned commit with an imported bundle
-  end to end through GitHub Actions (a no-op mod produced a working
-  library); the Compile loop in this APK drives the same service.
-- Not yet verified: pressing **Compile** on a phone and watching the whole
-  import → compile → install → restart → mod-live cycle, including a unified
-  `.hmod` carrying both content and native code. Compilation runs on a hosted
-  runner; nothing is executed or tested on the phone as part of that cycle.
-  Anyone with the dev APK should run exactly that and report back.
+  confirmed on-device.
+- The Java load order, the trampoline's `dlopen` dispatch and the crash guard —
+  confirmed on-device: a library selected via `current.json` starts and
+  survives, and a crashing one is set aside.
+- The hosted build service is no longer part of this fork. Its former
+  import → compile → install → restart cycle is not supported on Android.

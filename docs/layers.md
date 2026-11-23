@@ -295,10 +295,8 @@ that belongs to one subsystem (an input source, the compositor) lives in the eng
 same shape: registered before the game runs, read-only after.
 
 **What players get.** The release builds (`game-build.yml`, so the nightly and the release; `tools/ci/build-musl.sh`)
-build `horizon-official` and ship it as `horizon-client`, the name the launcher and players know. The launcher's
-native-mod builds of the game do the same, and its generated executable for trait mods calls
-`horizon_official::register()` (`launcher/src/native_mods/api.rs`). The dedicated server build (`horizon-engine`)
-stays horizon-client's, with no Horizon part. horizon-client's own executable, the one `cargo run -p
+build `horizon-official` and ship it as `horizon-client`, the name the launcher and players know. The dedicated
+server build (`horizon-engine`) stays horizon-client's, with no Horizon part. horizon-client's own executable, the one `cargo run -p
 horizon-client`, the harnesses and horizon-plain build, has none either. The first part that moved this way is the
 "I'm playing" ping (`horizon-heartbeat`).
 

@@ -48,7 +48,6 @@ impl Launcher {
         self.installing.is_some()
             || !self.removing.is_empty()
             || self.importing_build
-            || self.native_step.is_some()
             || self.preparing
             || self.client.is_some()
             || self.starting_client.is_some()

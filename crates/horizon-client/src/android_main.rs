@@ -147,8 +147,8 @@ mod native_fit;
 #[path = "../../../launcher/src/native_status.rs"]
 mod native_status;
 // TODO(keep-consistency): the shared native-mod browser reads Nightly build records and GitHub
-// origins when it says whether a native mod fits. Android builds through its own service and has
-// neither, so report an unknown origin and use the launcher's date parsing for labels.
+// origins when it says whether a native mod fits. Android has no native mod builder and neither
+// record, so report an unknown origin and use the launcher's date parsing for labels.
 #[allow(dead_code)]
 mod nightly {
     /// The date of a nightly's version (`nightly-2026-10-28-0c02067`).

@@ -744,27 +744,6 @@ impl Launcher {
             });
             cx.notify();
         }));
-        // The last native build's log (not in the mockup, kept), as a quiet button.
-        let build_log = self.native_log.available.then(|| {
-            keyboard(
-                div()
-                    .id("topbar-native-log")
-                    .flex()
-                    .items_center()
-                    .h(px(36.))
-                    .px(px(14.))
-                    .rounded(px(radius::CONTROL))
-                    .bg(white(fill::BUTTON))
-                    .hover(|s| s.bg(white(fill::BUTTON_HOVER)))
-                    .cursor_pointer()
-                    .child(ui::text(14., FontWeight::MEDIUM, ink::FULL).child(tr("Build log")))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.native_log_open();
-                        cx.notify();
-                    })),
-                &t,
-            )
-        });
         div()
             .flex()
             .flex_none()
@@ -781,7 +760,6 @@ impl Launcher {
                     .flex_none()
                     .items_center()
                     .gap(px(6.))
-                    .children(build_log)
                     .child(account)
                     .children(sign_in)
                     .child(settings),

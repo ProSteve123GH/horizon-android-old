@@ -4243,10 +4243,6 @@ pub enum Msg {
     /// How many play on the official server now, or none when it doesn't answer its status ping
     /// (`telemetry::watch_official`).
     OfficialPlayers(Option<u64>),
-    /// Where the native-mods build is (`native_mods::Step::label`).
-    NativeProgress(String),
-    /// The native-mods build ended: the version built, or why not.
-    Native(Result<String, String>),
     /// An imported game build is installed (`build_import::import`): its version, or why not.
     Imported(Result<String, String>),
     /// A Java instance's game is ready to start (`java_game`, wrapped): the instance's id and
