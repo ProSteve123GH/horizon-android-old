@@ -7,6 +7,12 @@
 //! and leg are the right ones mirrored). Capes are 64×32 (or the older 22×17).
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+#[path = "skins/cloud.rs"]
+pub mod cloud;
+#[path = "skins/library.rs"]
+pub mod library;
+#[path = "skins/preview.rs"]
+pub mod preview;
 
 // The Android cdylib compiles the shared gameplay source with this launcher module shadowing the
 // library's `skins`; let `horizon_client::skins::*` reach the library's API there too.
