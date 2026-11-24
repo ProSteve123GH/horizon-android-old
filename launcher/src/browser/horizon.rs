@@ -384,15 +384,7 @@ fn project_of(p: &index::Project) -> Option<Project> {
         license: p.license.clone(),
         kind: kind_of(&p.kind)?,
         game_versions,
-        loaders: {
-            let mut loaders = vec![LOADER.into()];
-            if cfg!(target_os = "android") && p.kind == index::Kind::NativeMod {
-                // Keep source-only mods visible, without implying Android can
-                // install a source bundle into its already-built game library.
-                loaders.push("hnmod".into());
-            }
-            loaders
-        },
+        loaders: vec![LOADER.into()],
     })
 }
 
@@ -1286,16 +1278,7 @@ fn install_version_guarded(
     }
     let native = p.kind == index::Kind::NativeMod;
     let relative = match native {
-        true => format!(
-            "{}/{}.{}",
-            crate::native_mods::INSTALLED,
-            p.id,
-            if v.file.name.ends_with(".hmod") {
-                "hmod"
-            } else {
-                "hnmod"
-            }
-        ),
+        true => format!("{}/{}.hmod", crate::native_mods::INSTALLED, p.id),
         false => relative(project.kind, &p.id, &v.file.name)?,
     };
     let mut list = installed::Installed::load(home);

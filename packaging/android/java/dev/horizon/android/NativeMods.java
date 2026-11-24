@@ -20,8 +20,8 @@ import org.json.JSONObject;
 /**
  * Chooses the game library for this process on every start and loads it.
  *
- * <p>`files/native/current.json` (written by the launcher when a compiled modded
- * build is installed) names one `libhorizon_android.so` under `files/native/builds/`.
+ * <p>`files/native/current.json` (written when a modded build is installed, for
+ * example by hand for testing) names one `libhorizon_android.so` under `files/native/builds/`.
  * If it parses and passes every check, this start runs that library; otherwise the
  * stock game from the APK does. Either way `files/native/active.json` is written so
  * the native trampoline (`android.app.lib_name`) knows what to load, and the chosen

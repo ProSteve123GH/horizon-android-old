@@ -103,23 +103,6 @@ Show the native compilation cache's size and limit as JSON. Installed games and 
 
 MCP: `native_cache`.
 
-## `horizon-launcher native-build`
-
-Native mods (docs/native-mods.md): compile mixin bundles on the Horizon revision they pin, else the one the instance plays, with the launcher's own Rust, as the version the instance then plays. Not sandboxed: the mods' code runs with your rights.
-
-    horizon-launcher native-build [FOLDER]
-
-- `FOLDER`: A mod folder (horizon-mixin.toml, or an unpacked .hnmod), or a folder of them (default: the native mods installed and turned on in the instance)
-- `--server-output`: Export mode: build a standalone dedicated-server engine into this folder instead of an instance's build. Needs a mod FOLDER; no instance is read or changed, and no launcher config is written
-- `--instance`: The instance whose installed native mods to build, and which then plays the build (default: the selected one)
-- `--update`: Move to the newest installed release or Nightly instead of the Horizon the instance plays (a full rebuild)
-- `--trust-native-code`: You read the mods' source and trust it with full access to this computer
-- `--allow-version-mismatch`: Build mods made for different Horizon versions together anyway, on the newest of them
-- `--ignore-pins`: Build every mod on the commit of the version the build starts from, even the mods that pin another Horizon commit (they may not apply or compile there)
-- `--profile` (performance, dev, release): The build profile: performance (the default: incremental, quick to rebuild), dev (quickest to rebuild a mod, slow game) or release (thin LTO: slowest to build, slightly faster game). Default: the native-profile setting
-
-MCP: none: the player's switch.
-
 ## `horizon-launcher notes`
 
 Show a release's patch notes (default: the newest).

@@ -681,7 +681,7 @@ impl Catalog {
             Ok(Reply::Done(
                 if native_mod_project {
                     format!(
-                        "Installed {}. It is a native mod (code and possibly content), checked against the registry: the code is built by the mod build service before it runs.",
+                        "Installed {}. It is a native mod (code and possibly content), checked against the registry. Native mod building is not supported on Android.",
                         project.title
                     )
                 } else {

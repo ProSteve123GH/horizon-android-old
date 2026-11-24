@@ -197,127 +197,38 @@ fn write(path: &Path, text: &str) {
     fs::write(path, text).unwrap();
 }
 
-fn mixin(id: &str, pin: bool) -> String {
-    let compat = match pin {
-        true => format!("[compatibility]\nhorizon_revision = \"{SHA}\"\n"),
-        false => String::new(),
-    };
-    format!("[mod]\nid = \"{id}\"\nversion = \"0.1.0\"\n{compat}")
-}
-
-#[test]
-fn mod_folders_are_found_wherever_they_are_and_not_searched_inside() {
-    let root = tree("find");
-    write(
-        &root.join("native/zoom/horizon-mixin.toml"),
-        &mixin("zoom", true),
-    );
-    write(
-        &root.join("native/zoom/src/horizon-mixin.toml"),
-        &mixin("inner", true),
-    );
-    write(
-        &root.join("native/keys/horizon-mixin.toml"),
-        &mixin("keys", true),
-    );
-    write(
-        &root.join("target/debug/horizon-mixin.toml"),
-        &mixin("built", true),
-    );
-    write(
-        &root.join(".git/x/horizon-mixin.toml"),
-        &mixin("hidden", true),
-    );
-    let ids: Vec<String> = find_mods(&root)
-        .unwrap()
-        .into_iter()
-        .map(|b| b.id)
-        .collect();
-    assert_eq!(ids, ["keys", "zoom"]);
-    assert!(find_mods(&tree("empty")).unwrap().is_empty());
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn a_mod_folder_packs_into_a_bundle_the_registry_checks_accept() {
-    let root = tree("pack");
-    write(&root.join("horizon-mixin.toml"), &mixin("zoom", true));
-    write(&root.join("src/zoom.rs"), "pub fn f() {}");
-    write(&root.join("data/a.json"), "{}");
-    write(&root.join("README.md"), "# Zoom");
-    // A crate of the mod keeps its own data and the text files it may include.
-    write(&root.join("engine/data/table.bin"), "t");
-    write(&root.join("engine/LICENSE"), "MIT");
-    write(&root.join("engine/logo.png"), "not shipped");
-    let bundle = &find_mods(&root).unwrap()[0];
-    let bytes = pack(bundle).unwrap();
-    assert_eq!(bytes, pack(bundle).unwrap(), "the same files pack the same");
-    let packed = checked(&bytes, &root.join("out")).unwrap();
-    assert_eq!(
-        (packed.id.as_str(), packed.version.as_str()),
-        ("zoom", "0.1.0")
-    );
-    assert_eq!(packed.sha256, sha256(&bytes));
-    let read = format::Bundle::read(&packed.file).unwrap();
-    assert!(read.files.contains_key("mixins/zoom/src/zoom.rs"));
-    assert!(read.files.contains_key("mixins/zoom/data/a.json"));
-    for shipped in ["README.md", "engine/data/table.bin", "engine/LICENSE"] {
-        assert!(
-            read.files.contains_key(&format!("mixins/zoom/{shipped}")),
-            "{shipped}"
-        );
-    }
-    assert!(!read.files.keys().any(|n| n.contains("logo")));
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn a_mod_with_no_pinned_horizon_commit_is_refused_with_the_fix() {
-    let root = tree("unpinned");
-    write(&root.join("horizon-mixin.toml"), &mixin("zoom", false));
-    let err = pack(&find_mods(&root).unwrap()[0]).unwrap_err();
-    assert!(err.contains("horizon_revision"), "{err}");
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn an_unpacked_hnmod_keeps_its_pins_and_hook_points_and_ships_only_sources() {
-    let root = tree("unpacked");
+/// Bytes of an already-built native package, as an older launcher would have
+/// shipped it as a release asset. Installing it must still work.
+fn built_hnmod(id: &str) -> Vec<u8> {
+    use std::io::Write;
     let manifest = json!({
-        "schema": 1, "id": "zoom", "version": "0.1.0", "game": "26.3",
-        "horizon": SHA, "mixins": SHA2, "hooks": 3,
+        "schema": 1, "id": id, "version": "0.1.0", "game": "26.3",
+        "horizon": SHA, "mixins": SHA2,
     });
-    write(&root.join("horizon-native.json"), &manifest.to_string());
-    write(
-        &root.join("mixins/zoom/horizon-mixin.toml"),
-        &mixin("zoom", true),
-    );
-    let bundle = &find_mods(&root).unwrap()[0];
-    assert_eq!(bundle.mixins.as_deref(), Some(SHA2));
-    let packed = checked(&pack(bundle).unwrap(), &root.join("out")).unwrap();
-    let read = format::Bundle::read(&packed.file).unwrap();
-    assert_eq!(
-        (
-            read.manifest.horizon.as_str(),
-            read.manifest.mixins.as_str()
-        ),
-        (SHA, SHA2)
-    );
-    assert_eq!(read.manifest.hooks, Some(3));
-    // Only sources and data ship: a binary beside them stays behind.
-    write(&root.join("mixins/zoom/evil.exe"), "MZ");
-    let again = checked(&pack(bundle).unwrap(), &root.join("out2")).unwrap();
-    assert_eq!(again.sha256, packed.sha256);
-    // A manifest and a mixin file that pin different commits are refused when found.
-    write(
-        &root.join("mixins/zoom/horizon-mixin.toml"),
-        &format!(
-            "{}[compatibility]\nhorizon_revision = \"{SHA2}\"\n",
-            mixin("zoom", false)
-        ),
-    );
-    assert!(find_mods(&root).unwrap_err().contains("pins Horizon"));
-    let _ = fs::remove_dir_all(root);
+    let source = format!("[mod]\nid = \"{id}\"\nversion = \"0.1.0\"\n[compatibility]\nhorizon_revision = \"{SHA}\"\n");
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default();
+    zip.start_file("horizon-native.json", options).unwrap();
+    zip.write_all(manifest.to_string().as_bytes()).unwrap();
+    zip.start_file(format!("mixins/{id}/horizon-mixin.toml"), options)
+        .unwrap();
+    zip.write_all(source.as_bytes()).unwrap();
+    zip.finish().unwrap().into_inner()
+}
+
+#[test]
+fn a_commit_link_has_no_built_asset_to_install() {
+    let found = Resolved {
+        owner: "acme".into(),
+        repo: "zoom".into(),
+        tag: None,
+        commit: SHA.into(),
+        asset: None,
+        content_only: None,
+    };
+    assert!(fetch(&found)
+        .unwrap_err()
+        .contains("no longer supported"));
 }
 
 fn packed(id: &str) -> Packed {
@@ -344,8 +255,7 @@ fn several_mods_list_and_ask_which() {
 fn installing_records_the_origin_and_updates_follow_releases_or_the_head() {
     let home = tree("install");
     let source = tree("install-src");
-    write(&source.join("horizon-mixin.toml"), &mixin("zoom", true));
-    let bytes = pack(&find_mods(&source).unwrap()[0]).unwrap();
+    let bytes = built_hnmod("zoom");
     let ready = checked(&bytes, &source.join("out")).unwrap();
     let found = Resolved {
         owner: "acme".into(),

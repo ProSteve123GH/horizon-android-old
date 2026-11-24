@@ -1,12 +1,12 @@
 //! Whether an instance plays its native mods (docs/native-mods.md): the mods turned on in its
-//! folder against the ones its version was built with (`native-mods.json`, written by
-//! `native_mods::build`). The Mods page shows the answer beside its Build button.
+//! folder against the ones its version was built with (`native-mods.json`, written by an older
+//! launcher). The Mods page reads this to describe installed mods; it no longer builds them.
 use crate::{backend, browser::java, native_mods};
 use std::fs;
 use std::path::Path;
 
 /// Shown once, before the first native mod is installed.
-pub const NOTICE: &str = "Native mods aren't sandboxed: they run with full access to your computer, like any program. Install only mods whose authors you trust. To play with one, build the game on the Mods page; the first build downloads Rust and takes 20 to 30 minutes.";
+pub const NOTICE: &str = "Native mods aren't sandboxed: they run with full access to your computer, like any program. Install only mods whose authors you trust. This launcher lists and toggles native mods installed by older versions, but it no longer builds them.";
 
 /// A native mod: its id, its version and a digest of its files (None for a build from before
 /// `native-mods.json` kept them).

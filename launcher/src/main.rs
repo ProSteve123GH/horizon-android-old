@@ -51,7 +51,6 @@ mod mods_page;
 mod mods_project;
 mod motion;
 mod multiplayer_page;
-mod native_log_page;
 mod new_instance;
 mod owner_page;
 mod packs_page;
@@ -262,33 +261,10 @@ struct Launcher {
     /// and why the last one failed.
     importing_build: bool,
     import_error: Option<String>,
-    /// Native mods (`native_mods`, on the Mods page): the build's step while it runs, why it
-    /// failed, and the warning before a build while it is open, with the mods it names.
-    native_step: Option<String>,
-    /// When the running native build started, and the whole seconds last drawn (the status shows
-    /// the time it has taken).
-    native_started: Option<(Instant, u64)>,
-    /// How the last native build ended ("Built in 42 s (fast, incremental)", or "Up to date").
-    native_done: Option<String>,
-    native_error: Option<String>,
-    native_confirm: Option<Result<Vec<native_mods::Bundle>, String>>,
-    /// The instance (id) the build under way, or the last one's error, is for.
-    native_for: Option<String>,
-    /// The newer Horizon the open warning's build moves to (Update), else None: a build stays
-    /// on the Horizon the instance plays.
-    native_update: Option<String>,
-    /// The build waiting for the trust warning builds every mod on its Horizon's own commit,
-    /// pinned or not (`native_mods::build`'s `on_base`): Rebuild on Horizon's.
-    native_on_base: bool,
     /// What each installed native build was made from, by version. A build's version names its
-    /// contents, so an entry never goes stale.
+    /// contents, so an entry never goes stale. Read-only: the launcher no longer builds mods.
     native_builds:
         std::cell::RefCell<std::collections::HashMap<String, Option<native_status::Build>>>,
-    /// The mods of a build made for other Horizon versions (`native_mods::MISMATCH`): the build
-    /// waits for "Build anyway".
-    native_mismatch: Option<String>,
-    /// The top bar's Build log panel (`native_log_page.rs`).
-    native_log: native_log_page::NativeLog,
     confirm_remove: Option<String>,
     /// The releases whose patch notes the Versions page shows open.
     notes_open: std::collections::HashSet<String>,
@@ -613,17 +589,7 @@ impl Launcher {
             install_error: None,
             importing_build: false,
             import_error: None,
-            native_step: None,
-            native_started: None,
-            native_done: None,
-            native_error: None,
-            native_confirm: None,
-            native_for: None,
-            native_update: None,
-            native_on_base: false,
             native_builds: Default::default(),
-            native_mismatch: None,
-            native_log: Default::default(),
             confirm_remove: None,
             notes_open: Default::default(),
             picker: glass_home::PickerState::default(),
@@ -981,16 +947,6 @@ impl Launcher {
         self.install(&release);
     }
 
-    /// The native mods turned on in the instance Play starts, unpacked and checked, with their
-    /// bundles: what the warning names and the build compiles.
-    fn native_mods_to_build(
-        &self,
-    ) -> Result<(std::path::PathBuf, Vec<native_mods::Bundle>), String> {
-        let folder = native_mods::installed_mods(&instances::selected().home)?;
-        let found = native_mods::bundles(&folder)?;
-        Ok((folder, found))
-    }
-
     /// What installed native build `version` was made from (`native_status::Build`), read once.
     fn native_build_of(&self, version: &str) -> Option<native_status::Build> {
         if !native_mods::is_native(version) {
@@ -1001,92 +957,6 @@ impl Launcher {
             .entry(version.to_owned())
             .or_insert_with(|| native_status::Build::read(version))
             .clone()
-    }
-
-    /// Builds the selected instance's native mods, once the player accepted the warning. The
-    /// build stays on the Horizon the instance plays (`native_mods::base_for`), unless the
-    /// warning was Update's: then it moves to that newer Horizon.
-    /// `anyway`: the player agreed to build mods made for other Horizon versions together.
-    fn build_native(&mut self, anyway: bool) {
-        if self.native_step.is_some() {
-            return;
-        }
-        self.native_confirm = None;
-        self.native_error = None;
-        self.native_mismatch = None;
-        // This attempt's own log, starting empty: an open panel shows it rather than the last
-        // attempt's (`native_log_page`).
-        self.native_log_reset();
-        let instance = instances::selected();
-        self.native_for = Some(instance.id.clone());
-        let plays = self.version_of(&instance).cloned();
-        let on_base = std::mem::take(&mut self.native_on_base);
-        let base = match self.native_update.take() {
-            Some(newer) => Some(newer),
-            None => native_mods::base_for(plays.as_deref(), &self.installed, false),
-        };
-        let Some(base) = base else {
-            let error = tr("Install Horizon first.").to_string();
-            self.native_log_preflight(&error);
-            self.native_error = Some(error);
-            return;
-        };
-        let folder = match self.native_mods_to_build() {
-            Ok((folder, _)) => folder,
-            Err(e) => {
-                self.native_log_preflight(&e);
-                self.native_error = Some(e);
-                return;
-            }
-        };
-        self.native_step = Some(tr("Starting the build").into());
-        self.native_started = Some((Instant::now(), 0));
-        self.native_done = None;
-        let profile = native_mods::Profile::chosen(&self.settings);
-        let tx = self.tx.clone();
-        std::thread::spawn(move || {
-            let mut swapped = horizon_launcher::browser::horizon::fit_versions(&instance);
-            for line in &swapped {
-                let _ = tx.send(Msg::NativeProgress(line.clone()));
-            }
-            let build = || {
-                native_mods::build(
-                    &base,
-                    &folder,
-                    &instance,
-                    anyway,
-                    on_base,
-                    profile,
-                    |step| {
-                        let _ = tx.send(Msg::NativeProgress(step.label()));
-                    },
-                )
-            };
-            let mut result = build();
-            // A mod the build left out though its version said it builds here: its next older
-            // version that says so, and one more build.
-            let left: Vec<String> = result
-                .as_ref()
-                .ok()
-                .and_then(|version| native_mods::about(version))
-                .map(|about| about.left_out.into_iter().map(|l| l.id).collect())
-                .unwrap_or_default();
-            if !left.is_empty() {
-                let older = horizon_launcher::browser::horizon::try_older(&instance, &left);
-                if !older.is_empty() {
-                    for line in &older {
-                        let _ = tx.send(Msg::NativeProgress(line.clone()));
-                    }
-                    swapped.extend(older);
-                    result = build();
-                }
-            }
-            // The build's last line is what the player reads: it says which versions were swapped.
-            if result.is_ok() && !swapped.is_empty() {
-                let _ = tx.send(Msg::NativeProgress(swapped.join("\n")));
-            }
-            let _ = tx.send(Msg::Native(result));
-        });
     }
 
     fn fetch_releases(&mut self) {
@@ -1132,13 +1002,6 @@ impl Launcher {
             }
             Some(perf::Step::Quit) => cx.quit(),
             Some(perf::Step::Wait) | None => {}
-        }
-        // The running build's clock moves on each second.
-        if let Some((started, shown)) = &mut self.native_started {
-            if started.elapsed().as_secs() != *shown {
-                *shown = started.elapsed().as_secs();
-                changed = true;
-            }
         }
         while let Ok(msg) = self.rx.try_recv() {
             changed = true;
@@ -1408,28 +1271,6 @@ impl Launcher {
                     }
                 }
                 Msg::Updates(Err(e)) => self.update_error = Some(e),
-                Msg::NativeProgress(step) => self.native_step = Some(step),
-                Msg::Native(result) => {
-                    // The last step of a build that worked says how it went.
-                    let last = self.native_step.take();
-                    self.native_started = None;
-                    self.native_done = result.is_ok().then_some(last).flatten();
-                    self.installed = backend::installed();
-                    self.reload_instances();
-                    // A build attempt ended: an open panel reads the log it left.
-                    self.native_log.stale = true;
-                    match result.map_err(|e| match e.strip_prefix(native_mods::MISMATCH) {
-                        Some(list) => Ok(list.to_owned()),
-                        None => Err(e),
-                    }) {
-                        Err(Ok(list)) => self.native_mismatch = Some(list),
-                        Err(Err(e)) => self.native_error = Some(e),
-                        // Play waited for this build (`Mods::rebuild`).
-                        Ok(_) if std::mem::take(&mut self.mods.play_after_build) => self.play(),
-                        Ok(_) => {}
-                    }
-                    self.mods.play_after_build = false;
-                }
                 Msg::LauncherProgress(p) => {
                     if let SelfUpdate::Downloading(_, f) = &mut self.self_update {
                         *f = p;
@@ -1578,7 +1419,6 @@ impl Launcher {
         changed |= self.servers_tick();
         changed |= self.mods_tick();
         changed |= self.github_tick();
-        changed |= self.native_log_read(cx);
         changed |= self.toast_tick();
         if let Some(sign_in) = &self.sign_in {
             if let Some(state) = sign_in_change(&mut self.sign_in_state, sign_in.state()) {
@@ -1828,20 +1668,6 @@ impl Launcher {
         if !self.can_start(&tag) {
             return;
         }
-        // Native mods the start's automatic update moved on: the game they are built into is
-        // built again first (the Mods page's Build), then plays.
-        let rebuild = self
-            .selected_instance()
-            .map(|i| i.id.clone())
-            .filter(|id| self.mods.rebuild.contains(id));
-        if let Some(id) = rebuild.filter(|_| self.native_step.is_none()) {
-            self.mods.rebuild.retain(|r| *r != id);
-            if native_mods::is_native(&tag) {
-                self.mods.play_after_build = true;
-                self.build_native(false);
-                return;
-            }
-        }
         self.starting_pack = None;
         self.start_client(tag);
     }
@@ -1908,8 +1734,7 @@ impl Launcher {
         self.starting_client = Some(tag.clone());
         self.play_pressed = Some(Instant::now());
         let tx = self.tx.clone();
-        // Registry mods update before the game reads them (`horizon::auto`); native mods only
-        // at start, where a build can follow.
+        // Registry mods update before the game reads them (`horizon::auto`).
         let auto = self
             .selected_instance()
             .filter(|_| self.settings.auto_updates_mods() && self.starting_pack.is_none())
@@ -1925,9 +1750,9 @@ impl Launcher {
             backend::complete_assets(&tag);
             if let Some(auto) = auto {
                 backend::play_step("updating registry mods");
-                let (lines, _) = mods_page::auto_update(&[auto]);
+                let lines = mods_page::auto_update(&[auto]);
                 if !lines.is_empty() {
-                    let _ = mods_tx.send(mods_page::Event::AutoUpdated(lines, Vec::new()));
+                    let _ = mods_tx.send(mods_page::Event::AutoUpdated(lines));
                 }
             }
             backend::play_step("reading the sign-in");
@@ -2902,15 +2727,6 @@ impl Launcher {
             this.go(Page::Settings);
             cx.notify();
         }));
-        // The last native build's log, when there is one (`native_log_page`).
-        let build_log = self.native_log.available.then(|| {
-            tab_action("topbar-native-log", "Build log", &t).on_click(cx.listener(
-                |this, _: &ClickEvent, _, cx| {
-                    this.native_log_open();
-                    cx.notify();
-                },
-            ))
-        });
         div()
             .flex()
             .flex_none()
@@ -2931,7 +2747,6 @@ impl Launcher {
                     .flex_none()
                     .items_center()
                     .gap(px(8.))
-                    .children(build_log)
                     .child(account)
                     .child(settings),
             )
@@ -4094,104 +3909,6 @@ impl Launcher {
             )
             .child(self.collection_section(cx))
             .children(self.agents_section(cx))
-    }
-
-    /// The warning before a native build: what the mods can do and which mods. The build starts
-    /// only from its button.
-    fn native_warning(
-        &self,
-        mods: &Result<Vec<native_mods::Bundle>, String>,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let t = self.theme;
-        let list = match mods {
-            Ok(found) => found
-                .iter()
-                .map(|b| format!("{} {}", b.id, b.version))
-                .collect::<Vec<_>>()
-                .join(", "),
-            Err(e) => e.clone(),
-        };
-        let panel = div()
-            .flex()
-            .flex_col()
-            .gap(px(6.))
-            .mt(px(8.))
-            .p(px(12.))
-            .bg(t.well)
-            .child(div().text_color(t.danger).child(tr("These mods will run with full access to your computer").to_string()))
-            .child(tr("They can read, change or delete your files, and use your accounts and network, like any program you run. Build them only if you trust their authors: the Mods page names them.").to_string())
-            .child(trf("Mods: {mods}", &[("mods", &list)]))
-            .child(tr("The build compiles the game: 20 to 30 minutes and a few GB of disk the first time (it downloads Rust), a few minutes after that.").to_string())
-            .children(self.native_update.as_ref().map(|newer| {
-                div().text_color(t.warn).child(trf(
-                    "This moves the instance to Horizon {version}. It compiles the game from scratch, so it takes longer than a normal rebuild: up to 30 minutes.",
-                    &[("version", &native_status::horizon_label(newer))],
-                ))
-            }));
-        let mut buttons = div().flex().gap(px(8.)).mt(px(4.));
-        if mods.is_ok() {
-            buttons = buttons.child(
-                button(
-                    "native-trust",
-                    "I trust these mods: build",
-                    Kind::Primary,
-                    &t,
-                )
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.build_native(false);
-                    cx.notify();
-                })),
-            );
-        }
-        panel.child(buttons.child(
-            button("native-cancel", "Cancel", Kind::Secondary, &t).on_click(cx.listener(
-                |this, _: &ClickEvent, _, cx| {
-                    this.native_confirm = None;
-                    this.native_update = None;
-                    this.native_on_base = false;
-                    cx.notify();
-                },
-            )),
-        ))
-    }
-
-    /// Mods made for other Horizon versions: which, and the version the build uses. They often
-    /// still work, so the player may build anyway.
-    fn native_mismatch_panel(&self, list: &str, cx: &mut Context<Self>) -> Div {
-        let t = self.theme;
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(6.))
-            .mt(px(8.))
-            .p(px(12.))
-            .bg(t.well)
-            .child(div().text_color(t.danger).child(tr("These mods were made for different Horizon versions").to_string()))
-            .child(list.to_owned())
-            .child(tr("They often still work together. If the build fails, install versions made for the same Nightly.").to_string())
-            .child(
-                div()
-                    .flex()
-                    .gap(px(8.))
-                    .mt(px(4.))
-                    .child(
-                        button("native-anyway", "Build anyway", Kind::Primary, &t).on_click(
-                            cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.build_native(true);
-                                cx.notify();
-                            }),
-                        ),
-                    )
-                    .child(
-                        button("native-mismatch-cancel", "Cancel", Kind::Secondary, &t).on_click(
-                            cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.native_mismatch = None;
-                                cx.notify();
-                            }),
-                        ),
-                    ),
-            )
     }
 
     /// Settings' Windows ARM game architecture choice; release installation, updates and launch
@@ -5361,7 +5078,6 @@ impl Render for Launcher {
                             window.focus_next(cx);
                         }
                     }
-                    "escape" if this.native_log_escape() => {}
                     "escape" if this.servers_escape() => {}
                     "escape" if this.instance_escape() => {}
                     "escape" if this.screenshot_escape() => {}
@@ -5481,9 +5197,6 @@ impl Render for Launcher {
         root = root.children(self.import_note(cx));
         if let Some(dialog) = self.instance_dialog(cx) {
             root = root.child(dialog);
-        }
-        if let Some(panel) = self.native_log_panel(cx) {
-            root = root.child(panel);
         }
         if self.page == Page::Play {
             if let Some(viewer) = self.screenshot_viewer(cx) {
