@@ -38,6 +38,13 @@ use horizon_hooks::tunnel;
 /// connection (`TransferState`), so a proxy's backend switch keeps them.
 pub type Cookies = Arc<Mutex<HashMap<String, Vec<u8>>>>;
 
+/// Horizon servers probe for raw payload registrations during configuration
+/// (channel `horizon:payloads`). This client registers none, so it answers the
+/// raw-protocol revision 1 query with an empty marked offer.
+const HORIZON_PAYLOADS_CHANNEL: &str = "horizon:payloads";
+const HORIZON_PAYLOADS_QUERY: &[u8] = &[0, 1];
+const HORIZON_PAYLOADS_OFFER: &[u8] = &[1, 1, 0];
+
 /// A recording of the session's packets: the tap a replay recorder plugs into. Replay recording is a
 /// platform feature (docs/layers.md, "Controllers, splitscreen, replays and UI pages"); the engine only
 /// hands it the packets: the network thread what it receives, the game thread what the client makes for
@@ -1118,6 +1125,16 @@ fn configure(
                     )),
                 }))?;
             }
+            // Horizon servers probe for raw payload registrations. Answer only
+            // the revision 1 query; this client registers no raw payloads.
+            cfg::Clientbound::CustomPayload(p) if p.channel == HORIZON_PAYLOADS_CHANNEL => {
+                if p.data == HORIZON_PAYLOADS_QUERY {
+                    reply(cfg::Serverbound::CustomPayload(cfg::CustomPayload {
+                        channel: HORIZON_PAYLOADS_CHANNEL.into(),
+                        data: HORIZON_PAYLOADS_OFFER.to_vec(),
+                    }))?;
+                }
+            }
             cfg::Clientbound::CustomPayload(p) => {
                 // Horizon servers use the client brand to negotiate their extensions.
                 // Announce those only after the server identifies itself as Horizon.
@@ -1672,6 +1689,18 @@ mod tests {
                     .encode(),
                 )
                 .unwrap();
+            if server_brand == b"\x07horizon" {
+                // Horizon servers probe raw payload registrations during configuration.
+                server
+                    .send(
+                        &cfg::Clientbound::CustomPayload(cfg::CustomPayload {
+                            channel: HORIZON_PAYLOADS_CHANNEL.into(),
+                            data: HORIZON_PAYLOADS_QUERY.to_vec(),
+                        })
+                        .encode(),
+                    )
+                    .unwrap();
+            }
             server
                 .send(
                     &cfg::Clientbound::SelectKnownPacks(cfg::SelectKnownPacks { packs: vec![] })
@@ -1687,9 +1716,17 @@ mod tests {
                         data: b"\x07horizon".to_vec(),
                     })
                 );
+                let (id, body) = server.recv().unwrap();
+                assert_eq!(
+                    cfg::Serverbound::decode(id, &body).unwrap(),
+                    cfg::Serverbound::CustomPayload(cfg::CustomPayload {
+                        channel: HORIZON_PAYLOADS_CHANNEL.into(),
+                        data: HORIZON_PAYLOADS_OFFER.to_vec(),
+                    })
+                );
             }
-            // The response to the pack query proves any brand reply precedes it.
-            // Non-Horizon servers must receive no additional brand announcement.
+            // The pack response proves the brand and payload replies precede it.
+            // Non-Horizon servers must receive neither announcement.
             let (id, body) = server.recv().unwrap();
             assert_eq!(
                 cfg::Serverbound::decode(id, &body).unwrap(),
