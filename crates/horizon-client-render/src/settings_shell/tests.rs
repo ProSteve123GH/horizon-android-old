@@ -813,3 +813,71 @@ fn the_right_button_steps_no_choice_as_vanillas_cycle_button() {
     );
     assert!(shell.screen.pressed.is_empty());
 }
+
+#[test]
+fn a_window_with_no_room_still_gives_every_part_a_usable_rect() {
+    for (w, h) in [
+        (0.0, 0.0),
+        (1.0, 1.0),
+        (60.0, 30.0),
+        (135.0, 85.0),
+        (-10.0, -20.0),
+        (f32::NAN, 480.0),
+        (854.0, f32::INFINITY),
+        (f32::NEG_INFINITY, f32::NAN),
+    ] {
+        let cols = Columns::of(w, h).with_note_lines(4);
+        let rects = [
+            cols.plate,
+            cols.dock,
+            cols.search(),
+            cols.clear(),
+            cols.row(0.0),
+            cols.button(0),
+            cols.button(1),
+            cols.page(0),
+        ];
+        for [_, _, rw, rh] in rects {
+            assert!(
+                rw.is_finite() && rw >= 0.0,
+                "a width at {w}x{h}: {rw}"
+            );
+            assert!(
+                rh.is_finite() && rh >= 0.0,
+                "a height at {w}x{h}: {rh}"
+            );
+        }
+        assert!(cols.list_w.is_finite() && cols.list_w >= 0.0);
+        assert!(cols.plate[3] >= 0.0);
+        // The list's clip is never reversed: no height is better than a negative one.
+        assert!(cols.top.is_finite() && cols.bottom.is_finite());
+        assert!(cols.bottom >= cols.top, "the list's view at {w}x{h}");
+    }
+}
+
+#[test]
+fn a_pointer_that_is_not_a_number_slides_a_slider_no_further_than_its_start() {
+    let cols = Columns::of(SIZE.0, SIZE.1);
+    assert_eq!(cols.slider_at(f32::NAN), 0.0);
+    assert_eq!(cols.slider_at(f32::NEG_INFINITY), 0.0);
+    assert_eq!(cols.slider_at(f32::INFINITY), 1.0);
+}
+
+#[test]
+fn the_frame_draws_without_invalid_geometry_in_a_window_of_no_size_or_not_a_number() {
+    let s = Settings::default();
+    let atlas = atlas();
+    for (w, h) in [(0.0, 0.0), (f32::NAN, f32::INFINITY), (16.0, 16.0)] {
+        let mut shell = Shell::<Probe>::default();
+        let mut batch = HudBatch::new([854, 480]);
+        (batch.width, batch.height) = (w, h);
+        shell.draw(&s, &mut batch, &atlas, (0.0, 0.0), false, None);
+        for v in &batch.vertices {
+            assert!(
+                v.pos[0].is_finite() && v.pos[1].is_finite(),
+                "a vertex at {w}x{h}: {:?}",
+                v.pos
+            );
+        }
+    }
+}

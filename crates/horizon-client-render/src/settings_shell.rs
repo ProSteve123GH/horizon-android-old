@@ -58,17 +58,31 @@ const MIN_LIST_H: f32 = 60.0;
 const PAGE_STEP: f32 = 18.0;
 /// Between the foot's buttons, over and beside one another, and over them.
 const FOOT_GAP: f32 = 4.0;
+/// A length as a frame can use it: finite and not below zero. A window reports zero, or, while it
+/// is created or resized, a size that isn't a number; laying out with it must not make a width
+/// negative, a clip reversed or a division by zero.
+fn usable(v: f32) -> f32 {
+    if v.is_finite() {
+        v.max(0.0)
+    } else {
+        0.0
+    }
+}
 impl Columns {
     pub(crate) fn of(w: f32, h: f32) -> Self {
+        let (w, h) = (usable(w), usable(h));
         let side_w = style::CONTROL_W;
         let gap = if w >= 560.0 { 16.0 } else { 8.0 };
-        let pw = (w - 16.0 - side_w - gap).min(432.0).floor();
-        let side_x = ((w - side_w - gap - pw) / 2.0).floor();
+        // A narrow window keeps a smaller margin, leaving the plate the room it needs to read.
+        let margin = if w >= 560.0 { 16.0 } else { 8.0 };
+        let pw = usable((w - margin - side_w - gap).min(432.0).floor());
+        let side_x = usable(((w - side_w - gap - pw) / 2.0).floor());
         let px = side_x + side_w + gap;
         // A short screen (a 720p window at scale 3) gives the margin to the list.
         let side_y = if h >= style::TITLED { 24.0 } else { 8.0 };
         let dock = [px, h - 8.0 - style::DOCK_H, pw, style::DOCK_H];
-        let plate = [px, side_y, pw, dock[1] - 4.0 - side_y];
+        let top = side_y + 30.0;
+        let plate = [px, side_y, pw, usable(dock[1] - 4.0 - side_y)];
         let list_x = px + 8.0;
         Self {
             side_x,
@@ -76,9 +90,10 @@ impl Columns {
             plate,
             dock,
             list_x,
-            list_w: pw - 16.0 - style::SCROLLER_W - 2.0,
-            top: side_y + 30.0,
-            bottom: plate[1] + plate[3] - 6.0,
+            list_w: usable(pw - 16.0 - style::SCROLLER_W - 2.0),
+            top,
+            // A window too short for the plate leaves the list no height, never a reversed one.
+            bottom: usable(plate[1] + plate[3] - 6.0).max(top),
             note_lines: NOTE_LINES,
         }
     }
@@ -146,10 +161,20 @@ impl Columns {
         let x = self.list_x + self.list_w - style::INSET - style::CONTROL_W;
         (x, style::CONTROL_W)
     }
-    /// A slider's value for the pointer at `x`: the handle's middle follows it.
+    /// A slider's value for the pointer at `x`: the handle's middle follows it. A track too
+    /// narrow to slide on, or a pointer that isn't a number, reads as the start.
     pub(crate) fn slider_at(&self, x: f32) -> f32 {
         let (tx, tw) = self.track();
-        ((x - tx - 5.0) / (tw - 10.0)).clamp(0.0, 1.0)
+        let span = tw - 10.0;
+        if !span.is_finite() || span <= 0.0 {
+            return 0.0;
+        }
+        let value = ((x - tx - 5.0) / span).clamp(0.0, 1.0);
+        if value.is_finite() {
+            value
+        } else {
+            0.0
+        }
     }
     /// A row's whole width at `y`.
     pub(crate) fn row(&self, y: f32) -> [f32; 4] {
@@ -341,7 +366,7 @@ pub(crate) fn plate(batch: &mut HudBatch, atlas: &HudAtlas, cols: &Columns, head
     style::fill(
         batch,
         atlas,
-        [px + 8.0, py + 24.0, pw - 16.0, 1.0],
+        [px + 8.0, py + 24.0, (pw - 16.0).max(0.0), 1.0],
         style::head_rule(),
     );
 }
@@ -388,7 +413,7 @@ pub(crate) fn list<P: Copy, S: Copy>(
             continue;
         };
         if !after_name {
-            let rule = [cols.list_x + 8.0, y, cols.list_w - 16.0, 1.0];
+            let rule = [cols.list_x + 8.0, y, (cols.list_w - 16.0).max(0.0), 1.0];
             style::fill(batch, atlas, rule, style::row_rule());
         }
         row(batch, setting, y);
@@ -404,14 +429,14 @@ pub(crate) fn list<P: Copy, S: Copy>(
             true,
         );
     }
-    batch.clip_since(
-        start,
-        cols.list_x,
-        cols.top,
-        cols.list_x + cols.list_w,
-        cols.bottom,
-    );
-    crate::widgets::clip_targets(mark, cols.top, cols.bottom);
+    // The list's view: a rectangle even when the window leaves no room for one. A zero-width or
+    // zero-height clip draws nothing; a reversed or non-finite one is not a clip at all.
+    let left = usable(cols.list_x);
+    let top = usable(cols.top);
+    let right = usable(left + cols.list_w).max(left);
+    let bottom = usable(cols.bottom).max(top);
+    batch.clip_since(start, left, top, right, bottom);
+    crate::widgets::clip_targets(mark, top, bottom);
 }
 
 /// A control's label as its name and its value ("Render Distance" and "12 chunks").
@@ -602,7 +627,11 @@ fn row_rect<R>(row: &Row<R>, cols: &Columns, y: f32) -> [f32; 4] {
 /// The row at `y`, short of its reset button where it has one.
 fn short_of_reset(cols: &Columns, y: f32, resets: bool) -> [f32; 4] {
     let [x, y, w, h] = cols.row(y);
-    let w = if resets { w - RESET_W - RESET_GAP } else { w };
+    let w = if resets {
+        (w - RESET_W - RESET_GAP).max(0.0)
+    } else {
+        w
+    };
     [x, y, w, h]
 }
 
@@ -611,7 +640,7 @@ fn lit(batch: &mut HudBatch, atlas: &HudAtlas, [x, y, w, _]: [f32; 4]) {
     style::fill(
         batch,
         atlas,
-        [x + 2.0, y + 1.0, w - 4.0, style::ROW - 2.0],
+        [x + 2.0, y + 1.0, (w - 4.0).max(0.0), style::ROW - 2.0],
         style::hover(),
     );
 }

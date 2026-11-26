@@ -25,6 +25,17 @@ const SECTIONS: [(&str, &str); 8] = [
     ("Data collection", "view"),
 ];
 
+/// The section list's width beside the cards: the mockup's 210 px, and 224 px from the width
+/// where pages put their two columns side by side, so the longer translated labels keep their
+/// room without crowding the cards.
+fn nav_width(window_width: f32) -> f32 {
+    if window_width >= crate::glass_home::SIDE_BY_SIDE {
+        224.
+    } else {
+        210.
+    }
+}
+
 /// What `settings_page` builds before it knows which look draws it.
 pub(super) struct Built {
     pub install: Stateful<Div>,
@@ -78,7 +89,23 @@ fn tile(lead: AnyElement, title: String, note: String, action: AnyElement) -> Di
 /// and slides down to the pane's bottom over the last 70 % of a pane of scroll: the short last
 /// sections, which never reach 30 %, each come in turn as the end nears, instead of the mockup's
 /// jump from wherever it was to the last one at the very end.
+///
+/// A section layout has not measured yet is not finite in `tops` (see [`section_tops`]): it is
+/// never marked, and the measured sections after it still are. An empty list, or a pane that has
+/// no height yet, marks the first section rather than guessing at the last.
 fn spy(tops: &[f32], height: f32, scrolled: f32, max: f32) -> usize {
+    if tops.is_empty() {
+        return 0;
+    }
+    if !height.is_finite() || height <= 0. {
+        return 0;
+    }
+    let max = if max.is_finite() && max > 0. { max } else { 0. };
+    let scrolled = if scrolled.is_finite() {
+        scrolled.clamp(0., max)
+    } else {
+        0.
+    };
     let rest = height * 0.3;
     let travel = height - rest;
     let tail = travel.min(max);
@@ -87,7 +114,34 @@ fn spy(tops: &[f32], height: f32, scrolled: f32, max: f32) -> usize {
     } else {
         rest
     };
-    tops.iter().rposition(|&top| top <= line + 0.5).unwrap_or(0)
+    tops.iter()
+        .rposition(|&top| top.is_finite() && top <= line + 0.5)
+        .unwrap_or(0)
+}
+
+/// Each section's top from the pane's top, in section order, for [`spy`]: `bound(i)` is section
+/// `i`'s top in the pane's coordinates, or `None` where layout has not measured it yet. A missing
+/// section keeps its place as infinity, so it is never marked and the sections after it are not
+/// lost; item bounds can lag behind the cards they belong to, and a gap in them must not pin the
+/// list to the sections before it.
+fn section_tops(
+    count: usize,
+    pane_top: f32,
+    scrolled: f32,
+    mut bound: impl FnMut(usize) -> Option<f32>,
+) -> Vec<f32> {
+    (0..count)
+        .map(|i| {
+            bound(i).map_or(f32::INFINITY, |top| {
+                let top = top - pane_top - scrolled;
+                if top.is_finite() {
+                    top
+                } else {
+                    f32::INFINITY
+                }
+            })
+        })
+        .collect()
 }
 
 fn note(s: &str) -> Option<AnyElement> {
@@ -98,23 +152,32 @@ impl Launcher {
     pub(super) fn glass_settings(&mut self, b: Built, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let sections = ui::flat_rows(|| self.glass_settings_sections(b, cx));
-        let active = self.settings_section(sections.len());
+        // The list has one entry per `SECTIONS`; keep the spy and the list on the same count even
+        // if a caller ever builds fewer or more cards than entries.
+        let count = sections.len().min(SECTIONS.len());
+        let active = self.settings_section(count);
         self.settings_marked = active;
         let wide = self.window_width >= crate::glass_home::COMPACT;
+        let width = nav_width(self.window_width);
         let items: Vec<_> = SECTIONS
             .iter()
             .enumerate()
             .map(|(i, &(label, icon))| {
                 let on = i == active;
+                // Beside the cards the list has a fixed width: a long translation truncates
+                // instead of pushing the label past the card. The strip scrolls, so it keeps the
+                // whole label.
+                let label = div().min_w_0().child(tr(label).to_string());
+                let label = if wide { label.truncate() } else { label };
                 keyboard(
                     div()
                         .id(SharedString::from(format!("settings-nav-{i}")))
                         .flex()
                         .flex_none()
                         .items_center()
-                        .gap(px(if wide { 12. } else { 8. }))
-                        .h(px(if wide { 40. } else { 34. }))
-                        .px(px(if wide { 12. } else { 10. }))
+                        .gap(px(if wide { 12. } else { 10. }))
+                        .h(px(if wide { 40. } else { 36. }))
+                        .px(px(if wide { 12. } else { 12. }))
                         .rounded(px(radius::ROW))
                         .cursor_pointer()
                         .font_family(horizon_theme::glass::FONT)
@@ -137,7 +200,7 @@ impl Launcher {
                                 white(0.65)
                             },
                         ))
-                        .child(tr(label).to_string()),
+                        .child(label),
                     &t,
                 )
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -149,7 +212,7 @@ impl Launcher {
         let nav = if wide {
             card()
                 .flex_none()
-                .w(px(210.))
+                .w(px(width))
                 .gap(px(4.))
                 .children(items)
                 .into_any_element()
@@ -159,6 +222,7 @@ impl Launcher {
                 .flex_none()
                 .w_full()
                 .flex_row()
+                .items_center()
                 .overflow_x_scroll()
                 .on_scroll(|_, _, cx| cx.stop_propagation())
                 .gap(px(4.))
@@ -176,9 +240,9 @@ impl Launcher {
             // A scroll redraws the pane from its layer without rendering the page again, so the
             // list follows it here: on the next frame, once the offset has moved, and only when
             // the section changed.
-            .on_scroll(cx.listener(|_, _: &gpui::ScrollEvent, window, cx| {
-                cx.on_next_frame(window, |this, _, cx| {
-                    if this.settings_section(SECTIONS.len()) != this.settings_marked {
+            .on_scroll(cx.listener(move |_, _: &gpui::ScrollEvent, window, cx| {
+                cx.on_next_frame(window, move |this, _, cx| {
+                    if this.settings_section(count) != this.settings_marked {
                         cx.notify();
                     }
                 });
@@ -194,7 +258,7 @@ impl Launcher {
                 .flex()
                 .flex_row()
                 .items_start()
-                .gap(px(12.))
+                .gap(px(16.))
                 .flex_1()
                 .min_h_0()
                 .child(nav)
@@ -226,16 +290,20 @@ impl Launcher {
     /// the scroll is taken off them here. Reading them as they were left the list on the first
     /// section until the pane hit its end.
     fn settings_section(&self, count: usize) -> usize {
+        if count == 0 {
+            return 0;
+        }
         let pane = self.settings_pane.bounds();
         let scrolled = -self.settings_pane.offset().y;
-        let tops: Vec<f32> = (0..count)
-            .map_while(|i| self.settings_pane.bounds_for_item(i))
-            .map(|b| f32::from(b.top() - pane.top() - scrolled))
-            .collect();
+        let tops = section_tops(count, f32::from(pane.top()), scrolled, |i| {
+            self.settings_pane
+                .bounds_for_item(i)
+                .map(|b| f32::from(b.top()))
+        });
         spy(
             &tops,
             f32::from(pane.size.height),
-            f32::from(scrolled),
+            scrolled,
             f32::from(self.settings_pane.max_offset().y),
         )
     }
@@ -324,7 +392,7 @@ impl Launcher {
             .gap(px(8.))
             .child(tile(
                 self.horizon_mark(42.),
-                "Horizon".into(),
+                tr("Horizon").to_string(),
                 installed.unwrap_or_else(|| tr("Nightly").to_string()),
                 div()
                     .flex()
@@ -421,7 +489,12 @@ impl Launcher {
                     tr("crash reports beside it")
                 ))),
                 Some(
-                    button("open-logs", "Open", Kind::Secondary, &t)
+                    button(
+                        "open-logs",
+                        tr("Open").to_string(),
+                        Kind::Secondary,
+                        &t,
+                    )
                         .on_click(|_, _, cx| {
                             let dir = backend::logs_dir();
                             let _ = std::fs::create_dir_all(&dir);
@@ -451,7 +524,7 @@ impl Launcher {
 
 #[cfg(test)]
 mod tests {
-    use super::spy;
+    use super::{section_tops, spy};
 
     /// A 600 px pane over the mockup's eight cards: tall ones, then About and Data collection,
     /// too short for their tops ever to reach 30 % of the pane.
@@ -501,5 +574,36 @@ mod tests {
     fn a_pane_that_does_not_scroll_marks_the_first() {
         assert_eq!(spy(&[0., 200.], 600., 0., 0.), 0);
         assert_eq!(spy(&[], 600., 0., 0.), 0);
+    }
+
+    #[test]
+    fn a_section_layout_has_not_measured_keeps_the_later_ones_reachable() {
+        let tops = section_tops(3, 100., 0., |i| [Some(100.), None, Some(200.)][i]);
+        assert_eq!(tops, [0., f32::INFINITY, 100.]);
+        assert_eq!(
+            spy(&tops, HEIGHT, 0., MAX),
+            2,
+            "the measured section after the gap is still marked"
+        );
+
+        let tops = section_tops(2, 100., 0., |i| [None, Some(200.)][i]);
+        assert_eq!(tops, [f32::INFINITY, 100.]);
+        assert_eq!(spy(&tops, HEIGHT, 0., MAX), 1);
+    }
+
+    #[test]
+    fn empty_or_unmeasured_layout_data_marks_the_first() {
+        assert_eq!(section_tops(0, 0., 0., |_| Some(0.)), Vec::<f32>::new());
+        assert_eq!(spy(&[f32::NAN, f32::INFINITY], HEIGHT, 0., MAX), 0);
+        assert_eq!(
+            spy(&[0., 0., 0.], 0., 0., 0.),
+            0,
+            "a pane with no height yet"
+        );
+        assert_eq!(
+            spy(&[0., 300.], HEIGHT, f32::NAN, f32::NAN),
+            0,
+            "non-finite scroll data does not panic or jump to the last section"
+        );
     }
 }

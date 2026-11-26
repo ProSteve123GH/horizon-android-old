@@ -10,7 +10,22 @@ pub use horizon_client_core::sound_source::SOUND_SOURCES;
 
 /// Per-source volumes for the mixer (soundCategory_* except master).
 static SOURCE_VOLUMES: std::sync::RwLock<[f32; 11]> = std::sync::RwLock::new([1.0; 11]);
+/// A volume the mixer can use. The sliders only produce 0..=1, so a finite
+/// value is clamped there; a non-finite one (a hand-edited options.txt or a
+/// mod writing the field) falls back to vanilla's default of 1.0 instead of
+/// spreading NaN through the audio arithmetic.
+fn sanitize_volume(v: f32) -> f32 {
+    if v.is_finite() {
+        v.clamp(0.0, 1.0)
+    } else {
+        1.0
+    }
+}
 pub fn set_source_volumes(volumes: [f32; 11]) {
+    let mut volumes = volumes;
+    for v in &mut volumes {
+        *v = sanitize_volume(*v);
+    }
     *SOURCE_VOLUMES.write().unwrap_or_else(|e| e.into_inner()) = volumes;
 }
 /// The SoundSource an event plays on. Vanilla callers pick the source; this
@@ -96,7 +111,12 @@ pub fn source_volume(i: usize) -> f32 {
     if i == 0 {
         1.0
     } else {
-        SOURCE_VOLUMES.read().unwrap_or_else(|e| e.into_inner())[i]
+        SOURCE_VOLUMES
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(i)
+            .copied()
+            .map_or(1.0, sanitize_volume)
     }
 }
 
@@ -738,18 +758,19 @@ impl Settings {
             .position(|n| *n == source)
             .map_or(1.0, |i| {
                 if i == 0 {
-                    self.master_volume
+                    sanitize_volume(self.master_volume)
                 } else {
-                    self.volumes[i]
+                    sanitize_volume(self.volumes[i])
                 }
             })
     }
     /// `Options.getFinalSoundSourceVolume`: a source's volume times master's.
     pub fn final_volume(&self, source: &str) -> f32 {
+        let master = sanitize_volume(self.master_volume);
         if source == "master" {
-            self.master_volume
+            master
         } else {
-            self.volume(source) * self.master_volume
+            self.volume(source) * master
         }
     }
     /// `Options.narrator`: the `narrator` id in options.txt.
@@ -1264,5 +1285,39 @@ mod tests {
         assert_eq!(again.sound_device, "Headphones");
         let empty = Settings::parse("");
         assert_eq!(empty.sound_device, "");
+    }
+    #[test]
+    fn an_out_of_range_source_index_reads_as_full_volume() {
+        // A bogus index used to panic on the fixed-size volume array.
+        assert_eq!(source_volume(SOUND_SOURCES.len()), 1.0);
+        assert_eq!(source_volume(usize::MAX), 1.0);
+    }
+    #[test]
+    fn poisoned_volume_fields_stay_inside_the_mixer_range() {
+        let mut s = Settings::default();
+        s.master_volume = f32::NAN;
+        s.volumes[1] = f32::INFINITY; // music
+        s.volumes[2] = -0.5; // record
+        s.volumes[3] = 2.0; // weather
+        s.volumes[4] = 0.25; // block, valid and unchanged
+        // NaN and infinity fall back to the default, the others clamp.
+        assert_eq!(s.final_volume("master"), 1.0);
+        assert_eq!(s.final_volume("music"), 1.0);
+        assert_eq!(s.volume("record"), 0.0);
+        assert_eq!(s.volume("weather"), 1.0);
+        assert_eq!(s.final_volume("block"), 0.25);
+    }
+    #[test]
+    fn set_source_volumes_sanitizes_non_finite_and_out_of_range_values() {
+        let mut volumes = [0.5; 11];
+        volumes[1] = f32::NAN;
+        volumes[2] = f32::INFINITY;
+        volumes[3] = -1.0;
+        volumes[4] = 2.0;
+        set_source_volumes(volumes);
+        let actual = [1, 2, 3, 4, 5].map(source_volume);
+        // Leave the shared mixer state as the other tests expect it.
+        set_source_volumes([1.0; 11]);
+        assert_eq!(actual, [1.0, 1.0, 0.0, 1.0, 0.5]);
     }
 }
