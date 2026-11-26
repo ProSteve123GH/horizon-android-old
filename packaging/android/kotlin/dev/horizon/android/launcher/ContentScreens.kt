@@ -481,6 +481,13 @@ fun InstalledScreen(state: Snapshot, actions: LauncherActions, wide: Boolean, sh
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
+                                if (kind == "mods") {
+                                    Text(
+                                        localModTypeLabel(local),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
                                 if (!local.toggle) {
                                     Text(
                                         "64-bit required",
@@ -513,4 +520,10 @@ fun InstalledScreen(state: Snapshot, actions: LauncherActions, wide: Boolean, sh
             }
         }
     }
+}
+
+private fun localModTypeLabel(item: LocalItem): String = when (item.modType) {
+    "native" -> "Native mod"
+    "wasm" -> "Content mod · WASM"
+    else -> "Content mod"
 }

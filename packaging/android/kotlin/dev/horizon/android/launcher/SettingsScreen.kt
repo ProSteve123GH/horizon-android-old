@@ -312,8 +312,8 @@ fun RemoveDialog(item: LocalItem, onDismiss: () -> Unit) {
 fun RemoveNativeDialog(id: String, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Remove native mod?") },
-        text = { Text("Deletes only $id from this profile. This cannot be undone.") },
+        title = { Text("Remove native source bundle?") },
+        text = { Text("Deletes $id and, when present, its matching content mirror from this profile. This cannot be undone.") },
         confirmButton = {
             Button(onClick = {
                 act("native_remove", id)

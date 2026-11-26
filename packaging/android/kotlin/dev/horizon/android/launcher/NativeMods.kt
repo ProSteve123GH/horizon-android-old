@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,7 +21,6 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,15 +33,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import org.json.JSONObject
 
 /**
  * The native-mods section of the Mods page. A `.hmod` may carry content only,
  * or content plus native source-only Rust (legacy `.hnmod` carried native only).
  * Native mod building is not supported on Android: there is no upstream Android
  * SDK slice to rebuild the game. Native mods use the `mod_api` SDK and `.hmod`
- * packages on supported hosts. Bundles imported here can be enabled, disabled
- * and removed; nothing is compiled or executed on this device.
+ * packages on supported hosts. Bundles imported here are source-only on Android:
+ * nothing is compiled or executed on this device.
  */
 @Composable
 fun NativeModsSection(native: NativeMods, actions: LauncherActions) {
@@ -59,7 +56,7 @@ fun NativeModsSection(native: NativeMods, actions: LauncherActions) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Native mods (.hmod / legacy .hnmod)",
+                    "Native source bundles",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
@@ -92,7 +89,7 @@ fun NativeModsSection(native: NativeMods, actions: LauncherActions) {
             }
             if (native.mods.isEmpty()) {
                 Text(
-                    ".hmod bundles (content, or content + native) and legacy .hnmod bundles are imported here. Native mod building is not supported on Android; native mods use the mod_api SDK and .hmod packages on supported hosts. See docs/android-native-mods.md.",
+                    "Import .hmod or legacy .hnmod source bundles here. Android validates and stores native source, but does not compile or run it. See docs/android-native-mods.md.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -121,19 +118,15 @@ fun NativeModsSection(native: NativeMods, actions: LauncherActions) {
                             Text(
                                 stateText(mod),
                                 style = MaterialTheme.typography.labelMedium,
-                                color = if (mod.enabledState == "selected") {
+                                color = if (mod.state == "rejected") {
+                                    MaterialTheme.colorScheme.error
+                                } else if (mod.state == "selected") {
                                     MaterialTheme.colorScheme.primary
                                 } else {
                                     MaterialTheme.colorScheme.outline
                                 },
                             )
                         }
-                        HorizonSwitch(
-                            checked = mod.enabled,
-                            onCheckedChange = { on ->
-                                act("native_enabled", JSONObject().put("id", mod.id).put("enabled", on).toString())
-                            },
-                        )
                         Spacer(Modifier.width(4.dp))
                         IconButton(onClick = { actions.removeNative(mod.id) }) {
                             Icon(Icons.Rounded.DeleteOutline, "Remove", tint = MaterialTheme.colorScheme.error)
@@ -141,34 +134,15 @@ fun NativeModsSection(native: NativeMods, actions: LauncherActions) {
                     }
                 }
             }
-            current?.let { chosen ->
-                Text(
-                    if (chosen.rejected) {
-                        "Set aside: ${chosen.id} ${chosen.version}"
-                    } else {
-                        "Runs on the next start: ${chosen.id} ${chosen.version}"
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                OutlinedButton(onClick = actions.disableNative, modifier = Modifier.fillMaxWidth()) {
-                    Text("Play without native mods")
-                }
-                Text(
-                    "Stops using the native library; content from the same .hmod stays installed.",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
         }
     }
     detailsMod?.let { mod ->
         AlertDialog(
             onDismissRequest = { detailsMod = null },
-            title = { Text("Native mod") },
+            title = { Text("Native source bundle") },
             text = {
                 Text(
-                    "id: ${mod.id}\nversion: ${mod.version}",
+                    "id: ${mod.id}\nversion: ${mod.version}\n\nThis source bundle is not compiled or run on Android.",
                 )
             },
             confirmButton = { TextButton(onClick = { detailsMod = null }) { Text("Close") } },
@@ -183,9 +157,8 @@ private fun formatSize(bytes: Long): String = when {
 }
 
 private fun stateText(mod: NativeMod): String = when {
-    !mod.enabled -> "Disabled"
-    mod.enabledState == "selected" -> "Selected — runs on the next start"
-    mod.enabledState == "rejected" -> "Set aside after crashing twice"
-    mod.enabledState == "invalid" -> "Invalid bundle"
-    else -> "Imported"
+    mod.state == "rejected" -> "Source bundle · related build set aside"
+    mod.state == "invalid" -> "Invalid source bundle"
+    mod.state == "selected" -> "Source bundle · separate library selected"
+    else -> "Imported source · not runnable on Android"
 }

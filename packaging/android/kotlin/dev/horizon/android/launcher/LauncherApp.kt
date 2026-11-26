@@ -377,7 +377,6 @@ private fun LauncherContent(
         },
         importNative = { nativePicker.launch(arrayOf("application/octet-stream", "application/zip", "application/x-zip-compressed", "*/*")) },
         removeNative = { id -> overlay = Overlay.RemoveNative(id) },
-        disableNative = { act("native_disable") },
         importWardrobe = { kind ->
             wardrobeKind = kind
             wardrobePicker.launch(arrayOf("image/png"))
@@ -643,7 +642,6 @@ class LauncherActions(
     val openAccount: () -> Unit,
     val importNative: () -> Unit,
     val removeNative: (String) -> Unit,
-    val disableNative: () -> Unit,
     val openWorlds: () -> Unit,
     val openPerformance: () -> Unit,
     val openTouchLayouts: () -> Unit,

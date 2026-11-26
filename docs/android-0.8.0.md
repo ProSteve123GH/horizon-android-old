@@ -27,11 +27,12 @@
   `files/native/current.json`, writes `files/native/active.json` and loads the
   chosen library before `NativeActivity` starts, so an installed modded build
   runs instead of the stock game. A build that crashes before its first
-  frame twice is set aside and the stock game runs. `.hnmod` bundles can be
-  imported, enabled/disabled, listed and removed on the Mods page; **Compile**
-  sends the enabled bundles to the fork's personal build service, waits for
-  the job, downloads the library, verifies it and publishes it for the next
-  start. See [android-native-mods.md](android-native-mods.md).
+  frame twice is set aside and the stock game runs. `.hnmod` and unified
+  `.hmod` bundles can be imported, listed and removed as source-only archives;
+  Android does not compile or execute them, and there is no native
+  enable/disable or **Compile** action. The Installed page labels sandboxed
+  content/WASM mods separately from native source bundles. See
+  [android-native-mods.md](android-native-mods.md).
 
 ## Build notes
 

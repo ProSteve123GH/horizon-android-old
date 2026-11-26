@@ -30,7 +30,7 @@ Worlds, profiles, resource caches and account data use app-private storage.
 Updating with the same signing certificate preserves them; uninstalling the app
 or clearing its storage removes them.
 
-| APK architecture | Minimum Android | Native `.hmod` runtime |
+| APK architecture | Minimum Android | Manual native-library loader |
 | --- | --- | --- |
 | `arm64-v8a` | 9 / API 28 | Included |
 | `x86_64` | 9 / API 28 | Included |
@@ -64,11 +64,14 @@ directly and returns to the launcher when the player leaves the game.
   launch a world or server.
 - **Skins:** import and apply local skin/cape PNGs, preview Classic/Slim, and
   perform explicit cloud actions.
-- **Mods:** import native Horizon packages using a direct HTTPS `.hmod` URL
-  on 64-bit builds. New packages are disabled until enabled in Installed.
+- **Mods:** import Horizon `.hmod` content/WASM packages and native source
+  bundles using the catalog, picker or a direct HTTPS URL on 64-bit builds.
+  Native source is stored and labeled but is not compiled or executed on
+  Android.
 - **Packs:** find and install resource packs with checksum verification.
 - **Shaders:** find and install shader packs.
-- **Installed:** enable, disable or remove installed additions.
+- **Installed:** identify content/WASM and native source mods, enable or
+  disable runnable content, or remove installed additions.
 - **Settings:** rendering mode, resolution, refresh rate, chunk-worker ceiling,
   reusable RAM cache, orientation, aspect, immersive/cutout, instances,
   performance presets, saved servers, launcher appearance, input, offline name,

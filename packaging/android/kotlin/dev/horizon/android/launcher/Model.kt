@@ -133,18 +133,18 @@ data class LocalItem(
     val file: String,
     val enabled: Boolean,
     val toggle: Boolean,
+    /** `native`, `wasm`, or `content` for mods; blank for packs and shaders. */
+    val modType: String,
 )
 
-/** One stored mod bundle in the active instance: a `.hmod` (content, or content + native) or a legacy `.hnmod`. */
+/** One stored native source bundle in the active instance. */
 data class NativeMod(
     val id: String,
     val version: String,
     val name: String,
     val size: Long,
-    /** `imported`, `selected` (runs next start), `rejected` (set aside) or `invalid`. */
-    val enabledState: String,
-    /** Whether the mod takes part in **Compile**. */
-    val enabled: Boolean,
+    /** `imported`, `selected`, `rejected` (set aside) or `invalid`. */
+    val state: String,
 )
 
 /** The modded build chosen for the next start, or the one that was set aside. */
@@ -331,6 +331,7 @@ data class Snapshot(
                         file = it.optString("file"),
                         enabled = it.optBoolean("enabled"),
                         toggle = it.optBoolean("toggle"),
+                        modType = it.optString("mod_type"),
                     )
                 },
                 documents = Documents(
@@ -348,8 +349,8 @@ data class Snapshot(
                                 version = it.optString("version"),
                                 name = it.optString("name"),
                                 size = it.optLong("size"),
-                                enabledState = it.optString("enabled_state"),
-                                enabled = it.optBoolean("enabled", true),
+                                state = it.optString("state")
+                                    .ifBlank { it.optString("enabled_state") },
                             )
                         },
                         current = n.optJSONObject("current")?.let { c2 ->

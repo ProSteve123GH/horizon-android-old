@@ -233,6 +233,35 @@ pub struct LocalItem {
     pub file: String,
     pub title: String,
     pub enabled: bool,
+    /// The kind of installed mod archive: native source, sandboxed WASM, or
+    /// content-only. Empty for packs and shaders.
+    pub mod_type: &'static str,
+}
+
+/// Classify an installed mod by its archive contents rather than its filename.
+///
+/// Unified native `.hmod` files are mirrored into `horizon-mods/`, so the
+/// native manifest check must happen before the regular Horizon package check.
+/// Invalid or legacy content archives remain visible as content instead of
+/// making the installed screen fail to load.
+fn installed_mod_type(
+    path: &Path,
+    kind: horizon_client::content_files::Kind,
+) -> &'static str {
+    if kind != horizon_client::content_files::Kind::Mods {
+        return "";
+    }
+    if horizon_mods::index::native::holds(path) {
+        return "native";
+    }
+    if horizon_mods::Package::read(path)
+        .ok()
+        .is_some_and(|package| package.wasm.is_some())
+    {
+        "wasm"
+    } else {
+        "content"
+    }
 }
 
 /// Verify a pasted link against the registry index already read this run, when
@@ -340,6 +369,7 @@ impl Catalog {
                     file: name.clone(),
                     title: name,
                     enabled,
+                    mod_type: installed_mod_type(&entry.path(), kind),
                 });
             }
         }
@@ -595,7 +625,7 @@ impl Catalog {
                         };
                         let (id, version) = crate::native_mods::install_staged(&game, &stage)?;
                         Ok(Reply::Done(
-                            format!("Installed native mod {id} {version}. {trust}"),
+                            format!("Installed native source bundle {id} {version}. Android stores it but does not compile or execute it. {trust}"),
                             horizon_client::content_files::Kind::Mods,
                             true,
                         ))
@@ -681,7 +711,7 @@ impl Catalog {
             Ok(Reply::Done(
                 if native_mod_project {
                     format!(
-                        "Installed {}. It is a native mod (code and possibly content), checked against the registry. Native mod building is not supported on Android.",
+                        "Installed {}. It is a native source bundle (code and possibly content), checked against the registry. Android stores it but does not compile or execute it.",
                         project.title
                     )
                 } else {

@@ -1,4 +1,4 @@
-//! Native mod (`.hnmod` / `.hmod`) import, listing, toggling and removal for the Android launcher.
+//! Native mod (`.hnmod` / `.hmod`) import, listing and removal for the Android launcher.
 //!
 //! A `.hnmod` bundle is a native mod; a combined `.hmod` carries native code
 //! plus a content part and is stored in both folders so the existing content
@@ -264,7 +264,7 @@ pub(crate) fn take_result() -> Option<String> {
 // ---- import ----------------------------------------------------------------
 
 /// `NativeBridge.importNativeDocument(Activity, String uri)`: the picked
-/// `.hnmod` document, opened like every other imported file.
+/// `.hmod` or legacy `.hnmod` document, opened like every other imported file.
 pub(crate) fn import_external(
     env: &mut jni::JNIEnv<'_>,
     activity: &jni::objects::JObject<'_>,
@@ -301,7 +301,7 @@ pub(crate) fn import_external(
             crate::documents::set_working(false);
             match result {
                 Ok((id, version)) => finish(format!(
-                    "Imported native mod {id} {version}. Native code in a bundle runs unsandboxed; building native mods is not supported on Android."
+                    "Imported native source bundle {id} {version}. Android stores it but does not compile or execute native code; native code is unsandboxed on hosts that run it."
                 )),
                 Err(error) => finish(format!("Native mod import failed: {error}")),
             }
@@ -540,12 +540,6 @@ pub(crate) fn disable(home: &Path) -> Result<(), String> {
     Ok(())
 }
 
-// ---- enabled flags ---------------------------------------------------
-
-fn enabled_file(game_home: &Path) -> PathBuf {
-    bundle_dir(game_home).join("enabled.json")
-}
-
 // ---- safe mode / rollback ------------------------------------------------
 
 /// The rollback target: a copy of `current.json` from a start that reached its
@@ -568,93 +562,6 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
         let _ = fs::remove_file(&temp);
         error.to_string()
     })
-}
-
-/// Read the enabled list. A missing file means every bundle is enabled
-/// (the default). Unknown ids (bundles that were removed) are ignored.
-fn enabled_set(game_home: &Path) -> Vec<String> {
-    let Some(value) = read_json(&enabled_file(game_home)) else {
-        return Vec::new();
-    };
-    value
-        .get("enabled")
-        .and_then(Value::as_array)
-        .map(|list| {
-            list.iter()
-                .filter_map(Value::as_str)
-                .filter(|id| horizon_mods::index::valid_id(id))
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Write the enabled list atomically (`.tmp` + rename), keeping only ids
-/// that have a bundle on disk.
-fn write_enabled(game_home: &Path, ids: &[String]) -> Result<(), String> {
-    let dir = bundle_dir(game_home);
-    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-    let mut ids: Vec<String> = ids
-        .iter()
-        .filter(|id| stored_bundle(game_home, id).is_some())
-        .cloned()
-        .collect();
-    ids.sort();
-    ids.dedup();
-    let body = json!({ "enabled": ids }).to_string();
-    let target = enabled_file(game_home);
-    let temp = target.with_file_name("enabled.json.tmp");
-    fs::write(&temp, body).map_err(|error| error.to_string())?;
-    fs::rename(&temp, &target).map_err(|error| error.to_string())
-}
-
-/// `native_enabled`: flip whether `id` is enabled in the launcher's mod list.
-pub(crate) fn set_enabled(
-    game_home: &Path,
-    id: &str,
-    enabled: bool,
-) -> Result<bool, String> {
-    if !horizon_mods::index::valid_id(id) {
-        return Err("Invalid native mod id".into());
-    }
-    if stored_bundle(game_home, id).is_none() {
-        return Err(format!("No native mod with id '{id}' is installed"));
-    }
-    let mut set = enabled_set(game_home);
-    if !enabled_file(game_home).is_file() {
-        // Materialize the default (all enabled) before applying the change.
-        set = list_ids(game_home);
-    }
-    let present = set.iter().position(|entry| entry == id).is_some();
-    match (enabled, present) {
-        (true, false) => set.push(id.to_owned()),
-        (false, true) => {
-            set.retain(|entry| entry != id);
-        }
-        _ => {}
-    }
-    write_enabled(game_home, &set)?;
-    Ok(enabled)
-}
-
-/// The ids of every stored bundle.
-fn list_ids(game_home: &Path) -> Vec<String> {
-    let mut ids: Vec<String> = fs::read_dir(bundle_dir(game_home))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let (stem, _) = bundle_stem(&name)?;
-            if !horizon_mods::index::valid_id(stem) {
-                return None;
-            }
-            entry.metadata().ok().filter(|m| m.is_file()).map(|_| stem.to_owned())
-        })
-        .collect();
-    ids.sort();
-    ids.dedup();
-    ids
 }
 
 // ---- listing -----------------------------------------------------------------
@@ -692,21 +599,6 @@ pub(crate) fn section(home: &Path, game_home: &Path) -> Value {
             fingerprint.push(0);
         }
     }
-    match fs::metadata(enabled_file(game_home)) {
-        Ok(metadata) => {
-            let modified = metadata
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_nanos())
-                .unwrap_or(0);
-            fingerprint.extend(b"enabled.json");
-            fingerprint.extend(metadata.len().to_le_bytes());
-            fingerprint.extend(modified.to_le_bytes());
-        }
-        Err(_) => fingerprint.extend(b"enabled.json"),
-    }
-    fingerprint.push(0);
     for name in [
         "current.json",
         "current.json.rejected",
@@ -775,8 +667,6 @@ fn section_uncached(home: &Path, game_home: &Path) -> Value {
     rows.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
     // One row per id even if both formats are present for it.
     rows.dedup_by(|a, b| a.0 == b.0);
-    let enabled = enabled_set(game_home);
-    let all_enabled = !enabled_file(game_home).is_file();
     let mods: Vec<Value> = rows
         .into_iter()
         .map(|(stem, path, size)| match Bundle::read(&path) {
@@ -798,8 +688,7 @@ fn section_uncached(home: &Path, game_home: &Path) -> Value {
                     "version": bundle.manifest.version,
                     "name": name,
                     "size": size,
-                    "enabled_state": state,
-                    "enabled": all_enabled || enabled.iter().any(|entry| entry == &id),
+                    "state": state,
                 })
             }
             // A bundle that no longer parses stays listed instead of vanishing.
@@ -808,8 +697,7 @@ fn section_uncached(home: &Path, game_home: &Path) -> Value {
                 "version": "unknown",
                 "name": stem,
                 "size": size,
-                "enabled_state": "invalid",
-                "enabled": false,
+                "state": "invalid",
             }),
         })
         .collect();

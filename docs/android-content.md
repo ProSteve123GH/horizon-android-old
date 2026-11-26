@@ -27,9 +27,11 @@ and press **Import .hmod** (the Search button changes when a URL is entered).
 The URL's suffix is not trusted to decide the type: the archive's contents do.
 A `.hmod` may be content-only or content plus native Rust source; a native
 bundle is detected by `horizon-native.json` and is routed to the native mods
-folder. A pasted HTTPS link gets no registry hash or signature check unless
-its URL exactly matches a known Horizon registry file, so paste only links
-you trust. File import and link import are both available.
+folder. Native source bundles are stored for inspection only on Android: the
+APK does not compile or execute them. A pasted HTTPS link gets no registry
+hash or signature check unless its URL exactly matches a known Horizon registry
+file, so paste only links you trust. File import and link import are both
+available.
 
 In **Shaders**, choose **Horizon** for native `.hshader` packs or **Modrinth**
 for classic shader ZIPs. The selection is saved and each source has its own search
@@ -53,13 +55,13 @@ refreshes its query. Changing tabs does not unpack installed `.hmod` WASM files.
 Supported files:
 
 - Mods: `.hmod` archives, which may be content-only or content plus native
-  Rust source. The **content** part runs in the Wasmtime sandbox on 64-bit
+  Rust source. A package with WASM runs in the Wasmtime sandbox on 64-bit
   builds (32-bit builds omit that runtime but can still manage the files).
-  A native part is detected by `horizon-native.json`, is **not sandboxed**,
-  and does not run until you use **Compile** to have it built into the game
-  on a hosted runner; see [android-native-mods.md](android-native-mods.md).
-  Java `.jar` mods are not accepted. The sandboxed wording applies only to
-  the content part; native code runs with full device access once compiled.
+  A native part is detected by `horizon-native.json`, is **not sandboxed** on
+  hosts that run it, and remains source-only on Android: it is not compiled or
+  executed by the APK. The Installed page labels content/WASM and native
+  archives separately; see [android-native-mods.md](android-native-mods.md).
+  Java `.jar` mods are not accepted.
 - Resource packs: ZIPs with valid `pack.mcmeta` at the archive root.
 - Shaders: native `.hshader` packs, native shader ZIPs with `horizon-shaders.toml`
   (stored as `.hshader`), or classic ZIPs with shader sources under `shaders/`.
@@ -129,7 +131,7 @@ A unified `.hmod` can carry both content and native source: the native part
 is detected by `horizon-native.json` and stored in `horizon-native-mods/`,
 while its content part is mirrored to `horizon-mods/<id>.hmod` so this
 installer and the game's mod list see it. The content works on its own; the
-native part needs **Compile** (hosted runner, not sandboxed) before it runs.
-A legacy `.hnmod` is native-only. All of these can be imported here — file
-and HTTPS imports remain available — and none of the native code is
-executed or tested on the phone during import.
+native source remains stored but is not compiled or run on Android. A legacy
+`.hnmod` is native-only. All of these can be imported here — file and HTTPS
+imports remain available — and none of the native code is executed or tested
+on the phone during import.
