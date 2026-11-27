@@ -49,7 +49,6 @@ jobs:
       - run: python3 tools/test_android_appearance.py
       - run: python3 tools/test_android_instances.py
       - run: python3 tools/test_android_worlds.py
-      - run: python3 tools/test_android_document_store.py
       - run: python3 tools/test_android_performance_presets.py
       - run: python3 tools/test_android_servers.py
       - run: python3 tools/test_android_launcher_appearance.py

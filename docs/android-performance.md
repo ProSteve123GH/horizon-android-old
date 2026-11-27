@@ -2,8 +2,8 @@
 
 In the launcher, open Settings, enable **Performance recording**, then press
 Play. Reproduce the slow startup, travel or other problem during normal play.
-Return to the launcher and select **Performance report → Open in Files / Reports**.
-Copy or share the `.jsonl` file from **Horizon Android → Reports** in system Files.
+Return to the launcher and browse **Settings → Storage & Files → Game files**
+to find the shareable `.jsonl` report in **Reports**.
 
 Recording is off by default. Each run is limited to 30 minutes and 8 MiB; the
 three latest internal reports are retained. Opening Reports does not create copies.
@@ -11,7 +11,8 @@ Copies exported by the user remain in their chosen destination. Older versions'
 copies in Download/HorizonAndroid are left untouched.
 Reports are written on a bounded background queue and flushed once per sample;
 if Android kills the process, completed samples remain available on next launch.
-No general storage permission is needed to browse the document provider.
+No documents permission is needed: the in-app Game files browser reads the
+active game-files root directly.
 
 The report contains:
 
@@ -43,7 +44,8 @@ chat, server addresses, world names, seeds or player coordinates.
 
 Developer regression check: `python tools/test_android_performance.py`. It runs
 the actual recorder/statistics/timing code in a host harness and substitutes only
-Android publication. The isolated storage probe tests provider access separately.
+Android publication. The isolated storage probe tests the file lock and the
+canonical instance layout separately.
 
 ## Vulkan terrain validation
 

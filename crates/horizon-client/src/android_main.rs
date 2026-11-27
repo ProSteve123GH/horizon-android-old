@@ -61,10 +61,6 @@ mod backup;
 mod display;
 #[path = "android/document_bridge.rs"]
 mod document_bridge;
-#[path = "android/document_provider.rs"]
-mod document_provider;
-#[path = "android/document_store.rs"]
-mod document_store;
 // Android-only SAF/JNI glue: several document helpers are reached from other glue.
 #[allow(dead_code)]
 #[path = "android/documents.rs"]

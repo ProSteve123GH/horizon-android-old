@@ -1,34 +1,26 @@
 # Android add-on files
 
 Use **Mods**, **Packs** or **Shaders → Import file**, or open **Installed** and
-press Import beside the desired group. Select a file in Android's document picker.
-**Open folder**, including the in-game Mod/Resource Pack/Shader Pack Folder
-buttons, browses that directory in a system file manager. If the phone shows an
-app chooser, select Files. Alternatively open the system Files app and select
-**Horizon Android** in its navigation drawer.
+press Import beside the desired group. Select a file in Android's document picker;
+the picker reads a file from another app or from Downloads and copies it into
+Horizon. Horizon no longer appears as a folder in the system Files app.
 
-The provider contains **Mods**, **Resource Packs**, **Shader Packs**, **Worlds**,
-and **Configuration** for the selected launcher instance, and **Reports**.
-Instance files are under `Instances/Default` or
-`Instances/<named instance>` and are identified by their stable `pN` marker.
-Launcher touch-layout snapshots are under `Controls/<pN>/`, while the live
-`horizon-touch.json` remains in the instance. Files stay in the active game-files
-root; no extra copy is made by the provider. Android grants other apps access
-to documents you select. Account files, private launcher state and prepared
-game resources are not exposed.
-Reports are read-only and can be copied or shared through Files. Screenshots
-continue to appear in **Pictures/HorizonAndroid**.
+Player files are browsed in the launcher's **Game files** screen
+(Settings → Storage & Files → Browse game files). Instance files are under
+`Instances/Default` or `Instances/<named instance>` and are identified by their
+stable `pN` marker. Launcher touch-layout snapshots are under `Controls/<pN>/`,
+while the live `horizon-touch.json` remains in the instance. Files stay in the
+active game-files root; no extra copy is made. Account files, private launcher
+state and prepared game resources are not exposed. Screenshots continue to
+appear in **Pictures/HorizonAndroid**.
 
-**Configuration** exposes only `options.txt`, `horizon-graphics.txt`,
-`horizon-touch.json` and `horizon-keypad.json` from the selected
-`Instances/<...>` folder. These are the existing engine settings, not copied or
-relocated files. The launcher snapshot file
-`Controls/<pN>/android-touch-layouts.json` is launcher data, not the live touch
-configuration. Return to the launcher before reading or editing Configuration
-or Worlds. Changes apply when the game starts again.
-Keep a backup before manual edits; invalid settings may be reset by their loader.
-Configuration allows editing known files but not renaming/deleting them or adding
-arbitrary folders. It does not grant access to account tokens or internal files.
+The game settings in the active instance include `options.txt`,
+`horizon-graphics.txt`, `horizon-touch.json` and `horizon-keypad.json`. These are
+the existing engine settings, not copied or relocated files. The launcher
+snapshot file `Controls/<pN>/android-touch-layouts.json` is launcher data, not
+the live touch configuration. Return to the launcher before editing settings or
+worlds. Changes apply when the game starts again. Keep a backup before manual
+edits; invalid settings may be reset by their loader.
 
 To download a `.hmod` from a link, paste its HTTPS URL in the Mods search field
 and press **Import .hmod** (the Search button changes when a URL is entered).
@@ -95,33 +87,25 @@ metadata are checked. Archives are kept as files, not extracted into arbitrary
 filesystem paths. Invalid imports and interrupted temporary files do not replace
 existing content. Original URI grants are not retained after copying.
 
-The allowlisted DocumentsProvider supports browsing, copying files in and out,
-editing, renaming, moving and deleting files and child folders. Fixed directories
-(Mods, Resource Packs, Shader Packs, Worlds, Configuration and Reports) cannot be
-removed or moved. The Configuration root exposes only `options.txt`,
-`horizon-graphics.txt`, `horizon-touch.json` and `horizon-keypad.json`; those
-files can be written, renamed, moved or deleted, while account data and other
-private files stay outside the provider. Deleting a child folder (a world or
-add-on folder) after the system confirmation removes its contents. The provider
-does not implement same-provider `copyDocument`; system Files can still copy
-documents in and out through create, read and write. Hidden paths, traversal and
-symlinks are rejected. World and configuration content operations are refused
-while the game is running: the provider probes the game lock and each world's
-`session.lock`. It does not require MANAGE_EXTERNAL_STORAGE. ZIP-world
-import/export and moving the game to an external folder remain separate tasks.
+The old Horizon DocumentsProvider was removed. Only Android's own document
+pickers (and the private screenshot provider used for sharing) remain; they read
+files the user selects and never expose Horizon's account data or prepared
+resources. Game-data browsing, copying and deletion happen in the launcher's
+in-app **Game files** screen, which works without a documents permission.
+World and configuration files must not be changed while the game is running.
 
 Copying directly with a file manager bypasses the Import file validator; wait for
 the copy to finish before starting the game, and use the game's pack selection to
 reload changes. Import file remains the validated route with progress/cancellation
 and explicit conflict choices. A system file manager controls its own copy and
-overwrite dialogs. Deleting through Files removes the underlying add-on.
+overwrite dialogs.
 
 Developer checks: `python tools/test_android_content.py` covers the shared import
 validator, streamed copy cancellation/limits and upload scheduling without starting
-the game. Test the complete APK on Android for picker cancellation, file-provider
-permissions, duplicate-name choices, deletion and keyboard/background recovery.
-`python tools/test_android_storage.py --serial DEVICE --browse` tests the actual
-provider and Bionic file lock in a separate small probe app with fresh app data.
+the game. Test the complete APK on Android for picker cancellation, duplicate-name
+choices, deletion and keyboard/background recovery.
+`python tools/test_android_storage.py --serial DEVICE` runs the Bionic file-lock
+and canonical instance-layout probe in a separate small app with fresh data.
 
 For a native shader smoke test, package Horizon's included Golden Hour example:
 

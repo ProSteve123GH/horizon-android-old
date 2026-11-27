@@ -1007,17 +1007,11 @@ impl Controller {
                 self.catalog.remove_local(&home);
             }
             "open_folder" => {
-                let folder = match parse_kind(arg).ok_or("Unknown content kind")? {
-                    Kind::Mods => "mods",
-                    Kind::Packs => "packs",
-                    Kind::Shaders => "shaders",
-                };
-                let id = crate::document_store::folder_id(self.catalog.config.profile, folder);
-                self.catalog.status = if crate::platform::open_documents(&id) {
-                    "Opened in Files. Return here after copying files.".into()
-                } else {
-                    "System Files is unavailable. Use Game files in Settings to browse this folder.".into()
-                };
+                // The DocumentsProvider was removed. The launcher's in-app
+                // Game files browser is the only game-data file browser now.
+                let _ = parse_kind(arg).ok_or("Unknown content kind")?;
+                self.catalog.status =
+                    "Use Game files in Settings to browse this folder.".into();
             }
             "storage_migrate" => {
                 // The Compose dialog computes the shared folder (it knows the
@@ -1194,13 +1188,7 @@ impl Controller {
                 return Ok(json!("ok"));
             }
             "game_files" => {
-                self.catalog.status = if crate::platform::open_documents(
-                    crate::document_store::ROOT,
-                ) {
-                    "Game files opened. Worlds, mods, packs, shaders and reports are available here.".into()
-                } else {
-                    "System Files is unavailable. Use the Game files screen in Settings to browse worlds, mods, packs, shaders and reports.".into()
-                };
+                self.catalog.status = "Open Game files in Settings to browse worlds, mods, packs, shaders and reports.".into();
             }
             "screenshots" => return Ok(self.screenshots("newest")),
             "screenshot_delete" => {
@@ -1222,12 +1210,7 @@ impl Controller {
                 }));
             }
             "world_files" => {
-                let id = crate::document_store::folder_id(self.catalog.config.profile, "worlds");
-                self.catalog.status = if crate::platform::open_documents(&id) {
-                    "Copy a complete world folder to back up or import. Finish copying before Play; never replace an existing world silently.".into()
-                } else {
-                    "System Files is unavailable. Use Game files in Settings to copy world folders while the game is closed.".into()
-                };
+                self.catalog.status = "Use Game files in Settings to copy world folders while the game is closed. Finish copying before Play.".into();
             }
             "select_account" => {
                 let mut accounts = crate::account::Accounts::load();

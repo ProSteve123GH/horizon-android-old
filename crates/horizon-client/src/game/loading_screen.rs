@@ -45,6 +45,9 @@ pub(super) fn run_event_loop(mut game: Game<'_>) -> Result<()> {
 pub(super) struct Loading {
     pub(super) window: Option<Arc<Window>>,
     pub(super) renderer: Option<Renderer>,
+    /// Android destroys the native surface on background; rebuild on resume.
+    #[cfg(target_os = "android")]
+    pub(super) surface_lost: bool,
     /// The boot screen's atlas, until the pack's GUI atlas replaces it.
     pub(super) boot: horizon_client::hud::HudAtlas,
     pub(super) gui: Option<UiResources>,
@@ -84,6 +87,14 @@ impl Loading {
             || self.ui_at.is_none_or(|at| at.elapsed() >= TITLE_FRAME_WAIT)
     }
     pub(super) fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // The winit window was destroyed while the Activity was backgrounded;
+        // building a fresh one here avoids drawing into a dead surface.
+        #[cfg(target_os = "android")]
+        if self.surface_lost {
+            self.surface_lost = false;
+            self.renderer = None;
+            self.window = None;
+        }
         if self.window.is_some() {
             return;
         }
@@ -180,6 +191,14 @@ impl Loading {
         }
         horizon_client::hud::GUI_SCALE.store(self.settings.gui_scale, Ordering::Relaxed);
         self.window = Some(window);
+    }
+    /// Android sent `Suspended`: drop the dead surface and mark the next
+    /// `resumed` to create a new window and renderer.
+    #[cfg(target_os = "android")]
+    pub(super) fn suspended(&mut self) {
+        self.surface_lost = true;
+        self.renderer = None;
+        self.window = None;
     }
     pub(super) fn window_event(
         &mut self,
@@ -404,6 +423,16 @@ impl ApplicationHandler for App {
         match self {
             App::Loading(loading) => loading.resumed(event_loop),
             App::Ready(game) => game.resumed(event_loop),
+        }
+    }
+    /// Android background/foreground must reach the active state: without this
+    /// forwarding the stale wgpu surface survived Recents and blocked the main
+    /// thread for the system's input-dispatch timeout (~5 s ANR).
+    #[cfg(target_os = "android")]
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        match self {
+            App::Loading(loading) => loading.suspended(),
+            App::Ready(game) => game.suspended(_event_loop),
         }
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {

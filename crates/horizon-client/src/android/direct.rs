@@ -254,11 +254,11 @@ impl DirectGame {
             open_gl: self.config.renderer == crate::catalog::RendererMode::OpenGl,
             gpu_batching: self.config.renderer == crate::catalog::RendererMode::Vulkan,
         };
-        crate::document_store::set_game_active(&self.home, true);
+        crate::shared_storage::set_game_active(&self.home, true);
         let game = match crate::game_launch::start(request) {
             Ok(game) => game,
             Err(error) => {
-                crate::document_store::set_game_active(&self.home, false);
+                crate::shared_storage::set_game_active(&self.home, false);
                 crate::performance::stop();
                 return Err(error);
             }
@@ -342,7 +342,7 @@ impl DirectGame {
             drop(game);
         }
         crate::game::android_reset_bundled_mods();
-        crate::document_store::set_game_active(&self.home, false);
+        crate::shared_storage::set_game_active(&self.home, false);
         crate::performance::stop();
         crate::diagnostics::heartbeat("returned_to_launcher", || serde_json::json!({}));
         self.leave_to_launcher(events);

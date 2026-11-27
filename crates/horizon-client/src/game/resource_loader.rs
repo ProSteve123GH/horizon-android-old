@@ -278,6 +278,8 @@ pub(super) fn loading_app(
     let loading = Loading {
         window: None,
         renderer: None,
+        #[cfg(target_os = "android")]
+        surface_lost: false,
         boot: horizon_client::hud::HudAtlas::boot(),
         gui: None,
         settings,

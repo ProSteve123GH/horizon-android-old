@@ -206,7 +206,7 @@ The Compose launcher is Kotlin in the main process. The Rust game is an
 `android.app.NativeActivity` in the `:game` process, so closing the game does not
 destroy the launcher and the two cannot share a winit event loop. Kotlin starts
 the Android document pickers and the in-app Game files browser; Rust/JNI provides
-the controller bridge, persisted document reads, storage checks and the system
+the controller bridge, granted import-picker reads, storage checks and the system
 keyboard. The system keyboard uses Android's stock text editor and input-method
 service through Rust/JNI on the UI thread. There is one engine library in the
 APK, not a second copy for the launcher.

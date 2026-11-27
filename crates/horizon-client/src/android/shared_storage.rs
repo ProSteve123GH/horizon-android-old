@@ -16,23 +16,25 @@
 //!
 //! Every reader goes through [`resolve`]/[`profile_dir`] so there is one root;
 //! no call site may join the private home with a game file name. The marker is
-//! also the only thing the SAF provider and the game process need to agree on,
-//! so they can be running at the same time.
+//! the only thing the launcher and the game process need to agree on, so they
+//! can be running at the same time.
 //!
 //! Migrations journal every file they create in `.storage-migration.json`
 //! (private) so a killed or crashed move can roll itself back (copy phase) or
-//! finish itself (delete phase) on the next start; see [`recover`].
+//! finish itself (delete phase) on the next start; see [`recover`]. This module
+//! also owns the `game.lock` guard the migration uses while a game is running.
 //!
 //! Kept deliberately free of crate dependencies: the storage harness
 //! (`tools/test_android_shared_storage.py`) compiles this file standalone.
-//! `document_store.rs` carries a copy of [`resolve`]/`marker_dir` with the
-//! same marker file and semantics; keep the two in sync.
 use serde_json::json;
 use std::{
     collections::BTreeSet,
-    fs,
+    fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
 };
 
 /// The marker file, written by [`migrate`] and read by every resolver. The
@@ -257,18 +259,16 @@ pub fn controls_profile_dir(home: &Path, stable_id: u32) -> PathBuf {
     // hostile/accidental symlink occupies Controls, return a private,
     // non-Controls fallback instead of a path which would escape root.
     let profile = controls.join(format!("p{stable_id}"));
-    let base = match fs::symlink_metadata(&controls) {
-        Ok(meta) if meta.file_type().is_symlink() => root.join(".controls-rejected"),
-        _ => controls,
-    };
-    if base == controls
-        && fs::symlink_metadata(&profile)
-            .map(|meta| meta.file_type().is_symlink())
-            .unwrap_or(false)
-    {
+    let controls_is_symlink = fs::symlink_metadata(&controls)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false);
+    let profile_is_symlink = fs::symlink_metadata(&profile)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false);
+    if controls_is_symlink || profile_is_symlink {
         root.join(".controls-rejected").join(format!("p{stable_id}"))
     } else {
-        base.join(format!("p{stable_id}"))
+        profile
     }
 }
 
@@ -698,6 +698,42 @@ fn game_in_use(base: &Path) -> bool {
     #[cfg(not(unix))]
     {
         file.try_lock().is_err()
+    }
+}
+
+/// The game holds `game.lock` from launch until it returns to the launcher.
+/// The storage migration checks that lock with `game_in_use`; the old SAF
+/// provider owned it before the provider was removed.
+static GAME_LOCK: Mutex<Option<File>> = Mutex::new(None);
+
+fn try_hold(file: &File) -> bool {
+    #[cfg(unix)]
+    {
+        use rustix::fs::{FlockOperation, flock};
+        flock(file, FlockOperation::NonBlockingLockExclusive).is_ok()
+    }
+    #[cfg(not(unix))]
+    {
+        file.try_lock().is_ok()
+    }
+}
+
+pub fn set_game_active(home: &Path, active: bool) {
+    let mut held = GAME_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    if !active {
+        held.take();
+        return;
+    }
+    if held.is_some() {
+        return;
+    }
+    if let Ok(file) = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(resolve(home).join("game.lock"))
+        && try_hold(&file)
+    {
+        *held = Some(file);
     }
 }
 

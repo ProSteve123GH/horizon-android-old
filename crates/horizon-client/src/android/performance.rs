@@ -181,11 +181,7 @@ pub fn export(home: &Path) -> std::result::Result<(), String> {
     reports(home)
         .pop()
         .ok_or("No performance report. Enable recording, then launch and play first.")?;
-    if crate::platform::open_documents("reports") {
-        Ok(())
-    } else {
-        Err("Performance report saved. Find it in Reports in the Game files screen.".into())
-    }
+    Err("Performance report saved. Find it in Reports in the Game files screen.".into())
 }
 
 #[cfg(test)]

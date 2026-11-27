@@ -37,20 +37,10 @@ mod folder;
 pub fn open_folder(dir: &Path) {
     #[cfg(target_os = "android")]
     {
-        let folder = match dir.file_name().and_then(|s| s.to_str()) {
-            Some("resourcepacks") => Some("packs"),
-            Some("horizon-mods") => Some("mods"),
-            Some("shaderpacks") => Some("shaders"),
-            _ => None,
-        };
-        if let Some(folder) = folder {
-            let home = crate::backend::data_dir();
-            let id =
-                crate::document_store::folder_id(crate::document_store::profile(&home), folder);
-            if !crate::platform::open_documents(&id) {
-                log::warn!("Folder opening is unavailable; browse {folder} in the Game files screen");
-            }
-        }
+        // The DocumentsProvider is gone; the launcher's Game files screen is
+        // the supported way to browse these folders on Android.
+        let _ = dir;
+        log::warn!("Folder opening is unavailable; browse it in the launcher's Game files screen");
     }
     #[cfg(not(target_os = "android"))]
     {

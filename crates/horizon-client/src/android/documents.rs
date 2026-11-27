@@ -111,13 +111,6 @@ fn imported(text: impl Into<String>, kind: Kind) {
     });
 }
 pub fn poll() -> Option<Notice> {
-    if crate::document_provider::take_changes() {
-        return Some(Notice {
-            text: "Content files changed. Reload packs to apply.".into(),
-            changed: true,
-            kind: None,
-        });
-    }
     STATE
         .lock()
         .unwrap_or_else(|e| e.into_inner())

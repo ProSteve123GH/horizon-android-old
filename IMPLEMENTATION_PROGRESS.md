@@ -316,9 +316,11 @@ Feature 07 starts from the Feature 06 branch.
   are not saved on feature branches by design, to avoid evicting the default
   branch cache.
 
-## Extra: writable Game Files (SAF)
+## Extra: writable Game Files (SAF) — superseded
 
-- Status: COMPLETED and build-verified.
+- Status: COMPLETED and build-verified at the time; the Horizon
+  DocumentsProvider and this harness have since been removed in favour of the
+  launcher's in-app Game files browser. Android's own import pickers remain.
 - Branch: `dev/android-game-files-write`, commits `1602f71b1`, `bcc5eef55`,
   `faf08411c` (and merge commits).
 - Changes:

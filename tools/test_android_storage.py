@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Build a tiny isolated storage probe (file lock + document-store path safety),
-never the game or its player data.
+"""Build a tiny isolated storage probe (file lock + instance layout), never the
+game or its player data.
 
-The old SAF provider fixture is gone: the system Files provider was deliberately
-removed from the app and its ``.documents`` entry is no longer in the manifest,
-so this harness no longer hosts a DocumentsProvider or declares a documents
-permission. Only the device-only storage assertions that remain are kept.
+The old SAF provider is gone: no DocumentsProvider, manifest entry or
+document-store backend remains. The probe keeps only the Bionic file-lock and
+canonical Instances/Default layout assertions that still matter to migration.
 """
 from pathlib import Path
 import argparse
@@ -27,9 +26,9 @@ public final class Probe extends Activity {
         try {
             System.loadLibrary("horizon_android");
             nativeCheck(getFilesDir().getAbsolutePath());
-            Log.i("HorizonStorageProbe", "PASS Bionic file lock and document-store path safety (system Files provider fixture removed)");
+            Log.i("HorizonStorageProbe", "PASS Bionic file lock and canonical instance layout");
             android.widget.TextView text = new android.widget.TextView(this);
-            text.setText("Horizon storage probe: PASS (system Files provider fixture removed)"); setContentView(text);
+            text.setText("Horizon storage probe: PASS (provider removed)"); setContentView(text);
         } catch (Throwable error) { Log.e("HorizonStorageProbe", "FAIL", error); }
     }
 }
@@ -65,7 +64,6 @@ rustix = { version = "1", features = ["fs"] }
     modules = '\n'.join(f'#[path = "{(source / path).as_posix()}"] mod {name};'
         for name, path in [
             ('shared_storage', 'android/shared_storage.rs'),
-            ('document_store', 'android/document_store.rs'),
             ('file_lock', '../../horizon-client-render/src/file_lock.rs'),
         ])
     (out / 'src/lib.rs').write_text('''#![allow(dead_code)]
@@ -101,13 +99,9 @@ extern "system" fn Java_dev_horizon_storageprobe_Probe_nativeCheck(
         std::fs::create_dir_all(&mods)?;
         let _ = std::fs::remove_file(mods.join("probe.hmod"));
         let _ = std::fs::remove_file(mods.join("renamed.hmod"));
-        let link = mods.join("escape");
-        let _ = std::fs::remove_file(&link);
-        std::os::unix::fs::symlink(&home, &link)?;
-        if document_store::call(&home, "document", "p0/mods/escape/android-launcher.json", "").is_ok() {
-            return Err("symlink was exposed".into());
+        if shared_storage::profile_dir(&home, 0) != instance {
+            return Err("p0 did not resolve to Instances/Default".into());
         }
-        std::fs::remove_file(link)?;
         Ok(())
     })();
     if let Err(error) = result { let _ = env.throw_new("java/lang/AssertionError", error.to_string()); }
@@ -144,8 +138,8 @@ extern "system" fn Java_dev_horizon_storageprobe_Probe_nativeCheck(
         adb = sdk / 'platform-tools/adb.exe'
         run([adb, '-s', args.serial, 'install', '--no-incremental', '-r', apk])
         run([adb, '-s', args.serial, 'shell', 'am', 'start', '-n', 'dev.horizon.storageprobe/.Probe'])
-    print('Note: the system Files provider fixture was removed from the app; '
-          'only the file-lock and document-store path-safety assertions remain (device-only).')
+    print('Note: the SAF DocumentsProvider was removed; only the file-lock and '
+          'canonical instance-layout assertions remain (device-only).')
     print(apk)
 
 

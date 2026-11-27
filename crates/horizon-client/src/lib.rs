@@ -73,10 +73,6 @@ mod performance;
 mod diagnostics;
 #[cfg(target_os = "android")]
 #[cfg_attr(target_os = "android", allow(dead_code))]
-#[path = "android/document_store.rs"]
-mod document_store;
-#[cfg(target_os = "android")]
-#[cfg_attr(target_os = "android", allow(dead_code))]
 #[path = "android/shared_storage.rs"]
 mod shared_storage;
 #[cfg(target_os = "android")]
@@ -135,15 +131,6 @@ mod catalog {
                 Self::Auto => -1,
             }
         }
-    }
-}
-
-// The cdylib owns the ContentProvider; the library copy only needs the change
-// flag the documents module asks for.
-#[cfg(target_os = "android")]
-mod document_provider {
-    pub fn take_changes() -> bool {
-        false
     }
 }
 
