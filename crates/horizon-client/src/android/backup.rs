@@ -130,10 +130,11 @@ fn collect_jobs(home: &Path, set: &Value) -> Result<Vec<(PathBuf, String)>, Stri
 fn put_octal(field: &mut [u8], value: u64) {
     let text = format!("{value:o}");
     let bytes = text.as_bytes();
-    let keep = bytes.len().min(field.len().saturating_sub(1));
-    field[..field.len() - 1].fill(b'0');
-    field[field.len() - 1] = 0;
-    field[field.len() - 1 - keep..field.len() - 1].copy_from_slice(&bytes[bytes.len() - keep..]);
+    let len = field.len();
+    let keep = bytes.len().min(len.saturating_sub(1));
+    field[..len - 1].fill(b'0');
+    field[len - 1] = 0;
+    field[len - 1 - keep..len - 1].copy_from_slice(&bytes[bytes.len() - keep..]);
 }
 
 fn header(name: &str, size: u64, directory: bool) -> Result<[u8; BLOCK], String> {
