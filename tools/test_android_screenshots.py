@@ -75,9 +75,33 @@ def security_contract():
     print('Screenshot provider/share security contract passed')
 
 
+def stable_id_contract():
+    source = (ROOT / 'crates/horizon-client/src/android/screenshots.rs').read_text(
+        encoding='utf-8'
+    )
+    # Gallery IDs are persisted in launcher state and in granted content URIs.
+    # They therefore use the stable numeric profile marker, never the display
+    # name (which is editable).
+    assert 'pub fn id(profile: u32, name: &str) -> String' in source
+    assert 'format!("p{profile}/{name}")' in source
+    assert 'prefix != format!("p{profile}")' in source
+    assert 'shared_storage::profile_dir(home, profile)' in source
+    assert 'pub fn parse(value: &str)' in source
+
+    kotlin = (
+        ROOT
+        / 'packaging/android/kotlin/dev/horizon/android/launcher/Screenshots.kt'
+    ).read_text(encoding='utf-8')
+    assert 'val profile = if (separator < 0)' in kotlin
+    assert 'val name = if (separator < 0)' in kotlin
+    assert '.appendPath(profile)' in kotlin
+    assert '.appendPath(name)' in kotlin
+
+
 def main():
     cargo_tests()
     security_contract()
+    stable_id_contract()
 
 
 if __name__ == '__main__':

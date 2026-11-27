@@ -156,9 +156,9 @@ impl Config {
         .map_err(|e| e.to_string())?;
         std::fs::rename(part, home.join("android-launcher.json")).map_err(|e| e.to_string())
     }
-    /// The game folder for this instance: the app home, or the `profile-N`
-    /// folder inside it. Both may have moved to the shared storage folder
-    /// (Settings → Storage); every reader goes through the marker.
+    /// The game folder for this instance: `Instances/Default` or a
+    /// human-readable named folder below the resolved storage root. Legacy
+    /// profile folders remain readable until the layout migration runs.
     pub fn profile_home(&self, home: &Path) -> PathBuf {
         crate::shared_storage::profile_dir(home, self.profile)
     }

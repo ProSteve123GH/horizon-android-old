@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalContext
 import dev.horizon.android.HorizonActivity
 import dev.horizon.android.NativeBridge
+import dev.horizon.android.R
 import java.io.File
 
 /**
@@ -81,8 +82,11 @@ class LauncherActivity : ComponentActivity() {
         bridgeStarted = true
     }
 
+    @Suppress("DEPRECATION") // overridePendingTransition covers every supported API; the replacement needs 34+.
     private fun startGame() {
         startActivity(Intent(this, HorizonActivity::class.java))
+        // Cross-fade into the game process so its splash does not appear after a dark gap.
+        overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
     }
 
     /** The engine tables ship inside the APK; the installer reads them from app storage. */

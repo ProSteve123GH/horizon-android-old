@@ -39,10 +39,12 @@ Three import paths feed the same bundle folder, all with the same validation
   and checked against the registry's hash/signature where the registry
   provides one, then validated and stored.
 
-The bundle is stored as `<game>/horizon-native-mods/<id>.hmod` or `<id>.hnmod`
-(it moves with the rest of the game files if you change **Settings → Storage →
-Game files location**). A unified `.hmod` is also mirrored to
-`<game>/horizon-mods/<id>.hmod` so the content installer and list see its
+The bundle is stored inside the selected instance:
+`<game>/Instances/Default/horizon-native-mods/<id>.hmod` or
+`<game>/Instances/<name>/horizon-native-mods/<id>.hmod` (and the corresponding
+`.hnmod`). It moves with the rest of the game files if you change
+**Settings → Storage → Game files location**. A unified `.hmod` is also
+mirrored beside it in the selected instance's `horizon-mods/<id>.hmod` so the content installer and list see its
 content part; a legacy `.hnmod` has no mirror. **Remove** deletes both files
 when they provably belong to that bundle. Import itself never executes code.
 
@@ -70,8 +72,8 @@ content folder (`game_home`, by default the same):
 
 | Path | Role |
 | --- | --- |
-| `game_home/horizon-native-mods/<id>.hmod` / `<id>.hnmod` | The imported native bundle, in its original format. |
-| `game_home/horizon-mods/<id>.hmod` | Mirror of the content part of a unified `.hmod`. No mirror for legacy `.hnmod`. |
+  | `game_home/Instances/Default/horizon-native-mods/<id>.hmod` or `game_home/Instances/<name>/horizon-native-mods/<id>.hmod` | The imported native bundle, in its original format. |
+  | `game_home/Instances/Default/horizon-mods/<id>.hmod` or `game_home/Instances/<name>/horizon-mods/<id>.hmod` | Mirror of the content part of a unified `.hmod`. No mirror for legacy `.hnmod`. |
 | `native/current.json` | The library selected for this APK, when one is installed by hand. |
 | `native/active.json` | Written every start by Java: `{"lib": …, "stock": …}`; the trampoline reads it. |
 | `native/pending_crash`, `native/crash_streak` | Crash guard for a selected library. |

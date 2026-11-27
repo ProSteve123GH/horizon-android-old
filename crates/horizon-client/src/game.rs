@@ -2353,6 +2353,11 @@ struct Game<'a> {
     observed_screen: Option<native_hooks::ObservedScreen>,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
+    /// Android destroys the native surface when the Activity is backgrounded.
+    /// The next `resumed` must rebuild the window and renderer instead of
+    /// drawing into the dead surface with a black screen.
+    #[cfg(target_os = "android")]
+    android_surface_lost: bool,
     /// Avoid an endless rebuild loop if the new device is lost as well.
     last_device_recovery: Option<Instant>,
     /// CPU geometry storage retained across frames, including empty/title frames.
@@ -11722,6 +11727,8 @@ impl<'a> Game<'a> {
             dialogs: Default::default(),
             integrated_starting: None,
             world_renderer_ready: false,
+            #[cfg(target_os = "android")]
+            android_surface_lost: false,
             collision: res.collision(),
             motion: res.motion(),
             health_resources: res.motion().health.clone(),

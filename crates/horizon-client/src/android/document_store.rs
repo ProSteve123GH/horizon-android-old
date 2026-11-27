@@ -1,4 +1,5 @@
 //! Allowlisted document tree, independent of Android and the running game.
+use crate::shared_storage;
 use serde_json::{Value, json};
 use std::{
     fs::{self, File, OpenOptions},
@@ -147,8 +148,7 @@ fn world_access(home: &Path, id: &str) -> io::Result<()> {
                 .and_then(|p| p.strip_prefix('p'))
                 .and_then(|n| n.parse::<u32>().ok())
             {
-                Some(0) => Some(base.to_owned()),
-                Some(profile) => Some(base.join("profiles").join(format!("profile-{profile}"))),
+                Some(profile) => Some(shared_storage::profile_dir(home, profile)),
                 None => None,
             };
             if root.is_some_and(|root| world_locked(&root.join("saves").join(folder))) {
@@ -223,11 +223,7 @@ fn resolve(home: &Path, id: &str) -> io::Result<Document> {
         if format!("p{profile}") != first {
             return Err(invalid());
         }
-        let root = if profile == 0 {
-            base.to_owned()
-        } else {
-            base.join("profiles").join(format!("profile-{profile}"))
-        };
+        let root = shared_storage::profile_dir(home, profile);
         let (folder, label) = match parts.next() {
             Some("mods") => ("horizon-mods", "Mods"),
             Some("packs") => ("resourcepacks", "Resource Packs"),
@@ -658,6 +654,35 @@ mod tests {
             assert!(resolve(&home, "p0/mods/link/report.jsonl").is_err());
             assert!(!is_child(&home, ROOT, "p0/mods/link/report.jsonl"));
         }
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn renamed_instances_keep_stable_document_ids() {
+        let home = std::env::temp_dir().join(format!(
+            "horizon-renamed-documents-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let renamed = home.join("Instances/Survival");
+        fs::create_dir_all(&renamed).unwrap();
+        shared_storage::write_profile_id(&renamed, 7).unwrap();
+        fs::write(renamed.join("options.txt"), b"renderDistance:8\n").unwrap();
+        fs::write(renamed.join("android-profile-name.txt"), b"Survival\n").unwrap();
+
+        assert_eq!(
+            children(&home, "p7/configuration").unwrap()[0]["_display_name"],
+            "options.txt"
+        );
+        assert_eq!(
+            fs::canonicalize(resolve(&home, "p7/configuration/options.txt").unwrap()).unwrap(),
+            fs::canonicalize(renamed.join("options.txt")).unwrap()
+        );
+        assert!(resolve(&home, "p7/android-profile-id.txt").is_err());
+        assert!(resolve(&home, "p7/android-profile-name.txt").is_err());
         fs::remove_dir_all(home).unwrap();
     }
 }

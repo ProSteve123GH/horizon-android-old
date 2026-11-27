@@ -8,16 +8,24 @@ app chooser, select Files. Alternatively open the system Files app and select
 **Horizon Android** in its navigation drawer.
 
 The provider contains **Mods**, **Resource Packs**, **Shader Packs**, **Worlds**,
-and **Configuration** for the selected launcher profile, and **Reports**. Files stay in app storage; no migration
-or second copy is needed. Android grants other apps access to documents you select.
-Account files, launcher configuration and prepared game resources are not exposed.
+and **Configuration** for the selected launcher instance, and **Reports**.
+Instance files are under `Instances/Default` or
+`Instances/<named instance>` and are identified by their stable `pN` marker.
+Launcher touch-layout snapshots are under `Controls/<pN>/`, while the live
+`horizon-touch.json` remains in the instance. Files stay in the active game-files
+root; no extra copy is made by the provider. Android grants other apps access
+to documents you select. Account files, private launcher state and prepared
+game resources are not exposed.
 Reports are read-only and can be copied or shared through Files. Screenshots
 continue to appear in **Pictures/HorizonAndroid**.
 
 **Configuration** exposes only `options.txt`, `horizon-graphics.txt`,
-`horizon-touch.json` and `horizon-keypad.json`. These are the existing engine
-settings, not copied or relocated files. Return to the launcher before reading
-or editing Configuration or Worlds. Changes apply when the game starts again.
+`horizon-touch.json` and `horizon-keypad.json` from the selected
+`Instances/<...>` folder. These are the existing engine settings, not copied or
+relocated files. The launcher snapshot file
+`Controls/<pN>/android-touch-layouts.json` is launcher data, not the live touch
+configuration. Return to the launcher before reading or editing Configuration
+or Worlds. Changes apply when the game starts again.
 Keep a backup before manual edits; invalid settings may be reset by their loader.
 Configuration allows editing known files but not renaming/deleting them or adding
 arbitrary folders. It does not grant access to account tokens or internal files.
@@ -69,7 +77,7 @@ Supported files:
   shader features; the existing game loader reports compatibility errors.
 
 Open Installed to expand the three groups. The list includes regular imported and
-downloaded archive files in the current profile. Selection applies at the next
+downloaded archive files in the current instance. Selection applies at the next
 game launch. Removing an add-on requires confirmation and removes only that file,
 its browser record and its enabled selection; worlds are not touched.
 

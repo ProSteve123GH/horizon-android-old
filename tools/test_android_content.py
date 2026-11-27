@@ -29,6 +29,7 @@ edition = "2024"
 [dependencies]
 horizon-mods = { path = "../../../crates/horizon-mods", default-features = false }
 serde_json = "1"
+rustix = { version = "1", features = ["fs"] }
 sha2 = "0.10"
 ureq = { version = "2", default-features = false, features = ["tls"] }
 miniz_oxide = "0.8"
@@ -49,6 +50,7 @@ mod osk { pub enum Output { Text(String), Backspace, Enter, Close } }
 #[path = "../../../../crates/horizon-client-render/src/gfx/upload_budget.rs"] mod upload_budget;
 #[path = "../../../../crates/horizon-client-render/src/zip.rs"] mod archive_reader;
 #[path = "../../../../crates/horizon-client/src/android/search_queue.rs"] mod search_queue;
+#[path = "../../../../crates/horizon-client/src/android/shared_storage.rs"] mod shared_storage;
 #[path = "../../../../crates/horizon-client/src/android/document_store.rs"] mod document_store;
 #[path = "../../../../crates/horizon-client-render/src/graphics_startup.rs"] mod graphics_startup;
 #[path = "../../../../crates/horizon-client/src/android_resources.rs"] mod android_resources;

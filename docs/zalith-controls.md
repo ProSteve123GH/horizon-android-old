@@ -11,8 +11,10 @@ cluster:
 - Sprint near the movement control;
 - utility buttons kept along the top and bottom margins.
 
-The layout is still stored in Horizon's `horizon-touch.json` format. This keeps
-the existing per-profile editor, left-handed mirroring, opacity, size, dynamic
+The live layout is still stored in Horizon's `horizon-touch.json` format inside
+the selected `Instances/Default` or `Instances/<name>` instance. Launcher
+snapshots are stored in `Controls/<pN>/android-touch-layouts.json`. This keeps
+the existing per-instance editor, left-handed mirroring, opacity, size, dynamic
 joystick option, sprint toggle, keyboard, mouse, controller, and multi-touch
 handling. Existing customized layouts are not overwritten.
 
@@ -24,6 +26,6 @@ the same Horizon actions. Zalith Launcher 2 is GPL-3.0; its original notices
 remain applicable to any Kotlin/Compose source copied into this fork, while the
 existing Horizon source retains its original MIT notice.
 
-For a fresh profile, open **Options > Controls > Touch Controls > Customize
+For a fresh instance, open **Options > Controls > Touch Controls > Customize
 layout** to move, resize, hide, or restore the factory positions. Existing
-profiles can use the same screen and are intentionally left unchanged.
+instances can use the same screen and are intentionally left unchanged.

@@ -6,6 +6,22 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def contract():
+    storage = (ROOT / 'crates/horizon-client/src/android/shared_storage.rs').read_text(
+        encoding='utf-8'
+    )
+    source = (ROOT / 'crates/horizon-client/src/android/touch_layouts.rs').read_text(
+        encoding='utf-8'
+    )
+    # Layout profiles are launcher metadata, kept outside the renamed game
+    # folder and partitioned by the stable instance ID.
+    assert 'pub const CONTROLS_DIR: &str = "Controls";' in storage
+    assert 'pub fn controls_profile_dir(home: &Path, stable_id: u32) -> PathBuf' in storage
+    assert '.join(format!("p{stable_id}"))' in storage
+    assert 'pub const STORE_FILE: &str = "android-touch-layouts.json";' in source
+    assert 'pub const TOUCH_FILE: &str = "horizon-touch.json";' in source
+
+
 def main():
     root = ROOT / '.local/android/touch-layout-tests'
     (root / 'src').mkdir(parents=True, exist_ok=True)
@@ -29,6 +45,7 @@ mod touch_layouts;
         assert line in store, f'missing contract: {line}'
     subprocess.run(['cargo', 'test', '--manifest-path', str(root / 'Cargo.toml')],
                    cwd=ROOT, check=True)
+    contract()
 
 
 if __name__ == '__main__':

@@ -26,17 +26,60 @@ Nothing moves without the user's explicit grant or action.
 
 Everything the game and the instances need and the player owns:
 
-- `saves/` (worlds), in the default instance and in every `profiles/profile-N`
-  instance folder, including `android-profile-name.txt` and
-  `android-profile-played.txt` (the instance's display name and last-played
-  time).
+- The instance folders under `Instances/`: `Instances/Default` is the default
+  instance, and `Instances/<named instance>` holds each named instance. Each
+  instance has a stable `pN` identity: `p0` is the default and the other
+  identities use their numeric ID. The ID is recorded in
+  `android-profile-id.txt`, rather than being inferred from a folder name.
+  `android-profile-name.txt` stores the display name and
+  `android-profile-played.txt` stores the last-played time.
+- `saves/` (worlds) and the instance's settings, mods, packs and shaders inside
+  those instance folders.
+- Launcher touch-layout snapshots in `Controls/<pN>/android-touch-layouts.json`.
+  The live `horizon-touch.json` remains inside the corresponding instance.
 - `horizon-mods/`, `resourcepacks/`, `shaderpacks/`, `options.txt`,
   `horizon-graphics.txt`, `horizon-touch.json`, `horizon-keypad.json`,
-  `screenshots/`, `servers.dat`, `horizon-player.txt`, and any files
-  with those roots that the game creates in the game folder.
+  `screenshots/`, `servers.dat`, `horizon-player.txt`, and any files with
+  those roots that the game creates in an instance folder.
 - The shareable reports: `horizon-diagnostics-*.zip` and
   `horizon-performance-*.jsonl` from `performance/`. These are what the
   launcher's Game files screen shows under **Reports**.
+
+## Instance layout and migration
+
+The current player-file layout below `<root>` (the active game-files root) is:
+
+```text
+Instances/
+  Default/
+    android-profile-id.txt       # 0, the stable p0 identity
+    android-profile-name.txt
+    android-profile-played.txt
+    horizon-touch.json            # live controls for this instance
+  <named instance>/
+    android-profile-id.txt       # N, the stable pN identity
+    android-profile-name.txt
+    android-profile-played.txt
+Controls/
+  pN/
+    android-touch-layouts.json    # launcher snapshots for pN
+```
+
+The folder name is editable and is not the instance identity. The ID marker
+and the name and last-played metadata markers travel with the instance. A
+launcher touch-layout store is separate from the live touch file: snapshots
+are in `Controls/<pN>/android-touch-layouts.json`, while the game reads and
+writes `horizon-touch.json` in the instance.
+
+On first use of the new layout, migration is performed once and is safe to
+repeat. Files directly under the old root move into `Instances/Default`.
+Each old `profiles/profile-N` folder moves into a named instance folder,
+using its stored display name when valid and retaining `N` in
+`android-profile-id.txt`. Missing metadata gets a stable fallback name.
+Already-migrated identical files are accepted, conflicting destination data
+is not overwritten, and private files remain private. This makes an
+interrupted or retried migration idempotent; it does not create a second copy
+of player files.
 
 ## What stays private
 
@@ -55,6 +98,10 @@ and a nested one (android-* and dotfiles also never match):
 - The launcher's own state (`android-*` files), the SAF marker, control
   sockets, the migration journal (`.storage-migration.json`), and any
   dotfile.
+- The app-private files used by Android and the launcher remain private even
+  when the player files are shared. In particular, account/session data,
+  prepared resources, engine data, logs, crash reports and raw diagnostics are
+  not part of the instance or `Controls/` layout.
 
 ## Behavior
 

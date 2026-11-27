@@ -233,11 +233,12 @@ Feature 07 starts from the Feature 06 branch.
   (gallery), `514d75489` (public-tree provider allowlist) and `fc97dc614`
   (Kotlin compilation fix).
 - Changes:
-  - The Rust store scans the originals in `home/screenshots` and
-    `home/profiles/profile-N/screenshots`, supporting PNG, JPEG, WebP and GIF.
+  - The Rust store scans the originals in
+    `Instances/Default/screenshots` and
+    `Instances/<named instance>/screenshots`, supporting PNG, JPEG, WebP and GIF.
     It reads dimensions from image headers, records size and modification time,
     and sorts newest/oldest/name without loading full images.
-  - List entries use opaque IDs such as `p<profile>/<filename>`. Inspect, open
+  - List entries use stable opaque IDs such as `p<profile>/<filename>`. Inspect, open
     and delete re-resolve each ID under the active home, reject traversal,
     symlinks and unsafe names, and tolerate an image that was already removed.
     Unreadable instance folders and unsupported or broken files are skipped.

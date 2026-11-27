@@ -626,6 +626,17 @@ impl Game<'_> {
 
 impl ApplicationHandler for Game<'_> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // Android destroys the native surface while the Activity is in the
+        // background. The window/renderer were released in `suspended`; trying
+        // to draw into them after a Recent Tasks return gave a black screen and
+        // a crash on the next frame. Rebuild both from scratch here.
+        #[cfg(target_os = "android")]
+        if self.android_surface_lost {
+            self.android_surface_lost = false;
+            self.renderer = None;
+            self.window = None;
+            self.world_renderer_ready = false;
+        }
         if self.window.is_some() {
             return;
         }
@@ -703,6 +714,15 @@ impl ApplicationHandler for Game<'_> {
         if let Some((event, modifiers)) = key {
             self.native_input_key(&event, modifiers);
         }
+    }
+    /// The Android Activity was stopped: release the surface and GPU state so
+    /// `resumed` can create a new window rather than reuse a dead surface.
+    #[cfg(target_os = "android")]
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        self.android_surface_lost = true;
+        self.renderer = None;
+        self.window = None;
+        self.world_renderer_ready = false;
     }
     fn device_event(&mut self, event_loop: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
         // A composited view renders offscreen but its keyboard/mouse owner still

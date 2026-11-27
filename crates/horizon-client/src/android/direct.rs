@@ -74,6 +74,20 @@ impl DirectGame {
                 log::warn!("Could not clean completed Minecraft downloads: {error}");
             }
         });
+        // Mirror launcher startup: finish any interrupted migration journal
+        // before a new layout pass can move files over it.
+        if let Err(error) = crate::shared_storage::recover(&home) {
+            log::warn!(
+                "Could not recover the previous Android storage migration before loading config; \
+                 leaving existing data untouched: {error}"
+            );
+        }
+        if let Err(error) = crate::shared_storage::migrate_layout(&home) {
+            log::warn!(
+                "Could not migrate the Android game storage layout before loading config; \
+                 leaving existing data untouched: {error}"
+            );
+        }
         let mut config = crate::catalog::Config::load(&home);
         horizon_client::android_runtime::graphics_startup::configure(home.clone());
         if horizon_client::android_runtime::graphics_startup::recover(&home) {

@@ -54,6 +54,9 @@ mod device_runtime;
 mod diagnostics;
 // Android-only JNI glue: display helpers are driven from the entry boundary.
 #[allow(dead_code)]
+#[path = "android/backup.rs"]
+mod backup;
+#[allow(dead_code)]
 #[path = "android/display.rs"]
 mod display;
 #[path = "android/document_bridge.rs"]

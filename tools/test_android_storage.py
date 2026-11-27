@@ -63,7 +63,11 @@ rustix = { version = "1", features = ["fs"] }
 ''', encoding='utf-8')
     source = ROOT / 'crates/horizon-client/src'
     modules = '\n'.join(f'#[path = "{(source / path).as_posix()}"] mod {name};'
-        for name, path in [('document_store', 'android/document_store.rs'), ('file_lock', '../../horizon-client-render/src/file_lock.rs')])
+        for name, path in [
+            ('shared_storage', 'android/shared_storage.rs'),
+            ('document_store', 'android/document_store.rs'),
+            ('file_lock', '../../horizon-client-render/src/file_lock.rs'),
+        ])
     (out / 'src/lib.rs').write_text('''#![allow(dead_code)]
 ''' + modules + r'''
 #[unsafe(no_mangle)]
@@ -88,7 +92,12 @@ extern "system" fn Java_dev_horizon_storageprobe_Probe_nativeCheck(
         receiver.recv_timeout(std::time::Duration::from_secs(2))??;
         waiter.join().map_err(|_| "cache-lock waiter failed")?;
         std::fs::write(home.join("android-launcher.json"), "{}")?;
-        let mods = home.join("horizon-mods");
+        let instance = home.join("Instances").join("Default");
+        std::fs::create_dir_all(&instance)?;
+        // Keep the fixture aligned with the canonical instance layout and its
+        // stable profile identity, so p0 resolves into this tree.
+        std::fs::write(instance.join("android-profile-id.txt"), "0\n")?;
+        let mods = instance.join("horizon-mods");
         std::fs::create_dir_all(&mods)?;
         let _ = std::fs::remove_file(mods.join("probe.hmod"));
         let _ = std::fs::remove_file(mods.join("renamed.hmod"));

@@ -1,7 +1,7 @@
 //! Instance (profile) folders shared by the Android launcher bridge.
 //!
-//! An instance is the launcher's existing profile folder: the app home for
-//! profile 0 and `home/profiles/profile-N` for the others. This module only
+//! An instance is stored below the resolved root's `Instances/` directory:
+//! `Default` for profile 0 and its display name for other profiles. This module only
 //! names, measures and copies those folders; the launcher keeps owning the
 //! active choice, the configuration and the game launch.
 
@@ -52,6 +52,8 @@ pub fn list() -> Vec<Instance> {
 pub const MAX_NAME: usize = 32;
 /// The player-chosen name, stored beside the instance's saves.
 pub const NAME_FILE: &str = "android-profile-name.txt";
+/// Stable identity marker; folder names are user-editable and are not IDs.
+pub const ID_FILE: &str = crate::shared_storage::PROFILE_ID_FILE;
 /// When the instance last started the game, as Unix seconds.
 const PLAYED_FILE: &str = "android-profile-played.txt";
 /// Generated output that a duplicate does not need: logs, crash reports and
@@ -113,9 +115,15 @@ pub fn validated_name(
     skip: Option<u32>,
     raw: &str,
 ) -> Result<String, String> {
+    if raw.chars().any(|c| c.is_control()) {
+        return Err("Instance names cannot contain control characters".into());
+    }
     let name = clean_name(raw);
     if name.is_empty() {
         return Err("Give the instance a name".into());
+    }
+    if !crate::shared_storage::is_profile_name(&name) {
+        return Err("Instance names must be one safe folder name".into());
     }
     if name_in_use(existing, skip, &name) {
         return Err(format!(
@@ -123,6 +131,20 @@ pub fn validated_name(
         ));
     }
     Ok(name)
+}
+
+/// Canonical storage path for an instance.  Use this when creating or
+/// renaming an instance; `profile_dir` remains tolerant of legacy installs.
+pub fn canonical_path(home: &Path, id: u32, name: &str) -> Result<PathBuf, String> {
+    crate::shared_storage::canonical_profile_dir(home, id, name)
+}
+
+pub fn profile_id(dir: &Path) -> Option<u32> {
+    crate::shared_storage::read_profile_id(dir)
+}
+
+pub fn write_profile_id(dir: &Path, id: u32) -> Result<(), String> {
+    crate::shared_storage::write_profile_id(dir, id)
 }
 
 /// The stored name, or a stable fallback for folders that predate the name file.
@@ -301,6 +323,9 @@ mod tests {
             "Creative"
         );
         assert!(validated_name(&existing, None, "  ").is_err());
+        assert!(validated_name(&existing, None, "../escape").is_err());
+        assert!(validated_name(&existing, None, ".").is_err());
+        assert!(validated_name(&existing, None, "two/names").is_err());
     }
 
     #[test]

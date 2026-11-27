@@ -95,6 +95,80 @@ fn profile_root(home: &Path, profile: u32) -> PathBuf {
     shared_storage::profile_dir(home, profile)
 }
 
+fn profile_roots(home: &Path) -> Vec<(u32, PathBuf)> {
+    let base = shared_storage::resolve(home);
+    let mut profiles = Vec::new();
+    let default = profile_root(home, 0);
+    if safe_dir(&base, &default) {
+        profiles.push((0, default));
+    }
+
+    // Current installs use user-editable names below Instances/ and keep the
+    // stable numeric ID in the marker.  Keep the old profile-N layout as a
+    // fallback for installs that have not migrated yet.
+    let instances = base.join(shared_storage::INSTANCES_DIR);
+    if let Ok(entries) = fs::read_dir(&instances) {
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if !kind.is_dir() || kind.is_symlink() {
+                continue;
+            }
+            let Some(profile) = shared_storage::read_profile_id(&entry.path()) else {
+                continue;
+            };
+            if profile != 0 && safe_dir(&base, &entry.path()) {
+                profiles.push((profile, entry.path()));
+            }
+        }
+    }
+    let legacy = base.join("profiles");
+    if let Ok(entries) = fs::read_dir(&legacy) {
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if !kind.is_dir() || kind.is_symlink() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(number) = name.strip_prefix("profile-") else {
+                continue;
+            };
+            let Ok(profile) = number.parse::<u32>() else {
+                continue;
+            };
+            if profile != 0
+                && name == format!("profile-{profile}")
+                && safe_dir(&base, &entry.path())
+            {
+                profiles.push((profile, entry.path()));
+            }
+        }
+    }
+    profiles.sort_by_key(|(profile, _)| *profile);
+    profiles.dedup_by_key(|(profile, _)| *profile);
+    profiles
+}
+
+fn safe_dir(base: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(base) else {
+        return false;
+    };
+    let mut checked = base.to_owned();
+    for part in relative.components() {
+        checked.push(part);
+        let Ok(metadata) = fs::symlink_metadata(&checked) else {
+            return false;
+        };
+        if metadata.file_type().is_symlink() {
+            return false;
+        }
+    }
+    valid_dir(path)
+}
+
 fn parse_id(id: &str) -> io::Result<(u32, &str)> {
     let (prefix, name) = id.split_once('/').ok_or_else(invalid)?;
     if name.contains('/') {
@@ -256,38 +330,8 @@ fn screenshots_in(profile: u32, root: &Path, items: &mut Vec<Item>) {
 
 /// Lists every instance's screenshots, newest first unless another order is asked.
 pub fn list(home: &Path, order: Order) -> Vec<Item> {
-    let base = shared_storage::resolve(home);
-    let mut profiles = vec![(0, base.clone())];
-    let profiles_dir = base.join("profiles");
-    if valid_dir(&profiles_dir)
-        && let Ok(entries) = fs::read_dir(&profiles_dir)
-    {
-        for entry in entries.flatten() {
-            let kind = match entry.file_type() {
-                Ok(kind) if kind.is_dir() && !kind.is_symlink() => kind,
-                _ => continue,
-            };
-            if !kind.is_dir() {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let Some(number) = name.strip_prefix("profile-") else {
-                continue;
-            };
-            let Ok(profile) = number.parse::<u32>() else {
-                continue;
-            };
-            if profile == 0 || name != format!("profile-{profile}") {
-                continue;
-            }
-            profiles.push((profile, entry.path()));
-        }
-    }
-    profiles.sort_by_key(|(profile, _)| *profile);
-    profiles.dedup_by_key(|(profile, _)| *profile);
-
     let mut items = Vec::new();
-    for (profile, root) in profiles {
+    for (profile, root) in profile_roots(home) {
         screenshots_in(profile, &root, &mut items);
     }
     sort(&mut items, order);
@@ -445,6 +489,25 @@ mod tests {
         assert_eq!(jpeg.mime, "image/jpeg");
         assert_eq!(items[1].mime, "image/webp");
         assert_eq!(items[3].mime, "image/gif");
+    }
+
+    #[test]
+    fn renamed_instance_is_listed_by_its_marker_id() {
+        let scratch = Scratch::new();
+        let home = scratch.path();
+        let renamed = home.join("Instances/Survival");
+        fs::create_dir_all(renamed.join(DIR)).unwrap();
+        shared_storage::write_profile_id(&renamed, 7).unwrap();
+        instances::write_name(&renamed, "Survival").unwrap();
+        image(&renamed.join(DIR).join("renamed.png"), 2, 2, ImageFormat::Png);
+
+        let items = list(home, Order::Name);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "p7/renamed.png");
+        assert_eq!(
+            resolve(home, "p7/renamed.png").unwrap(),
+            renamed.join(DIR).join("renamed.png")
+        );
     }
 
     #[test]

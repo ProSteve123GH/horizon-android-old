@@ -70,8 +70,8 @@
       "Launch splash overlay in HorizonActivity that hides on the native first-frame marker with a 30s fallback.",
       "Crash guard repaired: first about_to_wait writes native/first-frame, clears pending_crash and records last_known_good; trampoline marker contract pinned by unit test.",
       "Mod compatibility gate fields in current.json (engine_commit/api_level/min_apk_version); ENGINE_COMMIT is still a TODO constant until build wiring exists.",
-      "Screenshot: launcher gallery kept and renamed; touch camera button added and routed to screenshot_action; F2 exception in the Android key filter.",
-      "Touch controls: import raw horizon-touch.json/profile exports, no-wipe apply, new-from-current, duplicate rename, launcher draft editor.",
+      "Screenshot: launcher gallery kept and renamed; touch camera button added and routed to screenshot_action; F2 exception in the Android key filter. Gallery IDs remain pN/<filename> while instance folders live under Instances/.",
+      "Touch controls: import raw horizon-touch.json/profile exports, no-wipe apply, new-from-current, duplicate rename, launcher draft editor. Launcher snapshots are stored under Controls/pN; the live horizon-touch.json stays in the matching Instances/<name> folder.",
       "SAF documents provider and app-private storage mode removed; in-app Game files browser shows friendly labels over unchanged disk names.",
       "Responsive tiers: 600dp rail/nav, 520dp short header, 1280dp four-column settings for DeX/TV."
     ],

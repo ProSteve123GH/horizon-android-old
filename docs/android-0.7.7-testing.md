@@ -21,25 +21,30 @@ Device observations recorded before that integration must be repeated on the res
 12. Menu blur: reuse bind groups and skip the identity radius-zero chain. Filtering, output resolution and pass order are unchanged. Slower unrolled/compute shader experiments were rejected; GPU blur cost remains unresolved.
 13. Touch crouch (PR #75): cancel the touch/controller toggle on entering water, flight or a mount; preserve held-key and vanilla-toggle handling.
 14. Connection diagnostics (PR #79): always record connection failures and departures without enabling per-frame network logging. Reports may contain player/server details.
-15. Fixed opt-in Android mods: Zoom, Minimap, Recipes and SmartF3 compiled into the APK, with local Enable/Disable in the Mods catalog and settings under Options > Mods. Defaults are off; choices persist per profile and runtime state resets between launches. Original MIT licenses and pinned source provenance are retained.
+15. Fixed opt-in Android mods: Zoom, Minimap, Recipes and SmartF3 compiled into the APK, with local Enable/Disable in the Mods catalog and settings under Options > Mods. Defaults are off; choices persist per instance and runtime state resets between launches. Original MIT licenses and pinned source provenance are retained.
 16. Existing sandboxed `.hmod` execution remains available on compatible 64-bit builds. Arbitrary `.hnmod` compilation/loading is not added. Existing Horizon far terrain remains; Distant Horizons is not bundled.
-17. World transfer: selected-profile saves exposed as Worlds in Android Files. Complete folders can be copied for import/backup. Finish copying before Play; new world-file access is refused while playing. This does not add a ZIP-world wizard.
+17. World transfer: selected-instance saves exposed as Worlds in Android Files. Complete folders can be copied for import/backup. Finish copying before Play; new world-file access is refused while playing. This does not add a ZIP-world wizard.
 18. Launcher Settings > Game files opens the provider root; World files opens saves directly. Private accounts, keys and internal traces are excluded.
 19. Upstream synchronization: 1,846 commits, including merge history, to the selected nightly. Areas include authoritative item use/prediction, server connection lifecycle, shared block-state storage, native hooks/content APIs, keyboard focus, shader options/LabPBR, graphics memory handling and rendering. Upstream deployment workflows remain disabled in the Android fork. Individual upstream commits are not all independently device-tested.
 20. Android integration preserves launcher-selected rendering, system DNS, native Activity/IME/SAF, lifecycle recovery, memory allocation policy, Android GPU compatibility mode and release optimization profiles.
 
-## Files and profiles
+## Files and instances
 
 Normal installed package: `dev.horizon.android`.
 The physical internal directory is normally `/data/user/0/dev.horizon.android/files`.
-Profile 0 uses this directory; additional profiles use `profiles/profile-<id>` beneath it.
-The game keeps `saves`, `horizon-mods`, `resourcepacks`, `shaderpacks` and settings in that profile.
+The default instance uses `Instances/Default`; named instances use
+`Instances/<name>`. Each instance has a stable `pN` identity (`p0` is the
+default), recorded in `android-profile-id.txt`. The game keeps `saves`,
+`horizon-mods`, `resourcepacks`, `shaderpacks` and settings in that instance.
+Launcher touch-layout snapshots are stored in
+`Controls/<pN>/android-touch-layouts.json`; the live `horizon-touch.json`
+remains in the instance.
 Prepared engine resources and cache are application-managed; do not move them by hand.
 
 Use **Settings > Game files** or **Android Files > Horizon Android** for supported document access.
-The provider shows the selected profile's Mods, Resource Packs, Shader Packs and Worlds,
+The provider shows the selected instance's Mods, Resource Packs, Shader Packs and Worlds,
 plus Reports. It deliberately does not expose every private file in the physical directory.
-Screenshots remain under Pictures. Switching profiles must not mix world or mod choices.
+Screenshots remain under Pictures. Switching instances must not mix world or mod choices.
 
 ## Issue disposition for this candidate
 
@@ -65,7 +70,7 @@ No new GitHub issue is automatically closed by this checklist.
 
 ## Complete manual regression checklist
 
-Use a backup or a disposable profile. Record APK/commit, device, renderer, resolution,
+Use a backup or a disposable instance. Record APK/commit, device, renderer, resolution,
 render/simulation distance, enabled mods/shaders and whether diagnostics are on.
 
 ### Install, launcher and lifecycle
@@ -92,13 +97,13 @@ render/simulation distance, enabled mods/shaders and whether diagnostics are on.
 
 ### Files, packs and mods
 
-- Game files opens Horizon Android root, World files opens the selected profile's saves.
+- Game files opens Horizon Android root, World files opens the selected instance's saves.
 - Copy a complete disposable world out, import under a different name, open in a compatible client; verify inventory, location, entities and block edits.
 - Existing folder name does not silently overwrite a world; cancel copying; finish transfers before Play.
 - Accounts/credentials are not visible in provider; traversal/symlink access is rejected.
 - Import valid resource ZIP, shader ZIP/.hshader and supported .hmod; Cancel picker; reject malformed/wrong-format packages with a useful result.
 - Install/remove from catalog and Installed; verify status, progress, replacement confirmation and profile isolation.
-- Enable each bundled mod separately: held-Z zoom, minimap, Recipes recipe/usage panel, SmartF3. Test all together, disable, restart and switch profiles.
+- Enable each bundled mod separately: held-Z zoom, minimap, Recipes recipe/usage panel, SmartF3. Test all together, disable, restart and switch instances.
 - Reload resource packs in a world and title; check loading feedback, no ANR loop, fonts/texture changes and sound restoration.
 - Test native .hshader and a previously working classic ZIP shader; enable/disable/reload without stale textures.
 

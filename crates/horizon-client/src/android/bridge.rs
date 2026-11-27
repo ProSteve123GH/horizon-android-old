@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use std::{
     cell::RefCell,
     collections::HashMap,
+    fs,
     path::PathBuf,
     sync::{Arc, Mutex, mpsc},
     time::Duration,
@@ -78,6 +79,89 @@ fn page_name(page: Page) -> &'static str {
     }
 }
 
+fn copy_tree_without_symlinks(source: &std::path::Path, destination: &std::path::Path) -> Result<(), String> {
+    let entries = fs::read_dir(source).map_err(|e| e.to_string())?;
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let kind = entry.file_type().map_err(|e| e.to_string())?;
+        if kind.is_symlink() {
+            continue;
+        }
+        let target = destination.join(entry.file_name());
+        if kind.is_dir() {
+            fs::create_dir(&target).map_err(|e| e.to_string())?;
+            copy_tree_without_symlinks(&entry.path(), &target)?;
+        } else if kind.is_file() {
+            fs::copy(entry.path(), target).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_controls_store(home: &std::path::Path, old_id: u32, new_id: u32) -> Result<(), String> {
+    let source = crate::shared_storage::controls_profile_dir(home, old_id);
+    let source_kind = match fs::symlink_metadata(&source) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+    // Never follow a malicious or stale launcher-store symlink.
+    if source_kind.file_type().is_symlink() {
+        return Ok(());
+    }
+    if !source_kind.is_dir() {
+        return Err("The source Controls store is not a folder".into());
+    }
+    let destination = crate::shared_storage::controls_profile_dir(home, new_id);
+    if destination.exists() {
+        return Err("A Controls store for the duplicated instance already exists".into());
+    }
+    fs::create_dir_all(&destination).map_err(|e| e.to_string())?;
+    if let Err(error) = copy_tree_without_symlinks(&source, &destination) {
+        let _ = remove_tree_without_symlinks(&destination);
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn remove_tree_without_symlinks(path: &std::path::Path) -> Result<(), String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        fs::remove_file(path).map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    for entry in fs::read_dir(path).map_err(|e| e.to_string())? {
+        remove_tree_without_symlinks(&entry.map_err(|e| e.to_string())?.path())?;
+    }
+    fs::remove_dir(path).map_err(|e| e.to_string())
+}
+
+/// Creates the launcher layout store only for an operation that will write it.
+/// Every existing component is checked first so a replaced Controls directory
+/// cannot redirect layout data elsewhere.
+fn controls_store_for_write(home: &std::path::Path, id: u32) -> Result<PathBuf, String> {
+    let base = crate::shared_storage::resolve(home);
+    let controls = base.join(crate::shared_storage::CONTROLS_DIR);
+    let store = controls.join(format!("p{id}"));
+    for path in [&controls, &store] {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err("The Controls store is not a safe folder".into());
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(path).map_err(|e| e.to_string())?;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(store)
+}
+
 fn choice(
     label: impl Into<String>,
     detail: impl Into<String>,
@@ -89,6 +173,33 @@ fn choice(
 
 impl Controller {
     fn new(home: PathBuf) -> Self {
+        // Finish or undo a migration the app was killed during before starting
+        // another layout move. Keep both operation statuses for the launcher.
+        let recovery = match crate::shared_storage::recover(&home) {
+            Ok(note) => note,
+            Err(error) => {
+                log::error!("{error}");
+                Some(error)
+            }
+        };
+        // Do this before Catalog/Config touch the game root. A failed migration
+        // is deliberately retained as launcher status; it must never turn into
+        // a fresh, apparently empty layout.
+        let migration = match crate::shared_storage::migrate_layout(&home) {
+            // The no-op note is informational; showing it on every launch would
+            // be misleading. Only real moves and errors become launcher status.
+            Ok(note)
+                if !note.is_empty()
+                    && note != "Instance storage layout is current" =>
+            {
+                Some(note)
+            }
+            Ok(_) => None,
+            Err(error) => {
+                log::error!("{error}");
+                Some(error)
+            }
+        };
         let cleanup_home = home.clone();
         std::thread::spawn(move || {
             if let Err(error) =
@@ -98,19 +209,17 @@ impl Controller {
             }
         });
         let mut catalog = Catalog::new(&home);
-        // Finish or undo a migration the app was killed during, before any
-        // file is opened or moved again.
-        let recovery = match crate::shared_storage::recover(&home) {
-            Ok(note) => note,
-            Err(error) => {
-                log::error!("{error}");
-                Some(error)
-            }
-        };
         if crate::diagnostics::previous_unclean(&home) {
             catalog.status = crate::diagnostics::summary(&home);
         }
         if let Some(note) = recovery {
+            catalog.status = if catalog.status.is_empty() {
+                note
+            } else {
+                format!("{note} {}", catalog.status)
+            };
+        }
+        if let Some(note) = migration {
             catalog.status = if catalog.status.is_empty() {
                 note
             } else {
@@ -123,7 +232,13 @@ impl Controller {
             if let Err(error) = catalog.config.save(&home) {
                 log::warn!("Could not save graphics recovery choice: {error}");
             }
-            catalog.status = "Previous Vulkan startup was interrupted. Using OpenGL ES recovery; you can change Rendering mode in Settings.".into();
+            let recovery_status =
+                "Previous Vulkan startup was interrupted. Using OpenGL ES recovery; you can change Rendering mode in Settings.";
+            catalog.status = if catalog.status.is_empty() {
+                recovery_status.into()
+            } else {
+                format!("{recovery_status} {}", catalog.status)
+            };
         }
         let installation = horizon_client::minecraft_import::info(&home);
         let mut controller = Self {
@@ -306,7 +421,9 @@ impl Controller {
             {"group": "Game", "rows": [
                 row("profile", "Instances", instances::display_name(&crate::shared_storage::profile_dir(&self.home, c.profile), c.profile), "choice"),
                 row("input_host", "Input", c.input_host.label().into(), "choice"),
-                row("touch_layouts", "Touch layout profiles", crate::touch_layouts::summary(&c.game_home(&self.home)), "action"),
+                row("touch_layouts", "Touch layout profiles", crate::touch_layouts::summary(
+                    &crate::shared_storage::controls_profile_dir(&self.home, c.profile)
+                ), "action"),
                 row("name", "Offline player name", if c.name.is_empty() { "Not set".into() } else { c.name.clone() }, "text"),
                 row("server", "Server", if c.server.is_empty() { "Singleplayer".into() } else { c.server.clone() }, "text"),
                 row("servers", "Saved servers", "Add, edit and organize".into(), "action"),
@@ -457,29 +574,16 @@ impl Controller {
                     .collect(),
             ),
             "profile" => {
-                let mut ids = vec![0, c.profile];
-                ids.extend(
-                    std::fs::read_dir(crate::shared_storage::resolve(&self.home).join("profiles"))
-                        .into_iter()
-                        .flatten()
-                        .flatten()
-                        .filter(|e| e.path().is_dir())
-                        .filter_map(|e| {
-                            e.file_name()
-                                .to_str()?
-                                .strip_prefix("profile-")?
-                                .parse::<u32>()
-                                .ok()
-                        }),
-                );
-                ids.sort_unstable();
-                ids.dedup();
+                let mut named = self.named_profiles();
+                named.sort_unstable_by_key(|(id, _)| *id);
+                named.dedup_by_key(|(id, _)| *id);
+                let ids: Vec<_> = named.iter().map(|(id, _)| *id).collect();
                 let next = ids.last().copied().unwrap_or(0).checked_add(1);
-                let mut choices: Vec<_> = ids
+                let mut choices: Vec<_> = named
                     .into_iter()
-                    .map(|id| {
+                    .map(|(id, name)| {
                         choice(
-                            format!("Profile {id}"),
+                            name,
                             if id == 0 {
                                 "Default profile"
                             } else {
@@ -742,23 +846,28 @@ impl Controller {
         self.catalog.config.save(&self.home)
     }
 
-    /// Profile 0 plus every `profiles/profile-N` folder, sorted.
+    /// Profile 0 plus every Instances folder carrying a stable ID marker.
     fn profile_ids(&self) -> Vec<u32> {
         let mut ids = vec![0, self.catalog.config.profile];
-        ids.extend(
-            std::fs::read_dir(crate::shared_storage::resolve(&self.home).join("profiles"))
-                .into_iter()
-                .flatten()
-                .flatten()
-                .filter(|e| e.path().is_dir())
-                .filter_map(|e| {
-                    e.file_name()
-                        .to_str()?
-                        .strip_prefix("profile-")?
-                        .parse::<u32>()
-                        .ok()
-                }),
-        );
+        let instances = crate::shared_storage::resolve(&self.home).join("Instances");
+        ids.extend(std::fs::read_dir(instances)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| crate::shared_storage::read_profile_id(&e.path())));
+        // If migration failed, keep the configured legacy instance visible so
+        // an error never makes existing data disappear from the launcher.
+        if self.catalog.config.profile != 0
+            && crate::shared_storage::discover_profile_path(
+                &crate::shared_storage::resolve(&self.home),
+                self.catalog.config.profile,
+            )
+            .is_none()
+            && crate::shared_storage::profile_dir(&self.home, self.catalog.config.profile).is_dir()
+        {
+            ids.push(self.catalog.config.profile);
+        }
         ids.sort_unstable();
         ids.dedup();
         ids
@@ -1333,9 +1442,17 @@ impl Controller {
             "profile_create" => {
                 let name = instances::validated_name(&self.named_profiles(), None, arg)?;
                 let id = instances::next_id(&self.profile_ids()).ok_or("Too many instances")?;
-                let dir = crate::shared_storage::profile_dir(&home, id);
+                let dir = instances::canonical_path(&home, id, &name)?;
+                if dir.exists() {
+                    return Err("An instance already uses that folder".into());
+                }
                 std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-                instances::write_name(&dir, &name)?;
+                if let Err(error) = instances::write_profile_id(&dir, id)
+                    .and_then(|()| instances::write_name(&dir, &name))
+                {
+                    let _ = std::fs::remove_dir_all(&dir);
+                    return Err(error);
+                }
                 self.choose("profile", &id.to_string())?;
             }
             "profile_rename" => {
@@ -1345,7 +1462,26 @@ impl Controller {
                     return Err("That instance no longer exists".into());
                 }
                 let name = instances::validated_name(&self.named_profiles(), Some(id), name)?;
-                instances::write_name(&crate::shared_storage::profile_dir(&home, id), &name)?;
+                let source = crate::shared_storage::profile_dir(&home, id);
+                if !source.is_dir() {
+                    return Err("That instance's folder is missing".into());
+                }
+                let destination = instances::canonical_path(&home, id, &name)?;
+                if id == 0 {
+                    instances::write_profile_id(&source, 0)?;
+                    instances::write_name(&source, &name)?;
+                } else {
+                    if destination != source && destination.exists() {
+                        return Err("An instance already uses that folder".into());
+                    }
+                    // Write markers before moving, so a failed rename leaves
+                    // the original data usable and correctly identified.
+                    instances::write_profile_id(&source, id)?;
+                    instances::write_name(&source, &name)?;
+                    if destination != source {
+                        std::fs::rename(&source, &destination).map_err(|e| e.to_string())?;
+                    }
+                }
             }
             "profile_duplicate" => {
                 let id = arg.parse::<u32>().map_err(|e| e.to_string())?;
@@ -1354,13 +1490,22 @@ impl Controller {
                     return Err("That instance's folder is missing; it cannot be duplicated".into());
                 }
                 let new_id = instances::next_id(&self.profile_ids()).ok_or("Too many instances")?;
-                let destination = crate::shared_storage::profile_dir(&home, new_id);
-                instances::copy_profile(&source, &destination)?;
                 let name = instances::unique_name(
                     &self.named_profiles(),
                     &format!("{} copy", instances::display_name(&source, id)),
                 );
-                if let Err(error) = instances::write_name(&destination, &name) {
+                let destination = instances::canonical_path(&home, new_id, &name)?;
+                if destination.exists() {
+                    return Err("An instance already uses that folder".into());
+                }
+                instances::copy_profile(&source, &destination)?;
+                if let Err(error) = instances::write_profile_id(&destination, new_id)
+                    .and_then(|()| instances::write_name(&destination, &name))
+                {
+                    let _ = std::fs::remove_dir_all(&destination);
+                    return Err(error);
+                }
+                if let Err(error) = copy_controls_store(&home, id, new_id) {
                     let _ = std::fs::remove_dir_all(&destination);
                     return Err(error);
                 }
@@ -1379,6 +1524,8 @@ impl Controller {
                 }
                 std::fs::remove_dir_all(crate::shared_storage::profile_dir(&home, id))
                     .map_err(|e| e.to_string())?;
+                let controls = crate::shared_storage::controls_profile_dir(&home, id);
+                remove_tree_without_symlinks(&controls)?;
             }
             "profile_launch" => {
                 let id = arg.parse::<u32>().map_err(|e| e.to_string())?;
@@ -1482,10 +1629,11 @@ impl Controller {
             "touch_layouts" => return self.touch_state(),
             "touch_layout_create" => {
                 let instance = self.catalog.config.game_home(&home);
+                let store = controls_store_for_write(&home, self.catalog.config.profile)?;
                 // Snapshot the live horizon-touch.json verbatim, never the
                 // engine defaults: importing/creating must not wipe custom keys.
                 let snapshot = crate::touch_layouts::live_snapshot(&instance)?;
-                let profile = crate::touch_layouts::create(&instance, arg, &snapshot)?;
+                let profile = crate::touch_layouts::create(&store, arg, &snapshot)?;
                 self.catalog.status = format!(
                     "Saved layout profile {} from the current layout.",
                     profile.name
@@ -1494,14 +1642,15 @@ impl Controller {
             }
             "touch_layout_apply" => {
                 let instance = self.catalog.config.game_home(&home);
-                let snapshot = crate::touch_layouts::snapshot(&instance, arg)?;
+                let store = controls_store_for_write(&home, self.catalog.config.profile)?;
+                let snapshot = crate::touch_layouts::snapshot(&store, arg)?;
                 let fields = crate::touch_layouts::apply_fields(
                     &serde_json::to_value(touch_settings(&instance)).map_err(|e| e.to_string())?,
                     &snapshot,
                 )?;
                 touch_write_fields(&instance, &fields)?;
-                crate::touch_layouts::set_selected(&instance, arg)?;
-                let name = crate::touch_layouts::selected_name(&instance)
+                crate::touch_layouts::set_selected(&store, arg)?;
+                let name = crate::touch_layouts::selected_name(&store)
                     .unwrap_or_else(|| "layout profile".into());
                 self.catalog.status = format!(
                     "Applied layout profile {name}. Open the game's Options › Controls to move or resize its controls."
@@ -1510,8 +1659,9 @@ impl Controller {
             }
             "touch_layout_save" => {
                 let instance = self.catalog.config.game_home(&home);
+                let store = controls_store_for_write(&home, self.catalog.config.profile)?;
                 let snapshot = crate::touch_layouts::live_snapshot(&instance)?;
-                let profile = crate::touch_layouts::save_current(&instance, arg, &snapshot)?;
+                let profile = crate::touch_layouts::save_current(&store, arg, &snapshot)?;
                 self.catalog.status = format!(
                     "Updated {} with the layout currently in touch settings.",
                     profile.name
@@ -1525,32 +1675,33 @@ impl Controller {
                 let name = request["name"]
                     .as_str()
                     .ok_or("Missing layout profile name")?;
-                let instance = self.catalog.config.game_home(&home);
-                let profile = crate::touch_layouts::rename(&instance, id, name)?;
+                let store = controls_store_for_write(&home, self.catalog.config.profile)?;
+                let profile = crate::touch_layouts::rename(&store, id, name)?;
                 self.catalog.status = format!("Renamed layout profile to {}.", profile.name);
                 return serde_json::to_value(profile).map_err(|e| e.to_string());
             }
             "touch_layout_duplicate" => {
-                let instance = self.catalog.config.game_home(&home);
-                let profile = crate::touch_layouts::duplicate(&instance, arg)?;
+                let store = controls_store_for_write(&home, self.catalog.config.profile)?;
+                let profile = crate::touch_layouts::duplicate(&store, arg)?;
                 self.catalog.status = format!("Duplicated layout profile as {}.", profile.name);
                 return serde_json::to_value(profile).map_err(|e| e.to_string());
             }
             "touch_layout_delete" => {
-                let instance = self.catalog.config.game_home(&home);
-                crate::touch_layouts::delete(&instance, arg)?;
+                let store = controls_store_for_write(&home, self.catalog.config.profile)?;
+                crate::touch_layouts::delete(&store, arg)?;
                 self.catalog.status =
                     "Layout profile deleted. The touch layout itself stays as it is.".into();
             }
             "touch_layout_reset" => {
                 let instance = self.catalog.config.game_home(&home);
+                let store = controls_store_for_write(&home, self.catalog.config.profile)?;
                 let current =
                     serde_json::to_value(touch_settings(&instance)).map_err(|e| e.to_string())?;
                 let defaults = serde_json::to_value(horizon_client::touch::Settings::default())
                     .map_err(|e| e.to_string())?;
                 let fields = crate::touch_layouts::reset_fields(&current, &defaults)?;
                 touch_write_fields(&instance, &fields)?;
-                crate::touch_layouts::clear_selected(&instance)?;
+                crate::touch_layouts::clear_selected(&store)?;
                 self.catalog.status =
                     "Default touch layout restored. Custom key actions were kept.".into();
             }
@@ -1679,6 +1830,8 @@ impl Controller {
                 .filter(|i| *i < len)
                 .ok_or_else(|| "Unknown choice".to_owned())
         };
+        let profile_ids = (id == "profile").then(|| self.profile_ids());
+        let profile_names = (id == "profile").then(|| self.named_profiles());
         let c = &mut self.catalog.config;
         match id {
             "renderer" => {
@@ -1714,14 +1867,39 @@ impl Controller {
             }
             "profile" => {
                 let profile = value.parse::<u32>().map_err(|e| e.to_string())?;
-                std::fs::create_dir_all(if profile == 0 {
-                    self.home.clone()
-                } else {
-                    self.home
-                        .join("profiles")
-                        .join(format!("profile-{profile}"))
-                })
-                .map_err(|e| e.to_string())?;
+                if !profile_ids.as_ref().is_some_and(|ids| ids.contains(&profile)) {
+                    // The legacy options sheet offers the next free ID as a
+                    // "Create profile" choice. Only that exact ID may create
+                    // an instance; stale or arbitrary IDs are refused instead
+                    // of silently creating new folders.
+                    let next = profile_ids
+                        .as_ref()
+                        .and_then(|ids| ids.last().copied())
+                        .unwrap_or(0)
+                        .checked_add(1);
+                    if next != Some(profile) {
+                        return Err("Unknown profile".into());
+                    }
+                    let name = profile_names
+                        .as_deref()
+                        .map(|names| instances::unique_name(names, &format!("Instance {profile}")))
+                        .unwrap_or_else(|| format!("Instance {profile}"));
+                    let dir = instances::canonical_path(&self.home, profile, &name)?;
+                    if dir.exists() {
+                        return Err("An instance already uses that folder".into());
+                    }
+                    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                    if let Err(error) = instances::write_profile_id(&dir, profile)
+                        .and_then(|()| instances::write_name(&dir, &name))
+                    {
+                        let _ = fs::remove_dir_all(&dir);
+                        return Err(error);
+                    }
+                }
+                let instance = crate::shared_storage::profile_dir(&self.home, profile);
+                if !instance.is_dir() {
+                    return Err("That profile's folder is missing".into());
+                }
                 c.profile = profile;
                 self.save()?;
                 self.catalog.refresh(&self.home);
@@ -1804,9 +1982,15 @@ impl Controller {
     /// The launcher's layout profiles and the instance's current touch layout.
     fn touch_state(&self) -> Result<Value, String> {
         let instance = self.catalog.config.game_home(&self.home);
+        let store = crate::shared_storage::controls_profile_dir(
+            &self.home,
+            self.catalog.config.profile,
+        );
         let current = touch_snapshot(&touch_settings(&instance));
-        let mut state = serde_json::to_value(crate::touch_layouts::state(&instance)?)
+        let mut state = serde_json::to_value(crate::touch_layouts::state(&store)?)
             .map_err(|e| e.to_string())?;
+        state["instance"] =
+            json!(instances::display_name(&instance, self.catalog.config.profile));
         state["instance_id"] = json!(self.catalog.config.profile);
         state["current_snapshot"] = current.clone();
         state["mode"] = current["mode"].clone();
@@ -2198,13 +2382,21 @@ fn import_touch(env: &mut JNIEnv<'_>, activity: &JObject<'_>, uri: Option<String
         crate::documents::note("Unsupported document URI", false);
         return;
     };
-    let Some(instance) = CONTROLLER.with(|c| {
-        c.borrow()
-            .as_ref()
-            .map(|c| c.catalog.config.game_home(&c.home))
-    }) else {
+    let store = CONTROLLER.with(|c| {
+        c.borrow().as_ref().map(|c| {
+            controls_store_for_write(&c.home, c.catalog.config.profile)
+        })
+    });
+    let Some(store) = store else {
         crate::documents::note("Launcher is not initialized", false);
         return;
+    };
+    let store = match store {
+        Ok(store) => store,
+        Err(error) => {
+            crate::documents::note(format!("Touch controls import failed: {error}"), false);
+            return;
+        }
     };
     let setup = (|| -> jni::errors::Result<_> {
         let activity = env.new_global_ref(activity)?;
@@ -2234,7 +2426,7 @@ fn import_touch(env: &mut JNIEnv<'_>, activity: &JObject<'_>, uri: Option<String
                     .map_err(|e| format!("Could not read the touch file: {e}"))?;
                 let fallback = name.strip_suffix(".json").unwrap_or(&name).to_owned();
                 let (preview, profile) =
-                    crate::touch_layouts::import_profile(&instance, &bytes, &fallback)?;
+                    crate::touch_layouts::import_profile(&store, &bytes, &fallback)?;
                 Ok(format!(
                     "Imported a {} touch profile \"{}\" ({} mode, {} custom button(s), {}). Apply it from Touch controls.",
                     preview.shape,

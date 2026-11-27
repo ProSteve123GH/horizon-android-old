@@ -91,11 +91,17 @@ redownloads only what is absent or damaged; it does not install LWJGL.
 ### Instances
 
 **Settings → Instances** lists the default instance and every instance you
-create. Each one is a folder with its own worlds, settings, mods, packs and
-shader packs, so changing or deleting one does not touch the others. The list
-shows the Minecraft version, storage use, last launch and what each instance
-holds. Create, rename, duplicate, launch, or delete an instance; duplication
-copies worlds and settings but leaves out logs, caches and account sessions.
+create. On disk, the default is `Instances/Default`; named instances are
+`Instances/<named instance>`. Each one is a folder with its own worlds,
+settings, mods, packs and shader packs, so changing or deleting one does not
+touch the others. Each instance also has a stable `pN` identity (`p0` is the
+default), recorded in `android-profile-id.txt`; the display name and last
+launch are recorded by `android-profile-name.txt` and
+`android-profile-played.txt`. Folder names can change without changing the
+identity. The list shows the Minecraft version, storage use, last launch and
+what each instance holds. Create, rename, duplicate, launch, or delete an
+instance; duplication copies worlds and settings but leaves out logs, caches
+and account sessions.
 The default instance and the one in use cannot be deleted, and duplicate names
 are refused. An instance whose folder disappeared is marked and cannot be
 launched or duplicated.
@@ -170,11 +176,13 @@ changes the layout itself. **Reset to the default layout** restores the factory
 placements and visibility, keeps custom keys with their actions at the factory
 grid and clears the active profile.
 
-Profiles are kept in `android-touch-layouts.json` beside the instance's other
-settings and apply instantly to the touch file; a running game reloads them when
-its touch controls are next (re)created. Sensitivity, handedness, the dynamic
-joystick and the gyroscope are never part of a snapshot. A profile never removes
-or rebinds a custom key: a key you added after saving keeps its own placement
+Profiles are kept for the instance identity in
+`Controls/<pN>/android-touch-layouts.json`, while the live
+`horizon-touch.json` remains beside the instance's other settings. They apply
+instantly to the touch file; a running game reloads them when its touch
+controls are next (re)created. Sensitivity, handedness, the dynamic joystick
+and the gyroscope are never part of a snapshot. A profile never removes or
+rebinds a custom key: a key you added after saving keeps its own placement
 when the profile applies, and keys the game no longer has stay removed. Each
 card previews the snapshot's controls at their stored positions (outlines are
 hidden controls, squares are custom keys).
@@ -270,17 +278,24 @@ on Android 11 and newer, or the legacy storage permission on Android 9 and 10.
 
 | Moves to shared storage | Stays private |
 | --- | --- |
-| `saves/` and every instance's worlds | Prepared Minecraft resources and the engine build |
+| `Instances/Default` and `Instances/<named instance>`, including `saves/` and every instance's worlds | Prepared Minecraft resources and the engine build |
 | `horizon-mods/`, `resourcepacks/`, `shaderpacks/` | Account sign-in and encrypted tokens, session files |
-| `options.txt`, `horizon-graphics.txt`, `horizon-touch.json`, `horizon-keypad.json` and other game settings | Downloaded Minecraft files, download caches |
+| `Controls/<pN>/android-touch-layouts.json` and instance settings including `horizon-touch.json` | Downloaded Minecraft files, download caches |
 | `servers.dat`, `screenshots/` | Logs and crash reports |
 | Shareable reports (`horizon-diagnostics-*.zip`, `horizon-performance-*.jsonl`) | Raw diagnostics (logs, traces, exit reports) |
-| Instance folders and their `android-profile-*.txt` | Launcher state (instances you had running stay put), accounts |
+| Instance metadata markers (`android-profile-id.txt`, `android-profile-name.txt`, `android-profile-played.txt`) | Launcher state (instances you had running stay put), accounts |
 
 The move copies everything, re-reads and compares it byte for byte, and only
 then deletes the originals; an interrupted move is rolled back or completed on
 the next start. Nothing is overwritten and the destination must be empty. The
-marker that records the choice lives in app storage, so if the folder is
+older root-level layout and `profiles/profile-N` folders are migrated once
+into `Instances/`; launcher touch-layout stores use the corresponding
+`Controls/<pN>/` identity. The migration is idempotent:
+retrying it accepts identical files, preserves stable IDs and metadata markers,
+and refuses conflicting data instead of overwriting it. App-private files stay
+private; this layout change does not alter the other storage or permission
+semantics.
+The marker that records the choice lives in app storage, so if the folder is
 deleted the game reports it instead of opening an empty world list, and the
 chooser offers re-creating the folder or moving back to app storage. Revoking
 the access makes the shared files unreadable; grant it again in system

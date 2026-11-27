@@ -51,6 +51,16 @@ pub const BACKUP_PREFIX: &str = "Horizon-Android-backup-";
 /// migration keeps it private on both moves.
 pub const PROMPT_MARKER: &str = "android-storage-prompt.json";
 
+/// The on-disk instance layout.  The numeric marker is deliberately kept in
+/// the folder rather than inferred from its name: users may rename folders.
+pub const INSTANCES_DIR: &str = "Instances";
+pub const DEFAULT_INSTANCE_NAME: &str = "Default";
+pub const PROFILE_ID_FILE: &str = "android-profile-id.txt";
+pub const PROFILE_NAME_FILE: &str = "android-profile-name.txt";
+/// Per-instance launcher controls are shared, but are not game instances.
+pub const CONTROLS_DIR: &str = "Controls";
+const LEGACY_CONTROLS_FILE: &str = "android-touch-layouts.json";
+
 /// Private journal of an in-flight migration: every destination path this
 /// run creates, the matching sources, the phase (`copying` | `deleting`) and
 /// both roots. Used by [`recover`] after a crash. Starts with a dot, so the
@@ -160,15 +170,129 @@ pub fn resolve(home: &Path) -> PathBuf {
 pub fn profile_dir(home: &Path, id: u32) -> PathBuf {
     let base = resolve(home);
     if id == 0 {
-        base
+        let canonical = base.join(INSTANCES_DIR).join(DEFAULT_INSTANCE_NAME);
+        return if is_real_dir(&canonical) || !has_legacy_instance_content(&base) {
+            canonical
+        } else {
+            base
+        };
+    }
+    if let Some(path) = discover_profile_path(&base, id) {
+        path
     } else {
+        // Keep old installs readable until migrate_layout is called.
         base.join("profiles").join(format!("profile-{id}"))
     }
+}
+
+/// Returns a canonical, validated path for a named instance.
+pub fn named_profile_dir(home: &Path, name: &str) -> Result<PathBuf, String> {
+    if !is_profile_name(name) {
+        return Err("Invalid instance name".into());
+    }
+    Ok(resolve(home).join(INSTANCES_DIR).join(name))
+}
+
+/// Returns the canonical path for an instance ID and display name.
+pub fn canonical_profile_dir(
+    home: &Path,
+    id: u32,
+    name: &str,
+) -> Result<PathBuf, String> {
+    let name = if id == 0 { DEFAULT_INSTANCE_NAME } else { name };
+    named_profile_dir(home, name)
+}
+
+/// A folder name safe to use as one path component.
+pub fn is_profile_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.trim() == name
+        && name != "."
+        && name != ".."
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains('\0')
+        && !name.chars().any(|c| c.is_control())
+}
+
+pub fn read_profile_id(dir: &Path) -> Option<u32> {
+    fs::read_to_string(dir.join(PROFILE_ID_FILE))
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+}
+
+pub fn write_profile_id(dir: &Path, id: u32) -> Result<(), String> {
+    fs::write(dir.join(PROFILE_ID_FILE), format!("{id}\n")).map_err(|e| e.to_string())
+}
+
+/// Finds an instance by its stable marker, never by its current folder name.
+pub fn discover_profile_path(root: &Path, id: u32) -> Option<PathBuf> {
+    let instances = root.join(INSTANCES_DIR);
+    if !is_real_dir(&instances) {
+        return None;
+    }
+    let entries = fs::read_dir(instances).ok()?;
+    for entry in entries.flatten() {
+        if !is_real_dir(&entry.path()) {
+            continue;
+        }
+        if read_profile_id(&entry.path()) == Some(id) {
+            return Some(entry.path());
+        }
+    }
+    None
 }
 
 /// Where the shareable reports live (what the Files app shows as Reports).
 pub fn reports_dir(home: &Path) -> PathBuf {
     resolve(home).join("performance")
+}
+
+/// Stable controls location.  Unlike game files, controls are keyed by the
+/// numeric profile ID so renaming an instance does not move its layout.
+pub fn controls_profile_dir(home: &Path, stable_id: u32) -> PathBuf {
+    let root = resolve(home);
+    let controls = root.join(CONTROLS_DIR);
+    // This API historically returns a path rather than a Result.  If a
+    // hostile/accidental symlink occupies Controls, return a private,
+    // non-Controls fallback instead of a path which would escape root.
+    let profile = controls.join(format!("p{stable_id}"));
+    let base = match fs::symlink_metadata(&controls) {
+        Ok(meta) if meta.file_type().is_symlink() => root.join(".controls-rejected"),
+        _ => controls,
+    };
+    if base == controls
+        && fs::symlink_metadata(&profile)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false)
+    {
+        root.join(".controls-rejected").join(format!("p{stable_id}"))
+    } else {
+        base.join(format!("p{stable_id}"))
+    }
+}
+
+pub fn ensure_controls_profile_dir(home: &Path, stable_id: u32) -> std::io::Result<PathBuf> {
+    let root = resolve(home);
+    if !is_real_dir(&root) {
+        return Err(std::io::Error::other("Resolved game root is not a real directory"));
+    }
+    let controls = root.join(CONTROLS_DIR);
+    if fs::symlink_metadata(&controls)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err(std::io::Error::other("Controls is a symlink"));
+    }
+    let path = controls.join(format!("p{stable_id}"));
+    if fs::symlink_metadata(&path)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err(std::io::Error::other("Controls profile is a symlink"));
+    }
+    fs::create_dir_all(&path)?;
+    Ok(path)
 }
 
 pub fn state(home: &Path) -> State {
@@ -239,9 +363,250 @@ pub fn has_game_files(home: &Path) -> bool {
         "mods",
         "profiles",
         "performance",
+        INSTANCES_DIR,
+        CONTROLS_DIR,
     ]
     .iter()
     .any(|name| home.join(name).exists())
+}
+
+/// Whether the root still contains files from the pre-Instances layout.
+/// Private launcher state and global reports do not make the old root active:
+/// a fresh install must be able to use the canonical default path immediately.
+fn has_legacy_instance_content(root: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(root) else {
+        return true;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == INSTANCES_DIR || name == CONTROLS_DIR {
+            if name == INSTANCES_DIR {
+                return true;
+            }
+            if entry
+                .file_type()
+                .map(|kind| kind.is_symlink())
+                .unwrap_or(true)
+            {
+                return true;
+            }
+            continue;
+        }
+        if name == LEGACY_CONTROLS_FILE {
+            return true;
+        }
+        if name == "performance" || is_private_top_level(&name) {
+            continue;
+        }
+        if name == "profiles" {
+            if fs::read_dir(entry.path())
+                .map(|mut entries| entries.next().is_some())
+                .unwrap_or(true)
+            {
+                return true;
+            }
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
+fn same_file(a: &Path, b: &Path) -> std::io::Result<bool> {
+    files_equal(a, b)
+}
+
+fn is_real_dir(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|meta| meta.is_dir() && !meta.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+fn migrate_file(src: &Path, dst: &Path) -> Result<(), String> {
+    if dst.exists() {
+        if !dst.is_file() || !same_file(src, dst).map_err(|e| e.to_string())? {
+            return Err(format!(
+                "Cannot migrate {}: {} already contains different data",
+                src.display(),
+                dst.display()
+            ));
+        }
+    } else {
+        if let Some(parent) = dst.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::copy(src, dst).map_err(|e| format!("Cannot copy {}: {e}", src.display()))?;
+    }
+    if !same_file(src, dst).map_err(|e| e.to_string())? {
+        return Err(format!("Cannot verify migrated file {}", dst.display()));
+    }
+    fs::remove_file(src).map_err(|e| format!("Cannot remove {}: {e}", src.display()))
+}
+
+/// Move one legacy tree without replacing anything already present.  Existing
+/// identical files are considered already migrated, which makes this safe to
+/// retry after a process is stopped halfway through.
+fn migrate_tree(src: &Path, dst: &Path) -> Result<(), String> {
+    if !src.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(src).map_err(|e| format!("Cannot read {}: {e}", src.display()))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name();
+        let text = name.to_string_lossy();
+        let kind = entry.file_type().map_err(|e| e.to_string())?;
+        if kind.is_symlink()
+            || text == LEGACY_CONTROLS_FILE
+            || (text.starts_with('.') && text != PROFILE_ID_FILE)
+        {
+            continue;
+        }
+        if PRIVATE_NESTED.contains(&text.as_ref()) {
+            continue;
+        }
+        let from = entry.path();
+        let to = dst.join(&name);
+        if kind.is_dir() {
+            fs::create_dir_all(&to).map_err(|e| format!("Cannot create {}: {e}", to.display()))?;
+            migrate_tree(&from, &to)?;
+            let _ = fs::remove_dir(&from);
+        } else if kind.is_file() {
+            migrate_file(&from, &to)?;
+        }
+    }
+    Ok(())
+}
+
+/// Migrates the pre-Instances layout below the resolved storage root.
+///
+/// This is intentionally separate from the permission migration so callers
+/// can invoke it on a shared root after adoption as well as during first run.
+/// It never overwrites a destination and can be called repeatedly.
+pub fn migrate_layout(home: &Path) -> Result<String, String> {
+    let root = resolve(home);
+    if !is_real_dir(&root) {
+        return Err(format!("The game files folder {} was not found", root.display()));
+    }
+    if !has_legacy_instance_content(&root) {
+        return Ok("Instance storage layout is current".into());
+    }
+    let instances = root.join(INSTANCES_DIR);
+    for (name, path) in [(INSTANCES_DIR, &instances), (CONTROLS_DIR, &root.join(CONTROLS_DIR))] {
+        if fs::symlink_metadata(path)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return Err(format!("{name} is a symlink; refusing to migrate outside the game root"));
+        }
+    }
+    let default = instances.join(DEFAULT_INSTANCE_NAME);
+    if fs::symlink_metadata(&default)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err("Instances/Default is a symlink; refusing to migrate outside the game root".into());
+    }
+    fs::create_dir_all(&default).map_err(|e| format!("Cannot create {}: {e}", default.display()))?;
+
+    // Root-level performance reports remain global (and private diagnostics
+    // are still filtered by the existing migration rules).
+    for entry in fs::read_dir(&root).map_err(|e| e.to_string())?.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == INSTANCES_DIR
+            || name == "profiles"
+            || name == "performance"
+            || name == CONTROLS_DIR
+            || name == LEGACY_CONTROLS_FILE
+            || is_private_top_level(&name)
+        {
+            continue;
+        }
+        let source = entry.path();
+        if entry.file_type().is_ok_and(|t| t.is_dir()) {
+            migrate_tree(&source, &default)?;
+        } else if entry.file_type().is_ok_and(|t| t.is_file()) {
+            migrate_file(&source, &default.join(&name))?;
+        }
+    }
+    if default.join(PROFILE_ID_FILE).is_file() && read_profile_id(&default).is_none() {
+        return Err(format!("{} has an unreadable profile ID", default.display()));
+    }
+    if read_profile_id(&default).is_some_and(|id| id != 0) {
+        return Err(format!("{} has a conflicting profile ID", default.display()));
+    }
+    write_profile_id(&default, 0)?;
+    if !default.join(PROFILE_NAME_FILE).exists() {
+        fs::write(default.join(PROFILE_NAME_FILE), DEFAULT_INSTANCE_NAME)
+            .map_err(|e| e.to_string())?;
+    }
+
+    let legacy = root.join("profiles");
+    // The old controls file was shared by the launcher but lived beside the
+    // default/profile game files.  Move it separately so it never becomes an
+    // instance file, and leave the live horizon-touch.json untouched.
+    if root.join(LEGACY_CONTROLS_FILE).is_file() {
+        migrate_file(
+            &root.join(LEGACY_CONTROLS_FILE),
+            &controls_profile_dir(home, 0).join(LEGACY_CONTROLS_FILE),
+        )?;
+    }
+    if legacy.is_dir() {
+        for entry in fs::read_dir(&legacy).map_err(|e| e.to_string())?.flatten() {
+            let folder = entry.file_name().to_string_lossy().into_owned();
+            let Some(number) = folder.strip_prefix("profile-") else {
+                continue;
+            };
+            let Ok(id) = number.parse::<u32>() else {
+                continue;
+            };
+            if id == 0 || !entry.file_type().is_ok_and(|t| t.is_dir()) {
+                continue;
+            }
+            let display_file = entry.path().join(PROFILE_NAME_FILE);
+            let display = if display_file.is_file() {
+                let display = fs::read_to_string(&display_file)
+                    .map_err(|e| format!("Cannot read {}: {e}", display_file.display()))?
+                    .trim()
+                    .to_owned();
+                if !is_profile_name(&display) {
+                    return Err(format!(
+                        "Cannot migrate profile {id}: its stored name is not a safe folder name"
+                    ));
+                }
+                display
+            } else {
+                format!("Instance {id}")
+            };
+            let legacy_controls = entry.path().join(LEGACY_CONTROLS_FILE);
+            if legacy_controls.is_file() {
+                migrate_file(
+                    &legacy_controls,
+                    &controls_profile_dir(home, id).join(LEGACY_CONTROLS_FILE),
+                )?;
+            }
+            let target = instances.join(&display);
+            if target.join(PROFILE_ID_FILE).is_file() && read_profile_id(&target).is_none() {
+                return Err(format!("{} has an unreadable profile ID", target.display()));
+            }
+            if let Some(existing) = read_profile_id(&target) {
+                if existing != id {
+                    return Err(format!(
+                        "Instance name collision: {} belongs to profile {}",
+                        target.display(),
+                        existing
+                    ));
+                }
+            }
+            fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+            migrate_tree(&entry.path(), &target)?;
+            write_profile_id(&target, id)?;
+            if !target.join(PROFILE_NAME_FILE).exists() {
+                fs::write(target.join(PROFILE_NAME_FILE), &display).map_err(|e| e.to_string())?;
+            }
+            let _ = fs::remove_dir(&entry.path());
+        }
+    }
+    Ok("Instance storage layout is current".into())
 }
 
 /// True when `dir` is a real directory (never a symlink) holding at least one
@@ -934,6 +1299,8 @@ fn adopt_inner(home: &Path, shared: &Path) -> Result<String, String> {
     }
     write_marker(home, shared)
         .map_err(|e| format!("Could not record the storage location: {e}"))?;
+    migrate_layout(home)
+        .map_err(|e| format!("Could not migrate the shared instance layout: {e}"))?;
     Ok("Horizon is using the game files in Horizon-Android".into())
 }
 
@@ -1052,6 +1419,8 @@ fn restore_backup_inner(home: &Path, shared: &Path, name: &str) -> Result<String
     fs::rename(&backup, shared).map_err(|e| format!("Could not restore the backup: {e}"))?;
     write_marker(home, shared)
         .map_err(|e| format!("Could not record the storage location: {e}"))?;
+    migrate_layout(home)
+        .map_err(|e| format!("Could not migrate the restored instance layout: {e}"))?;
     Ok(format!(
         "Restored {name}. The previous folder was kept as a backup."
     ))
@@ -1075,7 +1444,15 @@ pub fn migrate(home: &Path, shared: &Path, to_shared: bool) -> Result<String, St
     }
     PROGRESS_DONE.store(0, Ordering::Relaxed);
     PROGRESS_TOTAL.store(0, Ordering::Relaxed);
-    let result = migrate_inner(home, shared, to_shared);
+    let result = migrate_inner(home, shared, to_shared).and_then(|summary| {
+        migrate_layout(home).map(|layout| {
+            if summary.is_empty() {
+                layout
+            } else {
+                format!("{summary}; {layout}")
+            }
+        })
+    });
     MOVING.store(false, Ordering::Release);
     result
 }
@@ -1301,6 +1678,158 @@ mod tests {
     }
 
     #[test]
+    fn canonical_paths_and_markers_survive_folder_renames() {
+        let home = scratch();
+        let old = named_profile_dir(&home, "Survival").unwrap();
+        fs::create_dir_all(&old).unwrap();
+        write_profile_id(&old, 7).unwrap();
+        let renamed = home.join(INSTANCES_DIR).join("My world");
+        fs::rename(&old, &renamed).unwrap();
+        assert_eq!(discover_profile_path(&home, 7), Some(renamed.clone()));
+        assert_eq!(profile_dir(&home, 7), renamed);
+        assert!(named_profile_dir(&home, "../escape").is_err());
+        assert!(named_profile_dir(&home, "two/names").is_err());
+        assert_eq!(
+            canonical_profile_dir(&home, 0, "ignored").unwrap(),
+            home.join(INSTANCES_DIR).join(DEFAULT_INSTANCE_NAME)
+        );
+    }
+
+    #[test]
+    fn empty_home_uses_canonical_default_without_creating_layout() {
+        let home = scratch();
+        assert_eq!(
+            profile_dir(&home, 0),
+            home.join(INSTANCES_DIR).join(DEFAULT_INSTANCE_NAME)
+        );
+        migrate_layout(&home).unwrap();
+        assert!(!home.join(INSTANCES_DIR).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_controls_root_is_not_used_or_migrated_into() {
+        use std::os::unix::fs::symlink;
+
+        let home = scratch();
+        let outside = scratch();
+        symlink(&outside, home.join(CONTROLS_DIR)).unwrap();
+        fs::write(home.join(LEGACY_CONTROLS_FILE), b"controls").unwrap();
+
+        // The path helper never returns a path through the symlink, and the
+        // write helper refuses it instead of creating a store outside root.
+        assert!(!controls_profile_dir(&home, 0).starts_with(&outside));
+        assert!(ensure_controls_profile_dir(&home, 0).is_err());
+        let error = migrate_layout(&home).unwrap_err();
+        assert!(error.contains("symlink"), "{error}");
+        // The legacy source is still where the user left it.
+        assert_eq!(fs::read(home.join(LEGACY_CONTROLS_FILE)).unwrap(), b"controls");
+        assert!(!outside.join("p0").exists());
+    }
+
+    #[test]
+    fn layout_migration_is_named_non_overwriting_and_idempotent() {
+        let home = scratch();
+        fs::create_dir_all(home.join("saves/World")).unwrap();
+        fs::write(home.join("saves/World/level.dat"), b"world").unwrap();
+        fs::write(home.join(LEGACY_CONTROLS_FILE), b"default-controls").unwrap();
+        fs::write(home.join("horizon-touch.json"), b"live-default").unwrap();
+        fs::create_dir_all(home.join("profiles/profile-4")).unwrap();
+        fs::write(
+            home.join("profiles/profile-4/android-profile-name.txt"),
+            "Creative",
+        )
+        .unwrap();
+        fs::write(home.join("profiles/profile-4/options.txt"), b"options").unwrap();
+        fs::write(
+            home.join("profiles/profile-4/android-touch-layouts.json"),
+            b"custom-controls",
+        )
+        .unwrap();
+        fs::write(
+            home.join("profiles/profile-4/horizon-touch.json"),
+            b"live-custom",
+        )
+        .unwrap();
+        migrate_layout(&home).unwrap();
+        assert_eq!(
+            fs::read(home.join("Instances/Default/saves/World/level.dat")).unwrap(),
+            b"world"
+        );
+        assert_eq!(
+            fs::read(home.join("Instances/Creative/options.txt")).unwrap(),
+            b"options"
+        );
+        assert_eq!(read_profile_id(&home.join("Instances/Creative")), Some(4));
+        assert_eq!(
+            fs::read(controls_profile_dir(&home, 0).join(LEGACY_CONTROLS_FILE)).unwrap(),
+            b"default-controls"
+        );
+        assert_eq!(
+            fs::read(controls_profile_dir(&home, 4).join(LEGACY_CONTROLS_FILE)).unwrap(),
+            b"custom-controls"
+        );
+        assert_eq!(
+            fs::read(home.join("Instances/Default/horizon-touch.json")).unwrap(),
+            b"live-default"
+        );
+        assert_eq!(
+            fs::read(home.join("Instances/Creative/horizon-touch.json")).unwrap(),
+            b"live-custom"
+        );
+        migrate_layout(&home).unwrap();
+        assert_eq!(read_profile_id(&home.join("Instances/Default")), Some(0));
+    }
+
+    #[test]
+    fn adopting_old_shared_layout_runs_instance_migration() {
+        let home = scratch();
+        let shared = scratch();
+        fs::create_dir_all(shared.join("profiles/profile-3")).unwrap();
+        fs::write(
+            shared.join("profiles/profile-3/android-profile-name.txt"),
+            "Builder",
+        )
+        .unwrap();
+        fs::write(
+            shared.join("profiles/profile-3/android-touch-layouts.json"),
+            b"controls",
+        )
+        .unwrap();
+        fs::write(shared.join("profiles/profile-3/horizon-touch.json"), b"live").unwrap();
+
+        adopt(&home, &shared).unwrap();
+
+        assert_eq!(
+            fs::read(shared.join("Controls/p3/android-touch-layouts.json")).unwrap(),
+            b"controls"
+        );
+        assert_eq!(
+            fs::read(shared.join("Instances/Builder/horizon-touch.json")).unwrap(),
+            b"live"
+        );
+        assert!(!shared.join("profiles").exists());
+    }
+
+    #[test]
+    fn controls_collision_keeps_different_legacy_source() {
+        let home = scratch();
+        fs::create_dir_all(controls_profile_dir(&home, 0)).unwrap();
+        fs::write(
+            controls_profile_dir(&home, 0).join(LEGACY_CONTROLS_FILE),
+            b"new",
+        )
+        .unwrap();
+        fs::write(home.join(LEGACY_CONTROLS_FILE), b"old").unwrap();
+        let error = migrate_layout(&home).unwrap_err();
+        assert!(error.contains("already contains different data"));
+        assert_eq!(
+            fs::read(home.join(LEGACY_CONTROLS_FILE)).unwrap(),
+            b"old"
+        );
+    }
+
+    #[test]
     fn migrates_game_files_and_keeps_private_state() {
         let home = scratch();
         seed(&home);
@@ -1311,11 +1840,11 @@ mod tests {
         let summary = migrate(&home, &shared, true).unwrap();
         assert!(summary.contains("Moved"), "{summary}");
         assert_eq!(
-            fs::read(shared.join("saves/World One/level.dat")).unwrap(),
+            fs::read(shared.join("Instances/Default/saves/World One/level.dat")).unwrap(),
             b"level"
         );
         assert_eq!(
-            fs::read(shared.join("horizon-mods/test.hmod")).unwrap(),
+            fs::read(shared.join("Instances/Default/horizon-mods/test.hmod")).unwrap(),
             b"mod"
         );
         assert_eq!(
@@ -1323,10 +1852,13 @@ mod tests {
             b"{}"
         );
         assert_eq!(
-            fs::read(shared.join("profiles/profile-2/saves/World Two/level.dat")).unwrap(),
+            fs::read(shared.join("Instances/Instance 2/saves/World Two/level.dat")).unwrap(),
             b"two"
         );
-        assert_eq!(fs::read(shared.join("options.txt")).unwrap(), b"options");
+        assert_eq!(
+            fs::read(shared.join("Instances/Default/options.txt")).unwrap(),
+            b"options"
+        );
         assert!(
             !shared.join("performance/diagnostic.log").exists(),
             "raw diagnostics must not move"
@@ -1340,7 +1872,7 @@ mod tests {
         assert!(!shared.join(".local").exists());
         assert!(!shared.join("logs").exists());
         assert!(
-            !shared.join("profiles/profile-2/sessions").exists(),
+            !shared.join("Instances/Instance 2/sessions").exists(),
             "sessions must stay private"
         );
         // The private originals that must stay are untouched.
@@ -1364,8 +1896,11 @@ mod tests {
         assert!(!home.join("options.txt").exists());
         assert_eq!(state(&home), State::Shared);
         assert_eq!(resolve(&home), shared);
-        assert_eq!(profile_dir(&home, 0), shared);
-        assert_eq!(profile_dir(&home, 2), shared.join("profiles/profile-2"));
+        assert_eq!(profile_dir(&home, 0), shared.join("Instances/Default"));
+        assert_eq!(
+            profile_dir(&home, 2),
+            shared.join("Instances/Instance 2")
+        );
         assert_eq!(reports_dir(&home), shared.join("performance"));
         // The migration is one way: a "move back" request is refused and the
         // shared root stays authoritative.
@@ -1373,7 +1908,7 @@ mod tests {
         assert_eq!(state(&home), State::Shared);
         assert_eq!(resolve(&home), shared);
         assert_eq!(
-            fs::read(shared.join("saves/World One/level.dat")).unwrap(),
+            fs::read(shared.join("Instances/Default/saves/World One/level.dat")).unwrap(),
             b"level"
         );
         fs::remove_dir_all(&home).unwrap();
@@ -1403,7 +1938,7 @@ mod tests {
         assert_eq!(fs::read(home.join("native/builds/lib.so")).unwrap(), b"lib");
         assert!(!shared.join("native").exists(), "native builds must not move");
         assert_eq!(
-            fs::read(shared.join("horizon-native-mods/mod.hmod")).unwrap(),
+            fs::read(shared.join("Instances/Default/horizon-native-mods/mod.hmod")).unwrap(),
             b"bundle"
         );
         assert!(!home.join("horizon-native-mods").exists());

@@ -20,7 +20,15 @@ LICENSE_ASSETS = {'assets/LICENSE.txt', 'assets/THIRD_PARTY_NOTICES.md'}
 PRIVATE_PARTS = {'accounts', 'accounts.json', 'session.json', 'session-file.json',
                  'control.json', 'servers.dat', 'level.dat', 'options.txt',
                  'android-launch.json', 'android-launcher.json', 'saves', 'profiles',
-                 'logs', 'crash-reports', 'credentials', 'key.properties'}
+                 # Android shared game-file roots and their private account/session
+                 # stores must never be copied into an APK.
+                 'instances', 'controls', 'account-secrets', 'sessions',
+                 'logs', 'crash-reports', 'credentials', 'key.properties',
+                 # Instance identity and player-owned metadata.
+                 'android-profile-id.txt', 'android-profile-name.txt',
+                 'android-profile-played.txt', 'android-touch-layouts.json',
+                 'horizon-player.txt', 'horizon-touch.json', 'horizon-keypad.json',
+                 'horizon-graphics.txt'}
 PRIVATE_SUFFIXES = {'.keystore', '.jks', '.p12', '.pfx', '.log', '.hprof'}
 PATTERNS = {
     'private_key': re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
