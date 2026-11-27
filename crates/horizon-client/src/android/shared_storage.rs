@@ -523,7 +523,12 @@ pub fn migrate_layout(home: &Path) -> Result<String, String> {
         }
         let source = entry.path();
         if entry.file_type().is_ok_and(|t| t.is_dir()) {
-            migrate_tree(&source, &default)?;
+            // Keep the folder itself: `saves/` must become
+            // `Instances/Default/saves/`, not spill into the instance root.
+            let target = default.join(&name);
+            fs::create_dir_all(&target)
+                .map_err(|e| format!("Cannot create {}: {e}", target.display()))?;
+            migrate_tree(&source, &target)?;
         } else if entry.file_type().is_ok_and(|t| t.is_file()) {
             migrate_file(&source, &default.join(&name))?;
         }
@@ -605,6 +610,8 @@ pub fn migrate_layout(home: &Path) -> Result<String, String> {
             }
             let _ = fs::remove_dir(&entry.path());
         }
+        // The per-profile folders are gone; the container is no longer needed.
+        let _ = fs::remove_dir(&legacy);
     }
     Ok("Instance storage layout is current".into())
 }
@@ -2419,8 +2426,10 @@ mod tests {
         assert!(!shared.join("Instances/Default/options.txt").exists());
         let after = backups(&shared);
         assert_eq!(after.len(), 1, "{after:?}");
+        // The backup was taken before that folder was migrated, so its layout
+        // is the original root-level one.
         assert_eq!(
-            fs::read(parent.join(&after[0]).join("Instances/Default/options.txt")).unwrap(),
+            fs::read(parent.join(&after[0]).join("options.txt")).unwrap(),
             b"options"
         );
 
