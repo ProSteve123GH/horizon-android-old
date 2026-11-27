@@ -436,7 +436,7 @@ private fun LauncherContent(
                 }
             }
             is Overlay.TouchEditor -> TouchLayoutEditor(
-                profileId = overlay.profileId,
+                profileId = o.profileId,
                 onDismiss = { overlay = null },
             )
             Overlay.Backup -> BackupSheet(onDismiss = { overlay = null })

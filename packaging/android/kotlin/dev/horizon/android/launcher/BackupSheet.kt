@@ -42,19 +42,21 @@ import org.json.JSONObject
 import java.io.File
 
 /** Copies a locally created archive into a folder the user picked through SAF. */
-private fun copyArchiveToTree(context: Context, tree: Uri, source: File): String? = try {
-    val document = DocumentsContract.createDocument(
-        context.contentResolver,
-        tree,
-        "application/gzip",
-        source.name,
-    ) ?: return "Could not create the archive in that folder"
-    context.contentResolver.openOutputStream(document)?.use { output ->
-        source.inputStream().use { input -> input.copyTo(output) }
-    } ?: return "Could not write the archive to that folder"
-    null
-} catch (error: Exception) {
-    error.message ?: "Could not save the archive"
+private fun copyArchiveToTree(context: Context, tree: Uri, source: File): String? {
+    return try {
+        val document = DocumentsContract.createDocument(
+            context.contentResolver,
+            tree,
+            "application/gzip",
+            source.name,
+        ) ?: return "Could not create the archive in that folder"
+        context.contentResolver.openOutputStream(document)?.use { output ->
+            source.inputStream().use { input -> input.copyTo(output) }
+        } ?: return "Could not write the archive to that folder"
+        null
+    } catch (error: Exception) {
+        error.message ?: "Could not save the archive"
+    }
 }
 
 /** Selective backup and restore of player files, driven by the Rust backup store. */

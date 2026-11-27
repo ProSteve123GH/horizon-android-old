@@ -128,6 +128,7 @@ fun TouchLayoutEditor(profileId: String, onDismiss: () -> Unit) {
         snapshot = JSONObject(root.toString())
     }
 
+    val colors = MaterialTheme.colorScheme
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -165,7 +166,11 @@ fun TouchLayoutEditor(profileId: String, onDismiss: () -> Unit) {
                         },
                         onDrag = { change, _ ->
                             if (selected >= 0) {
-                                place(selected, change.position.x / size.width, change.position.y / size.height)
+                                place(
+                                    selected,
+                                    (change.position.x / size.width).toDouble(),
+                                    (change.position.y / size.height).toDouble(),
+                                )
                             }
                         },
                     )
@@ -191,14 +196,14 @@ fun TouchLayoutEditor(profileId: String, onDismiss: () -> Unit) {
                     )
                 } else {
                     drawCircle(
-                        color = if (hidden) Color.Gray else MaterialTheme.colorScheme.primary,
+                        color = if (hidden) Color.Gray else colors.primary,
                         radius = side / 2f,
                         center = Offset(x, y),
                     )
                 }
                 if (index == selected) {
                     drawCircle(
-                        color = MaterialTheme.colorScheme.primary,
+                        color = colors.primary,
                         radius = side / 2f + 4.dp.toPx(),
                         center = Offset(x, y),
                         style = Stroke(2.dp.toPx()),

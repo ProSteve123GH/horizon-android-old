@@ -30,7 +30,6 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.InsertDriveFile
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.Paste
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -270,7 +269,7 @@ fun GameFilesScreen(root: File, onBack: () -> Unit) {
             if (!name.isNullOrBlank()) report(runCatching {
                 val target = File(file.parentFile, name)
                 if (target.exists()) "That name is already in use" else if (!file.renameTo(target)) "Could not rename" else null
-            }.getOrElse { it.message }))
+            }.getOrElse { it.message })
             renameFor = null
         }
     }
@@ -279,7 +278,7 @@ fun GameFilesScreen(root: File, onBack: () -> Unit) {
             if (!name.isNullOrBlank()) report(runCatching {
                 val folder = File(current, name)
                 if (!folder.mkdirs()) "Could not create that folder" else null
-            }.getOrElse { it.message }))
+            }.getOrElse { it.message })
             newFolder = false
         }
     }
@@ -310,7 +309,7 @@ fun GameFilesScreen(root: File, onBack: () -> Unit) {
             },
             confirmButton = {
                 Button(onClick = {
-                    report(runCatching { file.writeText(editText); null }.getOrElse { it.message }))
+                    report(runCatching { file.writeText(editText); null }.getOrElse { it.message })
                     editFor = null
                 }) { Text("Save") }
             },
