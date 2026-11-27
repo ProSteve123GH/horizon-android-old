@@ -167,6 +167,10 @@ Android Back closes the keyboard first, then the current screen.
 
 The launcher stores named snapshots of a touch layout per instance: **Play >
 Touch layouts** or **Settings > Game > Touch layout profiles** opens the sheet.
+**Edit** opens a dedicated full-screen editor rather than a draft sheet: it
+draws the same button PNGs the game uses, lets you drag controls to new
+positions and toggle their visibility, and saves the edited snapshot back to
+the profile.
 **New** snapshots the controls exactly as the game has them right now (control
 mode, every placement, button visibility and custom-key positions); applying a
 profile switches the instance back to its arrangement, and **Save the current
@@ -263,7 +267,12 @@ already published to Pictures.
 Horizon keeps the player's worlds, mods, packs, shader packs, options, saved
 servers, screenshots, instances and the shareable reports in app storage
 until you move them; you can browse them in the launcher's **Game files**
-screen (Settings → Storage & Files → Browse game files).
+screen (Settings → Storage & Files → Browse game files). That screen is now a
+two-root file manager: **Internal storage** opens the shared `Horizon-Android`
+tree and **Private storage** opens the app's private home. In either root you
+can create folders, copy, cut and paste, rename, delete after confirmation,
+edit small text files, and open images, audio and video through a scoped read
+grant. Horizon no longer exposes its own DocumentsProvider to system Files.
 
 **Settings → Storage → Game files location** is a two-option chooser:
 **Internal storage** (recommended) keeps those files in
@@ -284,6 +293,18 @@ on Android 11 and newer, or the legacy storage permission on Android 9 and 10.
 | `servers.dat`, `screenshots/` | Logs and crash reports |
 | Shareable reports (`horizon-diagnostics-*.zip`, `horizon-performance-*.jsonl`) | Raw diagnostics (logs, traces, exit reports) |
 | Instance metadata markers (`android-profile-id.txt`, `android-profile-name.txt`, `android-profile-played.txt`) | Launcher state (instances you had running stay put), accounts |
+
+**Settings → Storage & Files → Backup & restore** creates selective `.tar.gz`
+archives. Choose any combination of Instances (worlds, per-instance settings,
+mods, packs and shaders), Controls, launcher settings, screenshots and reports;
+Horizon writes the archive under the active game-files `backups/` folder and
+copies it to a folder you pick through Android's document picker. Restore picks
+an archive from anywhere, stages it privately and extracts it; existing files
+are left alone unless you explicitly enable **Overwrite**. Entries with
+traversal, absolute paths, links or unsupported types are refused without
+changing your data, and account sessions, logs and prepared engine files are
+never included. The archives are standard gzip tar files readable by other
+tools.
 
 The move copies everything, re-reads and compares it byte for byte, and only
 then deletes the originals; an interrupted move is rolled back or completed on
