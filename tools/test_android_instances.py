@@ -46,7 +46,9 @@ mod shared_storage;
 #[path = "../../../../crates/horizon-client/src/android/instances.rs"]
 mod instances;
 ''', encoding='utf-8')
-    subprocess.run(['cargo', 'test', '--manifest-path', str(root / 'Cargo.toml')],
+    # Migration tests share a process-wide MOVING flag; run them serially.
+    subprocess.run(['cargo', 'test', '--manifest-path', str(root / 'Cargo.toml'),
+                    '--', '--test-threads=1'],
                    cwd=ROOT, check=True)
     contract()
 

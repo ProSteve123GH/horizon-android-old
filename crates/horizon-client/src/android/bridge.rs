@@ -432,6 +432,7 @@ impl Controller {
                 row("storage", "Game files location", self.storage_summary(), "action"),
                 row("screenshots", "Screenshots", "Browse, preview, share or delete".into(), "action"),
                 row("game_files", "Game files", "Browse worlds, mods, packs and shaders".into(), "action"),
+                row("backup", "Backup & restore", "Selective .tar.gz archives of your player files".into(), "action"),
                 row("world_files", "World files", "Import / copy / back up world folders".into(), "action"),
             ]},
             {"group": "Diagnostics", "rows": [
@@ -1189,6 +1190,66 @@ impl Controller {
             }
             "game_files" => {
                 self.catalog.status = "Open Game files in Settings to browse worlds, mods, packs, shaders and reports.".into();
+            }
+            "backup_categories" => return Ok(crate::backup::categories()),
+            "backup_list" => {
+                let dir = crate::shared_storage::resolve(&home).join("backups");
+                let mut names: Vec<String> = fs::read_dir(&dir)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .filter(|name| {
+                        name.starts_with(crate::backup::PREFIX) && name.ends_with(".tar.gz")
+                    })
+                    .collect();
+                names.sort_unstable();
+                names.reverse();
+                return Ok(json!(names));
+            }
+            "backup_create" => {
+                let selection: Value = serde_json::from_str(arg)
+                    .map_err(|_| "Expected a backup selection".to_owned())?;
+                let dir = crate::shared_storage::resolve(&home).join("backups");
+                fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                let path = crate::backup::create(&home, &selection, &dir)?;
+                let name = PathBuf::from(&path)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                self.catalog.status = format!("Saved backup {name}.");
+                return Ok(json!(path));
+            }
+            "backup_restore" => {
+                let request: Value = serde_json::from_str(arg)
+                    .map_err(|_| "Expected a backup path".to_owned())?;
+                let name = request["name"].as_str().ok_or("Missing backup name")?;
+                let replace = request["replace"].as_bool().unwrap_or(false);
+                let dir = crate::shared_storage::resolve(&home).join("backups");
+                let archive = dir.join(name);
+                if !archive.starts_with(&dir) || !name.starts_with(crate::backup::PREFIX) {
+                    return Err("That backup is not in the backups folder".into());
+                }
+                let note = crate::backup::restore(&archive, &home, replace)?;
+                self.catalog.refresh(&home);
+                self.catalog.status = note.clone();
+                return Ok(json!(note));
+            }
+            "backup_restore_file" => {
+                let request: Value = serde_json::from_str(arg)
+                    .map_err(|_| "Expected a backup file path".to_owned())?;
+                let path = request["path"].as_str().ok_or("Missing backup path")?;
+                let archive = PathBuf::from(path);
+                if !archive.is_absolute() || !archive.is_file() {
+                    return Err("That backup file is not available".into());
+                }
+                let replace = request["replace"].as_bool().unwrap_or(false);
+                let note = crate::backup::restore(&archive, &home, replace)?;
+                self.catalog.refresh(&home);
+                self.catalog.status = note.clone();
+                return Ok(json!(note));
             }
             "screenshots" => return Ok(self.screenshots("newest")),
             "screenshot_delete" => {

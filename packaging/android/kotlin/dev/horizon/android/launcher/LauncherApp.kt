@@ -123,6 +123,7 @@ sealed interface Overlay {
     data object Servers : Overlay
     data object TouchLayouts : Overlay
     data object GameFiles : Overlay
+    data object Backup : Overlay
     data object Appearance : Overlay
     data class Choose(val id: String, val options: Options) : Overlay
     data class Edit(val id: String, val title: String, val value: String, val hint: String) : Overlay
@@ -359,6 +360,7 @@ private fun LauncherContent(
             destination = Destination.Screenshots
         },
         openGameFiles = { overlay = Overlay.GameFiles },
+        openBackup = { overlay = Overlay.Backup },
         openAppearance = {
             backgroundError = null
             overlay = Overlay.Appearance
@@ -432,6 +434,7 @@ private fun LauncherContent(
                     GameFilesScreen(root = root, onBack = { overlay = null })
                 }
             }
+            Overlay.Backup -> BackupSheet(onDismiss = { overlay = null })
             Overlay.Servers -> ServersSheet(onDismiss = { overlay = null }, onPlay = onPlay)
             Overlay.Appearance -> AppearanceSheet(
                 appearance = appearance,
@@ -648,6 +651,7 @@ class LauncherActions(
     val openServers: () -> Unit,
     val openScreenshots: () -> Unit,
     val openGameFiles: () -> Unit,
+    val openBackup: () -> Unit,
     val openAppearance: () -> Unit,
     val choose: (String) -> Unit,
     val edit: (id: String, title: String, value: String, hint: String) -> Unit,

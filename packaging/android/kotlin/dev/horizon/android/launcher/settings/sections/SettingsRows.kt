@@ -74,6 +74,7 @@ internal fun rowIcon(id: String): ImageVector = when (id) {
     "cache_budget_mib" -> Icons.Rounded.Storage
     "storage" -> Icons.Rounded.FolderOpen
     "game_files" -> Icons.Rounded.Folder
+    "backup" -> Icons.Rounded.Storage
     "world_files" -> Icons.Rounded.Public
     "orientation" -> Icons.Rounded.ScreenRotation
     "aspect" -> Icons.Rounded.AspectRatio
@@ -186,6 +187,7 @@ private fun onRowClick(
             "screenshots" -> actions.openScreenshots()
             "appearance" -> actions.openAppearance()
             "game_files" -> onGameFiles()
+            "backup" -> actions.openBackup()
             else -> act(row.id)
         }
     }

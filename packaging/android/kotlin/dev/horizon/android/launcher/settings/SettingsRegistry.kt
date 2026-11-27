@@ -59,7 +59,7 @@ enum class SettingsCategory(
         Icons.Rounded.Folder,
         R.string.category_storage_title,
         R.string.category_storage_subtitle,
-        setOf("storage", "screenshots", "game_files", "world_files"),
+        setOf("storage", "screenshots", "game_files", "backup", "world_files"),
     ),
     Mods(
         "mods",

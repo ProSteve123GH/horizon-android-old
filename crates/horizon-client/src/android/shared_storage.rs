@@ -2329,7 +2329,7 @@ mod tests {
         assert!(result.is_err(), "the one-way migration refuses to move back");
         assert_eq!(fs::read(home.join("options.txt")).unwrap(), b"new user data");
         assert_eq!(
-            fs::read(shared.join("options.txt")).unwrap(),
+            fs::read(shared.join("Instances/Default/options.txt")).unwrap(),
             b"options",
             "the shared copy must stay in place"
         );
@@ -2412,12 +2412,15 @@ mod tests {
         // backup in place, so both sets of files remain recoverable.
         let note = restore_backup(&home, &shared, &name).unwrap();
         assert!(note.contains("Restored"), "{note}");
-        assert_eq!(fs::read(shared.join("old-world.txt")).unwrap(), b"old");
-        assert!(!shared.join("options.txt").exists());
+        assert_eq!(
+            fs::read(shared.join("Instances/Default/old-world.txt")).unwrap(),
+            b"old"
+        );
+        assert!(!shared.join("Instances/Default/options.txt").exists());
         let after = backups(&shared);
         assert_eq!(after.len(), 1, "{after:?}");
         assert_eq!(
-            fs::read(parent.join(&after[0]).join("options.txt")).unwrap(),
+            fs::read(parent.join(&after[0]).join("Instances/Default/options.txt")).unwrap(),
             b"options"
         );
 

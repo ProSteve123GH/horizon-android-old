@@ -16,6 +16,10 @@
     <application android:name="dev.horizon.android.launcher.HorizonApplication" android:label="${appLabel}" android:appCategory="game" android:requestLegacyExternalStorage="true" android:icon="@drawable/launcher_icon" android:banner="@drawable/tv_banner" android:usesCleartextTraffic="false">
         <!-- Share one screenshot through a temporary read grant; never a private path. -->
         <provider android:name="dev.horizon.android.ScreenshotProvider" android:authorities="${applicationId}.screenshots" android:exported="false" android:grantUriPermissions="true" />
+        <!-- Scoped read grant for the in-app file manager's image/audio/video viewer. -->
+        <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.files" android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
+        </provider>
         <!-- The Compose launcher. The game runs in its own process, which exits when the game closes. -->
         <activity android:name="dev.horizon.android.launcher.LauncherActivity" android:exported="false" android:theme="@style/HorizonLauncherTheme" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|density" android:windowSoftInputMode="adjustResize" />
         <activity android:name="dev.horizon.android.HorizonActivity" android:process=":game" android:exported="false" android:screenOrientation="sensorLandscape" android:configChanges="orientation|screenSize|keyboardHidden|keyboard|density|screenLayout" android:windowSoftInputMode="adjustResize" android:theme="@style/HorizonGameTheme">
