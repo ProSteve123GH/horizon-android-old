@@ -48,6 +48,9 @@ fn now_millis() -> u128 {
         .unwrap_or_default()
 }
 
+/// Two archives created in the same millisecond must not overwrite each other.
+static ARCHIVE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn selected(set: &Value, key: &str) -> bool {
     set.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
@@ -195,7 +198,8 @@ pub fn create(home: &Path, selection: &Value, destination: &Path) -> Result<Stri
         return Err("Choose an existing folder to save the backup".into());
     }
     let jobs = collect_jobs(home, set)?;
-    let path = destination.join(archive_name(&now_millis().to_string()));
+    let sequence = ARCHIVE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = destination.join(archive_name(&format!("{}-{}", now_millis(), sequence)));
     let file = File::create(&path).map_err(|e| format!("Cannot create the backup: {e}"))?;
     let mut out = GzEncoder::new(file, Compression::default());
     let mut bytes = 0u64;
@@ -365,6 +369,9 @@ pub fn restore(archive: &Path, home: &Path, replace: bool) -> Result<String, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
 
     struct Scratch(PathBuf);
 
@@ -373,7 +380,7 @@ mod tests {
             let path = std::env::temp_dir().join(format!(
                 "horizon-backup-{}-{}",
                 std::process::id(),
-                now_millis()
+                NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             fs::create_dir_all(&path).unwrap();
             Self(path)
