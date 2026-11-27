@@ -128,7 +128,7 @@ internal data class TouchLayoutsState(
 fun TouchLayoutsSheet(
     onDismiss: () -> Unit,
     onImportTouch: (String?) -> Unit,
-    onEditInGame: () -> Unit,
+    onEdit: (String) -> Unit,
 ) {
     var state by remember { mutableStateOf<TouchLayoutsState?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -137,7 +137,6 @@ fun TouchLayoutsSheet(
     var deleting by remember { mutableStateOf<TouchProfile?>(null) }
     var resetting by remember { mutableStateOf(false) }
     var naming by remember { mutableStateOf(false) }
-    var editing by remember { mutableStateOf<TouchProfile?>(null) }
     // SAF document picker: the native side handles kind="touch" (importDocument).
     val touchPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onImportTouch(uri.toString())
@@ -250,7 +249,7 @@ fun TouchLayoutsSheet(
                             )
                         },
                         onDelete = { deleting = profile },
-                        onEdit = { editing = profile },
+                        onEdit = { onEdit(profile.id) },
                     )
                 }
                 item(key = "tools") {
@@ -267,7 +266,7 @@ fun TouchLayoutsSheet(
                             ?: current.profiles.firstOrNull()
                         if (draftProfile != null) {
                             OutlinedButton(
-                                onClick = { editing = draftProfile },
+                                onClick = { onEdit(draftProfile.id) },
                                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                             ) {
                                 Icon(Icons.Rounded.Edit, null, Modifier.size(18.dp))
@@ -429,18 +428,6 @@ fun TouchLayoutsSheet(
         )
     }
 
-    editing?.let { profile ->
-        TouchDraftEditor(
-            snapshot = profile.snapshot,
-            onDismiss = { editing = null },
-            onSave = { _ ->
-                // Persist through the existing profile action; the draft itself is
-                // previewed here and finalized in the in-game editor.
-                finish({ act("touch_layout_save", profile.id) }, "Could not update ${profile.name}")
-            },
-            onEditInGame = onEditInGame,
-        )
-    }
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)

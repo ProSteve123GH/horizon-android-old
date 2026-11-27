@@ -15,6 +15,7 @@ use jni::{
     objects::{JByteArray, JClass, JObject, JString},
     sys::{jint, jstring},
 };
+use base64::Engine;
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,
@@ -1671,6 +1672,40 @@ impl Controller {
                 self.catalog.status = "Performance preset deleted.".into();
             }
             "touch_layouts" => return self.touch_state(),
+            "touch_texture" => {
+                // The launcher editor draws the exact PNGs the game atlas uses.
+                let name = arg;
+                if name.is_empty()
+                    || name.contains("..")
+                    || name.contains('\\')
+                    || !(name.starts_with("ui/") || name.starts_with("controls/") || name == "gui")
+                {
+                    return Err("Unknown touch texture".into());
+                }
+                let path = self
+                    .home
+                    .join(".local/horizon-client")
+                    .join(horizon_core::VANILLA_VERSION)
+                    .join("assets/minecraft/textures/gui/bedrock")
+                    .join(format!("{name}.png"));
+                let bytes = fs::read(&path)
+                    .map_err(|_| "The game textures are not installed yet. Download Minecraft first.".to_owned())?;
+                if bytes.len() > 1024 * 1024 {
+                    return Err("That texture is too large".into());
+                }
+                return Ok(json!(base64::engine::general_purpose::STANDARD.encode(bytes)));
+            }
+            "touch_snapshot_save" => {
+                let request: Value = serde_json::from_str(arg)
+                    .map_err(|_| "Expected a layout snapshot".to_owned())?;
+                let id = request["id"].as_str().ok_or("Missing layout profile id")?;
+                let snapshot = request["snapshot"].clone();
+                crate::touch_layouts::valid_snapshot(&snapshot)?;
+                let store = controls_store_for_write(&home, self.catalog.config.profile)?;
+                let view = crate::touch_layouts::save_current(&store, id, &snapshot)?;
+                self.catalog.status = format!("Saved layout profile {}.", view.name);
+                return serde_json::to_value(view).map_err(|e| e.to_string());
+            }
             "touch_layout_create" => {
                 let instance = self.catalog.config.game_home(&home);
                 let store = controls_store_for_write(&home, self.catalog.config.profile)?;

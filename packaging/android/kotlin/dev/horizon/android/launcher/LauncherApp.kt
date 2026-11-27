@@ -122,6 +122,7 @@ sealed interface Overlay {
     data object Performance : Overlay
     data object Servers : Overlay
     data object TouchLayouts : Overlay
+    data class TouchEditor(val profileId: String) : Overlay
     data object GameFiles : Overlay
     data object Backup : Overlay
     data object Appearance : Overlay
@@ -419,7 +420,7 @@ private fun LauncherContent(
             Overlay.TouchLayouts -> TouchLayoutsSheet(
                 onDismiss = { overlay = null },
                 onImportTouch = { uri -> onImport("touch", uri) },
-                onEditInGame = { actions.play(); overlay = null },
+                onEdit = { id -> overlay = Overlay.TouchEditor(id) },
             )
             Overlay.GameFiles -> Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                 Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -434,6 +435,10 @@ private fun LauncherContent(
                     GameFilesScreen(root = root, onBack = { overlay = null })
                 }
             }
+            is Overlay.TouchEditor -> TouchLayoutEditor(
+                profileId = overlay.profileId,
+                onDismiss = { overlay = null },
+            )
             Overlay.Backup -> BackupSheet(onDismiss = { overlay = null })
             Overlay.Servers -> ServersSheet(onDismiss = { overlay = null }, onPlay = onPlay)
             Overlay.Appearance -> AppearanceSheet(
