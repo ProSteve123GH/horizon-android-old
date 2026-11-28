@@ -39,7 +39,8 @@
 //! fragment's depth against the stored one, greater or equal passing. The
 //! same fragments pass, so the same sections are seen. Adreno's Vulkan driver
 //! takes that path too: with the early test it now and then leaves sections
-//! out for a frame.
+//! out for a frame. ARM's Mali Vulkan (the Mali-G615 of the Android GPUs) fails
+//! the forced early depth test the same way, so it takes that path too.
 use std::num::NonZeroU64;
 use std::sync::{
     Arc,
@@ -240,35 +241,57 @@ pub(super) fn packed_lookup(source: &str, name: &str, n: usize) -> Vec<u32> {
 
 /// Qualcomm's PCI vendor id, which wgpu reports for Adreno GPUs.
 const ADRENO: u32 = 0x5143;
+/// ARM's PCI vendor id, which wgpu reports for the Mali GPUs of ARM's own
+/// chips, the Mali-G615 of the Android Vulkan devices: the Adreno sibling's
+/// driver fails the forced early depth test there too.
+const ARM: u32 = 0x13B5;
+
+/// The depth test the device's driver takes for the section culling test, from
+/// the adapter's backend, vendor id and name: the forced early depth test
+/// before the fragment shader (Vulkan, OpenGL), or the test in the shader
+/// (Metal, DirectX 12), or, on the drivers that intermittently fail to run the
+/// forced early one, the test in the shader all the same.
+fn preferred_depth_test(backend: wgpu::Backend, vendor: u32, name: &str) -> Option<DepthTest> {
+    // Adreno's Vulkan driver (the AYANEO Pocket DS's Adreno 740, build 0676.41) now and
+    // then leaves sections out with the early test, the world flashing black or
+    // see-through as a block breaks; the test in the shader, as on Metal, holds.
+    // ARM's Mali Vulkan (the Mali-G615 of the Android GPUs) fails the same forced
+    // early depth test intermittently, so the test in the shader, as on Metal, holds
+    // there too: Mali, like Adreno, runs the test in the shader.
+    let mali = vendor == ARM || name.contains("Mali");
+    match backend {
+        wgpu::Backend::Vulkan if vendor == ADRENO || mali => DepthTest::InShader,
+        // DirectX 12 has no forced early depth test in wgpu either: the test runs in the
+        // shader there too.
+        wgpu::Backend::Metal | wgpu::Backend::Dx12 => DepthTest::InShader,
+        // The forced early depth test before the fragment shader, which the device has to
+        // have (`SHADER_EARLY_DEPTH_TEST`).
+        wgpu::Backend::Vulkan | wgpu::Backend::Gl => DepthTest::Early,
+        _ => return None,
+    }
+}
 
 impl Cull {
     /// The device feature culling needs, where the adapter has it.
     pub fn features(adapter: &wgpu::Adapter) -> wgpu::Features {
         adapter.features() & wgpu::Features::SHADER_EARLY_DEPTH_TEST
     }
-    /// Where the device can run the test, if it can: Vulkan with early
-    /// depth tests (Adreno's in the shader), or Metal and DirectX 12 with the
-    /// test in the shader, all drawing an indirect multi-draw's entries with
-    /// the instance counts the GPU wrote, with fragment shaders that write
+    /// Where the device can run the test, if it can: Vulkan with early depth
+    /// tests (Adreno's or ARM's Mali's in the shader), or Metal and DirectX 12
+    /// with the test in the shader, all drawing an indirect multi-draw's entries
+    /// with the instance counts the GPU wrote, with fragment shaders that write
     /// storage.
     pub fn supported(adapter: &wgpu::Adapter, device: &wgpu::Device) -> Option<DepthTest> {
         let info = adapter.get_info();
-        let depth_test = match info.backend {
-            // Adreno's Vulkan driver (the AYANEO Pocket DS's Adreno 740, build 0676.41) now and
-            // then leaves sections out with the early test, the world flashing black or
-            // see-through as a block breaks; the test in the shader, as on Metal, holds.
-            wgpu::Backend::Vulkan if info.vendor == ADRENO => DepthTest::InShader,
-            wgpu::Backend::Vulkan | wgpu::Backend::Gl
-                if device
-                    .features()
-                    .contains(wgpu::Features::SHADER_EARLY_DEPTH_TEST) =>
-            {
-                DepthTest::Early
-            }
-            // DirectX 12 has no forced early depth test in wgpu either: the test runs in the
-            // shader there too.
-            wgpu::Backend::Metal | wgpu::Backend::Dx12 => DepthTest::InShader,
-            _ => return None,
+        let depth_test = preferred_depth_test(info.backend, info.vendor, &info.name);
+        let early = device.features().contains(wgpu::Features::SHADER_EARLY_DEPTH_TEST);
+        let depth_test = if depth_test == Some(DepthTest::Early) && !early {
+            // The forced early depth test before the fragment shader is the way
+            // for Vulkan and OpenGL; the device has to have it, or the test runs
+            // in the shader instead.
+            None
+        } else {
+            depth_test
         };
         (device
             .features()
@@ -836,5 +859,55 @@ mod tests {
         ] {
             assert_eq!(packed_lookup(source, "box_triangle_corner", 36), triangles);
         }
+    }
+
+    /// Adreno's and ARM's Mali Vulkan run the depth test in the shader: their
+    /// forced early depth test intermittently leaves sections out.
+    #[test]
+    fn the_preferred_depth_test_puts_the_shader_test_on_adreno_and_mali() {
+        // Adreno: the AYANEO Pocket DS's Adreno 740, build 0676.41, now and then
+        // leaves sections out with the forced early depth test.
+        assert_eq!(
+            preferred_depth_test(wgpu::Backend::Vulkan, 0x5143, "Adreno GPU"),
+            Some(DepthTest::InShader)
+        );
+        // ARM's Mali: the Mali-G615, whose forced early depth test fails too.
+        assert_eq!(
+            preferred_depth_test(wgpu::Backend::Vulkan, 0x13B5, "Mali-G615"),
+            Some(DepthTest::InShader)
+        );
+        // Or by the Mali name alone, when the vendor id is not reported.
+        assert_eq!(
+            preferred_depth_test(wgpu::Backend::Vulkan, 0x0000, "Mali-G615"),
+            Some(DepthTest::InShader)
+        );
+    }
+
+    /// The backends that can run the test run it the way they can: a generic
+    /// Vulkan driver keeps the forced early depth test, Metal the test in the
+    /// shader.
+    #[test]
+    fn the_preferred_depth_test_keeps_the_forced_early_test_elsewhere() {
+        // A generic Vulkan driver keeps the forced early depth test.
+        assert_eq!(
+            preferred_depth_test(wgpu::Backend::Vulkan, 0x1002, "AMD Radeon RX 7900"),
+            Some(DepthTest::Early)
+        );
+        // Metal cannot force the early depth test before the fragment shader
+        // that writes storage, so it runs the test in the shader.
+        assert_eq!(
+            preferred_depth_test(wgpu::Backend::Metal, 0x0, "Apple GPU"),
+            Some(DepthTest::InShader)
+        );
+    }
+
+    /// A backend without a usable depth test culls no further than drawing every
+    /// section.
+    #[test]
+    fn the_preferred_depth_test_is_none_for_a_backend_without_it() {
+        assert_eq!(
+            preferred_depth_test(wgpu::Backend::BrowserWebGpu, 0x5143, "WebGPU"),
+            None
+        );
     }
 }
