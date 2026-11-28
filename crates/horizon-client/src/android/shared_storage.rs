@@ -524,7 +524,10 @@ fn repair_flattened_instances(default: &Path) -> Result<(), String> {
     fs::create_dir_all(&saves).map_err(|e| format!("Cannot create {}: {e}", saves.display()))?;
     misplaced.sort();
     for child in misplaced {
-        let name = child.file_name().to_string_lossy().into_owned();
+        let name = child
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
         migrate_tree(&child, &saves.join(&name))?;
     }
     Ok(())
