@@ -399,7 +399,7 @@ fn android_main(app: AndroidApp) {
                 .and_then(|request| {
                     let world = request.get("world").and_then(serde_json::Value::as_str);
                     let server = request.get("server").and_then(serde_json::Value::as_str);
-                    (world.map(str::to_owned), server.map(str::to_owned))
+                    Some((world.map(str::to_owned), server.map(str::to_owned)))
                 })
         });
     let Some((world, server)) = request else {
