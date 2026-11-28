@@ -392,7 +392,7 @@ fn android_main(app: AndroidApp) {
     }
     let request = std::fs::read(home.join(bridge::LAUNCH_REQUEST))
         .ok()
-        .map(|bytes| {
+        .and_then(|bytes| {
             let _ = std::fs::remove_file(home.join(bridge::LAUNCH_REQUEST));
             serde_json::from_slice::<serde_json::Value>(&bytes)
                 .ok()
