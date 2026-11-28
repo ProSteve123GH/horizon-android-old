@@ -82,9 +82,41 @@ impl Loading {
     /// the title is on the screen holds the title back by that build. Wait for
     /// one title frame first, unless a world is waiting to open.
     pub(super) fn ready_for_handoff(&self) -> bool {
+        // A suspended Android surface cannot present a title frame, and the
+        // renderer handed to the game would be built on a dead surface too.
+        #[cfg(target_os = "android")]
+        if self.surface_lost {
+            return false;
+        }
         self.title_drawn
             || self.menu.pending.is_some()
             || self.ui_at.is_none_or(|at| at.elapsed() >= TITLE_FRAME_WAIT)
+    }
+    /// Reconcile the Android render size with the window. A renderer created
+    /// before the native surface had dimensions stays suspended, and no
+    /// `Resized` event is guaranteed when the compositor changes it, so the
+    /// loading screen would otherwise never present a frame.
+    #[cfg(target_os = "android")]
+    fn reconcile_android_display(&mut self) {
+        if self.surface_lost {
+            return;
+        }
+        let Some(window) = self.window.clone() else {
+            return;
+        };
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
+        let size = window.inner_size();
+        if renderer.suspended && size.width > 0 && size.height > 0 {
+            // `display::apply` skips suspended renderers; resize first so the
+            // surface is configured again, then let it apply the render scale.
+            renderer.resize(size.width, size.height);
+        }
+        if let Err(error) = crate::display::apply(&window, renderer) {
+            crate::display::set_scale(crate::display::RenderScale::default());
+            log::warn!("Android display scale: {error}");
+        }
     }
     pub(super) fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         // The winit window was destroyed while the Activity was backgrounded;
@@ -163,15 +195,29 @@ impl Loading {
             });
         let offscreen = self.options.as_ref().is_some_and(|o| o.offscreen);
         let boot_step = startup::step("renderer.boot");
+        // `set_ui` can arrive before the window exists (notably on Android,
+        // where the loader finishes while the Activity is suspended). Drawing
+        // its GUI-atlas UVs through a boot-atlas renderer is fully black, so
+        // use the real atlas and panorama whenever they are already here.
+        let (atlas, panorama, title_artwork) = match &self.gui {
+            Some(gui) => (Some(&gui.atlas), Some(&gui.panorama), true),
+            None => (Some(&self.boot), None, false),
+        };
         match loading_renderer(
             window.clone(),
             offscreen,
-            Some(&self.boot),
-            None,
+            atlas,
+            panorama,
             None,
             self.settings.horizon.api,
         ) {
-            Ok(r) => self.renderer = Some(r),
+            Ok(r) => {
+                self.renderer = Some(r);
+                if title_artwork {
+                    self.title_drawn = false;
+                    self.ui_at = Some(Instant::now());
+                }
+            }
             Err(e) => {
                 #[cfg(target_os = "windows")]
                 if let Some(stop) = &boot_paint_stop {
@@ -190,15 +236,20 @@ impl Loading {
             stop.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         horizon_client::hud::GUI_SCALE.store(self.settings.gui_scale, Ordering::Relaxed);
-        self.window = Some(window);
+        self.window = Some(window.clone());
+        #[cfg(target_os = "android")]
+        self.reconcile_android_display();
+        // The rebuilt surface has presented nothing yet; winit only redraws on
+        // request, so ask for the frame that makes the loading screen visible.
+        #[cfg(target_os = "android")]
+        window.request_redraw();
     }
-    /// Android sent `Suspended`: drop the dead surface and mark the next
-    /// `resumed` to create a new window and renderer.
+    /// Android sent `Suspended`: the native surface is gone, but keep the
+    /// window and renderer objects so no frame is drawn into the dead surface.
+    /// The next `resumed` performs the teardown and rebuild from scratch.
     #[cfg(target_os = "android")]
     pub(super) fn suspended(&mut self) {
         self.surface_lost = true;
-        self.renderer = None;
-        self.window = None;
     }
     pub(super) fn window_event(
         &mut self,
@@ -271,6 +322,8 @@ impl Loading {
             return;
         }
         self.poll_menu_realms(event_loop);
+        #[cfg(target_os = "android")]
+        self.reconcile_android_display();
         if let Some(w) = &self.window {
             if self.options.as_ref().is_some_and(|o| o.offscreen) {
                 self.draw();
@@ -281,6 +334,12 @@ impl Loading {
         event_loop.set_control_flow(ControlFlow::Poll);
     }
     pub(super) fn draw(&mut self) {
+        // Suspended renders into a surface Android has already destroyed; the
+        // next `resumed` rebuilds the renderer before any frame is requested.
+        #[cfg(target_os = "android")]
+        if self.surface_lost {
+            return;
+        }
         let Some(size) = self
             .renderer
             .as_ref()
