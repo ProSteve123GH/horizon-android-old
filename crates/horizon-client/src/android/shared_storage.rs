@@ -477,6 +477,59 @@ fn migrate_tree(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Repairs an instance folder whose worlds were flattened into it by an
+/// earlier buggy build: `<instance>/<World>/level.dat` instead of
+/// `<instance>/saves/<World>/level.dat`.
+///
+/// The pass only runs when the canonical `saves/` folder is missing or empty —
+/// a fresh install whose saves folder is legitimately empty is left untouched —
+/// and only moves child directories that directly hold a `level.dat`. Every
+/// other child (options, servers, resource packs, launcher state) stays exactly
+/// where it is. The move reuses the non-overwriting tree migration, so a target
+/// that already holds different data is refused, and an already-repaired layout
+/// simply does nothing, which keeps the repair safe to re-run.
+fn repair_flattened_instances(default: &Path) -> Result<(), String> {
+    let saves = default.join("saves");
+    if let Ok(meta) = fs::symlink_metadata(&saves) {
+        let kind = meta.file_type();
+        if kind.is_symlink() || !kind.is_dir() {
+            // Never look for misplaced worlds behind a non-real saves folder.
+            return Ok(());
+        }
+        if folder_has_files(&saves) {
+            // Entries already in the canonical saves folder mean the instance
+            // layout was migrated; only a missing or empty one needs repairing.
+            return Ok(());
+        }
+    }
+    let entries =
+        fs::read_dir(default).map_err(|e| format!("Cannot read {}: {e}", default.display()))?;
+    let mut misplaced: Vec<PathBuf> = Vec::new();
+    for entry in entries.flatten() {
+        let kind = entry.file_type().map_err(|e| e.to_string())?;
+        let name = entry.file_name();
+        let text = name.to_string_lossy();
+        if kind.is_dir()
+            && !text.starts_with('.')
+            && is_real_dir(&entry.path())
+            && entry.path().join("level.dat").is_file()
+        {
+            misplaced.push(entry.path());
+        }
+    }
+    if misplaced.is_empty() {
+        // No world folder sits directly in the instance folder.
+        return Ok(());
+    }
+    fs::create_dir_all(&saves).map_err(|e| format!("Cannot create {}: {e}", saves.display()))?;
+    misplaced.sort();
+    for child in misplaced {
+        let name = child.file_name().to_string_lossy().into_owned();
+        migrate_tree(&child, &saves.join(&name))?;
+    }
+    Ok(())
+}
+
 /// Migrates the pre-Instances layout below the resolved storage root.
 ///
 /// This is intentionally separate from the permission migration so callers
@@ -533,6 +586,9 @@ pub fn migrate_layout(home: &Path) -> Result<String, String> {
             migrate_file(&source, &default.join(&name))?;
         }
     }
+    // After the root loop so a legacy world folder moved in this same pass is
+    // repaired too, not left for a second migration.
+    repair_flattened_instances(&default)?;
     if default.join(PROFILE_ID_FILE).is_file() && read_profile_id(&default).is_none() {
         return Err(format!("{} has an unreadable profile ID", default.display()));
     }
@@ -614,6 +670,14 @@ pub fn migrate_layout(home: &Path) -> Result<String, String> {
         let _ = fs::remove_dir(&legacy);
     }
     Ok("Instance storage layout is current".into())
+}
+
+/// Re-runs the instance layout migration: the launcher's resume path retries
+/// it once the game process is gone, so a migration that failed during a launch
+/// gets another chance instead of staying silent. The migration itself is
+/// idempotent, so an already-current layout simply reports that again.
+pub fn retry_migrate_layout(home: &Path) -> Result<String, String> {
+    migrate_layout(home)
 }
 
 /// True when `dir` is a real directory (never a symlink) holding at least one
@@ -1822,6 +1886,44 @@ mod tests {
         );
         migrate_layout(&home).unwrap();
         assert_eq!(read_profile_id(&home.join("Instances/Default")), Some(0));
+    }
+
+    #[test]
+    fn flattened_instance_layout_is_repaired_into_saves() {
+        let home = scratch();
+        let world = home.join("Instances/Default/World");
+        fs::create_dir_all(&world).unwrap();
+        fs::write(world.join("level.dat"), b"flattened-world-bytes").unwrap();
+        fs::write(home.join("Instances/Default/android-profile-id.txt"), b"0\n").unwrap();
+        fs::write(home.join("Instances/Default/options.txt"), b"user-options").unwrap();
+
+        migrate_layout(&home).unwrap();
+        assert_eq!(
+            fs::read(home.join("Instances/Default/saves/World/level.dat")).unwrap(),
+            b"flattened-world-bytes"
+        );
+        assert!(
+            !home.join("Instances/Default/World").exists(),
+            "the misplaced world folder must leave the instance root"
+        );
+        assert_eq!(
+            fs::read(home.join("Instances/Default/options.txt")).unwrap(),
+            b"user-options",
+            "unrelated instance files must stay where they are"
+        );
+        assert!(
+            home.join("Instances/Default/android-profile-id.txt").is_file(),
+            "the instance marker file must stay"
+        );
+
+        // The repair is idempotent: a second run leaves the repaired layout alone.
+        let note = migrate_layout(&home).unwrap();
+        assert_eq!(note, "Instance storage layout is current");
+        assert_eq!(
+            fs::read(home.join("Instances/Default/saves/World/level.dat")).unwrap(),
+            b"flattened-world-bytes"
+        );
+        fs::remove_dir_all(&home).unwrap();
     }
 
     #[test]
