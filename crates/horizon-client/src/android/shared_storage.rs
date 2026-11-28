@@ -529,6 +529,9 @@ fn repair_flattened_instances(default: &Path) -> Result<(), String> {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
         migrate_tree(&child, &saves.join(&name))?;
+        // `migrate_tree` leaves the source root (it only removes nested dirs);
+        // a world holds no private state here, so drop the now-empty folder.
+        let _ = fs::remove_dir(&child);
     }
     Ok(())
 }
