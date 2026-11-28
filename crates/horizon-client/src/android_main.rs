@@ -396,9 +396,13 @@ fn android_main(app: AndroidApp) {
             let _ = std::fs::remove_file(home.join(bridge::LAUNCH_REQUEST));
             serde_json::from_slice::<serde_json::Value>(&bytes)
                 .ok()
-                .and_then(|request| request.get("world")?.as_str().map(str::to_owned))
+                .and_then(|request| {
+                    let world = request.get("world").and_then(serde_json::Value::as_str);
+                    let server = request.get("server").and_then(serde_json::Value::as_str);
+                    (world.map(str::to_owned), server.map(str::to_owned))
+                })
         });
-    let Some(world) = request else {
+    let Some((world, server)) = request else {
         // The Compose launcher is the only UI; without a pending play request
         // this process has nothing to show. Finish and land back in it.
         log::warn!("The game process started without a play request; returning to the launcher");
@@ -407,7 +411,7 @@ fn android_main(app: AndroidApp) {
         platform::finish();
         std::process::exit(0);
     };
-    let mut host = direct::DirectGame::new(home.clone(), world);
+    let mut host = direct::DirectGame::new(home.clone(), world, server);
     let result = android_event_loop()
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })
         .and_then(|events| events.run_app(&mut host).map_err(Into::into));

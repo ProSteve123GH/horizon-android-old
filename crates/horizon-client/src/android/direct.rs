@@ -30,6 +30,10 @@ pub(super) struct DirectGame {
     game: Option<Box<dyn ApplicationHandler>>,
     /// A world folder in the active profile to open directly.
     world: Option<String>,
+    /// The one-shot server address of a server-list join: it is the server for this
+    /// launch only and is cleared once consumed, so later launches fall back to the
+    /// configured default (or singleplayer).
+    one_shot_server: Option<String>,
     started: bool,
     session_worker: Option<mpsc::Receiver<std::result::Result<PreparedAccount, String>>>,
     session_ready: bool,
@@ -64,7 +68,7 @@ fn clear_native_crash_guard_once() {
 }
 
 impl DirectGame {
-    pub(super) fn new(home: PathBuf, world: Option<String>) -> Self {
+    pub(super) fn new(home: PathBuf, world: Option<String>, server: Option<String>) -> Self {
         // Upgrade existing installations that retained the old download cache.
         let cleanup_home = home.clone();
         std::thread::spawn(move || {
@@ -104,6 +108,7 @@ impl DirectGame {
             config,
             game: None,
             world,
+            one_shot_server: server,
             started: false,
             session_worker: None,
             session_ready: false,
@@ -230,14 +235,14 @@ impl DirectGame {
         }
         // The A press that launches the game must not accept its first menu too.
         horizon_client::android_runtime::clear_gamepads();
-        // A selected world is single-player: the configured server must not
-        // win over `--world` in the game's option parsing.
+        // A selected world is single-player: it wins over any server for this launch.
         let world = self.world.take();
-        let server = if world.is_some() {
-            String::new()
-        } else {
-            self.config.server.clone()
-        };
+        let one_shot = self.one_shot_server.take();
+        let server = crate::game_launch::LaunchRequest::launch_server(
+            one_shot.as_deref(),
+            &self.config.server,
+            world.as_deref(),
+        );
         let request = crate::game_launch::LaunchRequest {
             resources: self
                 .home

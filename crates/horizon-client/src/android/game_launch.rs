@@ -51,6 +51,23 @@ impl LaunchRequest {
         args.extend(self.extra_arguments.iter().cloned());
         args
     }
+
+    /// The server address one launch connects to, from the play inputs alone: the
+    /// one-shot server-list address wins for that launch, a world folder means
+    /// singleplayer and suppresses it, and no server means singleplayer.
+    pub(crate) fn launch_server(
+        one_shot: Option<&str>,
+        configured: &str,
+        world: Option<&str>,
+    ) -> String {
+        if world.is_some() {
+            return String::new();
+        }
+        if let Some(server) = one_shot.filter(|server| !server.is_empty()) {
+            return server.to_owned();
+        }
+        configured.to_owned()
+    }
 }
 /// The native host owns the window lifecycle; a future frontend supplies this request.
 #[cfg(target_os = "android")]
@@ -119,6 +136,27 @@ mod tests {
     fn a_world_is_passed_as_the_folder_name() {
         let mut r = request();
         r.server.clear();
+        r.world = Some("Survival".into());
+        let args = r.arguments();
+        assert!(args.windows(2).any(|a| a == ["--world", "Survival"]));
+        assert!(!args.iter().any(|a| a == "--server"));
+    }
+    #[test]
+    fn one_shot_server_becomes_the_server_argument() {
+        let one_shot = Some("play.horizon.test");
+        let server = LaunchRequest::launch_server(one_shot, "", None);
+        assert_eq!(server, "play.horizon.test");
+        let mut r = request();
+        r.server = server;
+        let args = r.arguments();
+        assert!(args.windows(2).any(|a| a == ["--server", "play.horizon.test"]));
+    }
+    #[test]
+    fn a_world_still_suppresses_the_one_shot_server() {
+        let one_shot = Some("play.horizon.test");
+        let server = LaunchRequest::launch_server(one_shot, "", Some("Survival"));
+        assert!(server.is_empty());
+        let mut r = request();
         r.world = Some("Survival".into());
         let args = r.arguments();
         assert!(args.windows(2).any(|a| a == ["--world", "Survival"]));

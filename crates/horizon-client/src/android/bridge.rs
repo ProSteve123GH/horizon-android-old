@@ -53,6 +53,21 @@ thread_local! {
 /// The file the `:game` process reads to start the game without its own launcher.
 pub(crate) const LAUNCH_REQUEST: &str = "launch-request.json";
 
+/// One-time marker in the app-private home that retires a server address an older
+/// launcher build persisted through the server list. See `Controller::retire_stale_server`.
+const SERVER_MIGRATION_MARKER: &str = "android-server-launch-migrated";
+
+/// The out-of-process launch request for one play: the server-list one-shot address is
+/// carried as `server` for that launch only, while normal Play carries no server.
+fn launch_request(world: Option<&str>, server: Option<&str>) -> Value {
+    match (world, server) {
+        // A world folder is single-player, so it suppresses any server address.
+        (Some(world), _) => json!({"play": true, "world": world}),
+        (None, Some(server)) => json!({"play": true, "server": server}),
+        (None, None) => json!({"play": true}),
+    }
+}
+
 /// A running game holds the world's `session.lock`; never rewrite or delete it.
 fn world_in_use(world: &crate::worlds::World) -> bool {
     horizon_client::save::SessionLock::is_locked(&world.path)
@@ -274,6 +289,7 @@ impl Controller {
         if let Ok(message) = std::fs::read_to_string(self.home.join("android-error.txt")) {
             self.error = Some(message);
         }
+        let _ = crate::shared_storage::retry_migrate_layout(&self.home);
     }
 
     fn poll(&mut self) {
@@ -846,6 +862,25 @@ impl Controller {
 
     fn save(&mut self) -> Result<(), String> {
         self.catalog.config.save(&self.home)
+    }
+
+    /// Retires the server address an older launcher build left behind in the persistent
+    /// config: server-list joins used to write the address there, so every later normal
+    /// Play joined that same server. The address now travels one-shot through the launch
+    /// request instead, but a value already saved cannot be told apart from a deliberately
+    /// configured default, so it is cleared once (marker file in the app-private home) and
+    /// the player can set a default again afterwards.
+    fn retire_stale_server(&mut self) -> Result<(), String> {
+        if self.home.join(SERVER_MIGRATION_MARKER).exists() {
+            return Ok(());
+        }
+        if !self.catalog.config.server.trim().is_empty() {
+            self.catalog.config.server.clear();
+            self.save()?;
+        }
+        std::fs::write(self.home.join(SERVER_MIGRATION_MARKER), b"")
+            .map_err(|error| error.to_string())?;
+        Ok(())
     }
 
     /// Profile 0 plus every Instances folder carrying a stable ID marker.
@@ -1874,10 +1909,9 @@ impl Controller {
                     .map_err(|_| "Missing server index".to_owned())?;
                 let address = self.server_manager(&home).address(index)?;
                 crate::servers::validate_address(&address)?;
-                // The existing multiplayer path reads this setting and passes `--server`.
-                self.catalog.config.server = address;
-                self.save()?;
-                return self.play(None);
+                // One-shot: the address travels with this launch's request and never the
+                // persistent config, so a later normal Play does not join it.
+                return self.play_with_server(&address);
             }
             "server_ping" => {
                 let manager = self.server_manager(&home);
@@ -2159,6 +2193,20 @@ impl Controller {
     }
 
     fn play(&mut self, world: Option<&str>) -> Result<Value, String> {
+        self.play_launch(world, None)
+    }
+
+    /// A server-list join passes its address one-shot: the launch request carries it for
+    /// this launch only, and the persistent config keeps whatever default is set.
+    fn play_with_server(&mut self, server: &str) -> Result<Value, String> {
+        self.play_launch(None, Some(server))
+    }
+
+    fn play_launch(
+        &mut self,
+        world: Option<&str>,
+        server: Option<&str>,
+    ) -> Result<Value, String> {
         if self.worker.is_some() || crate::android_minecraft_import::busy() || self.login.pending() {
             return Ok(json!({"launch": false}));
         }
@@ -2172,14 +2220,12 @@ impl Controller {
             return Ok(json!({"launch": false}));
         }
         if horizon_client::official_install::ready(&self.home) {
+            self.retire_stale_server()?;
             self.save()?;
             let _ = instances::mark_played(&self.catalog.config.game_home(&self.home));
             self.error = None;
             let _ = std::fs::remove_file(self.home.join("android-error.txt"));
-            let request = match world {
-                Some(world) => json!({"play": true, "world": world}),
-                None => json!({"play": true}),
-            };
+            let request = launch_request(world, server);
             std::fs::write(
                 self.home.join(LAUNCH_REQUEST),
                 serde_json::to_vec(&request).map_err(|e| e.to_string())?,
@@ -2657,5 +2703,29 @@ pub extern "system" fn Java_dev_horizon_android_ScreenshotProvider_nativeOpen(
             let _ = env.throw_new("java/io/FileNotFoundException", error.to_string());
             -1
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_launch_request_carries_the_one_shot_server_for_a_server_launch() {
+        let request = launch_request(None, Some("play.horizon.test"));
+        let server = request.get("server").and_then(serde_json::Value::as_str);
+        assert_eq!(server, Some("play.horizon.test"));
+        let play = request.get("play").and_then(serde_json::Value::as_bool);
+        assert_eq!(play, Some(true));
+    }
+
+    #[test]
+    fn normal_play_has_no_server_in_the_launch_request() {
+        let request = launch_request(None, None);
+        assert!(request.get("server").is_none());
+        let request = launch_request(Some("Survival"), None);
+        assert!(request.get("server").is_none());
+        let world = request.get("world").and_then(serde_json::Value::as_str);
+        assert_eq!(world, Some("Survival"));
     }
 }
