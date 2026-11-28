@@ -260,14 +260,14 @@ fn preferred_depth_test(backend: wgpu::Backend, vendor: u32, name: &str) -> Opti
     // there too: Mali, like Adreno, runs the test in the shader.
     let mali = vendor == ARM || name.contains("Mali");
     match backend {
-        wgpu::Backend::Vulkan if vendor == ADRENO || mali => DepthTest::InShader,
+        wgpu::Backend::Vulkan if vendor == ADRENO || mali => Some(DepthTest::InShader),
         // DirectX 12 has no forced early depth test in wgpu either: the test runs in the
         // shader there too.
-        wgpu::Backend::Metal | wgpu::Backend::Dx12 => DepthTest::InShader,
+        wgpu::Backend::Metal | wgpu::Backend::Dx12 => Some(DepthTest::InShader),
         // The forced early depth test before the fragment shader, which the device has to
         // have (`SHADER_EARLY_DEPTH_TEST`).
-        wgpu::Backend::Vulkan | wgpu::Backend::Gl => DepthTest::Early,
-        _ => return None,
+        wgpu::Backend::Vulkan | wgpu::Backend::Gl => Some(DepthTest::Early),
+        _ => None,
     }
 }
 
@@ -300,7 +300,8 @@ impl Cull {
                 wgpu::DownlevelFlags::VERTEX_STORAGE
                     | wgpu::DownlevelFlags::FRAGMENT_WRITABLE_STORAGE,
             ))
-        .then_some(depth_test)
+        .then_some(())
+        .and(depth_test)
     }
     /// Its test runs in phase 1's pass, the depth test forced early (Vulkan):
     /// GPU culling's frames can run it too.
